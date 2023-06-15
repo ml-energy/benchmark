@@ -1,2 +1,0 @@
-gradio==3.23.0
-plotly

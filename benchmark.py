@@ -70,6 +70,8 @@ def main(
         raise ValueError("ChatGLM is not supported.")
 
     # Print out what we're about to do.
+    if model_path.endswith("/"):
+        model_path = model_path[:-1]
     model_name_cleaned = "--".join(model_path.split("/")[-2:])
     output_dir = f"data/{task}/{model_name_cleaned}"
     output_csv_path = f"{output_dir}/benchmark.json"

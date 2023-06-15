@@ -1,7 +1,5 @@
-zeus-ml==0.4.0
-fastchat==0.2.14
+zeus-ml
+fschat==0.2.14
 rwkv==0.7.5
 einops
 tyro
-plotpy
-gradio

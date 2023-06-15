@@ -1,2 +1,4 @@
 .envrc
 pyrightconfig.json
+.idea
+.DS_Store

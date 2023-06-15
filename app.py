@@ -5,8 +5,8 @@ from huggingface_hub.hf_api import SpaceInfo
 import matplotlib.pyplot as plt
 import plotly.express as px
 
-model_perf_table = 'tables/test.csv'
-logo_path = 'img/image.png'
+model_perf_table = "data/test.csv"
+logo_path = "img/image.png"
 
 
 def get_blocks_party_spaces():
@@ -28,11 +28,11 @@ def get_blocks_party_spaces_with_formula(formula=None):
 def create_scatter(x, y, z):
     df = get_blocks_party_spaces()
 
-    if z is None or z == 'None':
+    if z is None or z == "None":
         fig = plt.figure()
         ax = fig.add_subplot()
         scatter = ax.scatter(list(df[x]),list(df[y]))
-        for i, label in enumerate(list(df['model'])):
+        for i, label in enumerate(list(df["model"])):
             ax.text(list(df[x])[i],list(df[y])[i],str(label))
         ax.set_xlabel(x)
         ax.set_ylabel(y)

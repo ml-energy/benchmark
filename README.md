@@ -1,3 +1,9 @@
+---
+title: ML.ENERGY Leaderboard
+app_file: app.py
+pinned: false
+---
+
 # ML.ENERGY Leaderboard
 
 ## Devs

@@ -28,15 +28,18 @@ def get_blocks_party_spaces_with_formula(formula=None):
 def create_scatter(x, y, z):
     df = get_blocks_party_spaces()
     if z is None or z == 'None' or z == '':
-        # fig = plt.figure()
-        # ax = fig.add_subplot()
         fig, ax = plt.subplots()
- 
-        ax.scatter(list(df[x]),list(df[y]))
+
+        ax.scatter(list(df[x]),list(df[y]), marker='o', s=50, c='blue')
         for i, label in enumerate(list(df['model'])):
             ax.text(list(df[x])[i],list(df[y])[i],str(label))
         ax.set_xlabel(x)
         ax.set_ylabel(y)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+
     else:
         fig = px.scatter_3d(df, x=x, y=y, z=z, text=df['model'])
 
@@ -93,3 +96,4 @@ with block:
     block.load(get_blocks_party_spaces_with_formula, inputs=None, outputs=data)
 
 block.launch(share=True)
+# block.launch( )

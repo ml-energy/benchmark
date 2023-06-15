@@ -1,6 +1,8 @@
 ---
 title: ML.ENERGY Leaderboard
 app_file: app.py
+sdk: gradio
+sdk_version: 3.23.0
 pinned: false
 ---
 

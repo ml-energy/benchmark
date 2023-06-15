@@ -20,3 +20,10 @@ Currently setup in `ampere02`:
 ```bash
 export TRANSFORMERS_CACHE=/data/leaderboard/hfcache
 ```
+
+Run benchmarks like this:
+
+```console
+$ python benchmark.py --model-path /data/leaderboard/weights/lmsys/vicuna-7B --input-file /data/leaderboard/sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+$ python benchmark.py --model-path databricks/dolly-v2-12b --input-file /data/leaderboard/sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+```

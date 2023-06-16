@@ -41,6 +41,7 @@ SYSTEM_PROMPTS = {
 def main(
     model_path: str,
     input_file: str,
+    output_dir: str = "data",
     device_index: int = 0,
     task: Literal[tuple(SYSTEM_PROMPTS)] = "chat",  # type: ignore
     load_8bit: bool = False,
@@ -48,20 +49,18 @@ def main(
     repitition_penalty: float = 1.0,
     max_new_tokens: int = 512,
 ) -> None:
-    """Run the main routine.
-
-    Code structure is based on
-    https://github.com/lm-sys/FastChat/blob/57dea54055/fastchat/serve/inference.py#L249
+    """Run benchmarking for one model on the entire input file.
 
     Args:
         model_path: Path to or Huggingface Hub Id of the model.
         input_file: Path to the input JSON file. Assumed to be our cleaned ShareGPT data.
-        device_index: Index of the GPU to use for inference.
-        task: Type of task to perform inference on.
-        load_8bit: Whether to load the model in 8-bit mode.
-        temperature: Temperature to use for sampling.
-        repitition_penalty: Repitition penalty to use for the model.
-        max_new_tokens: Maximum numbers of tokens to generate, ignoring the prompt.
+        output_dir: Path to the output directory. (Default: "data")
+        device_index: Index of the GPU to use for inference. (Default: 0)
+        task: Type of task to perform inference on. (Default: "chat")
+        load_8bit: Whether to load the model in 8-bit mode. (Default: False)
+        temperature: Temperature to use for sampling. (Default: 0.7)
+        repitition_penalty: Repitition penalty to use for the model. (Default: 1.0)
+        max_new_tokens: Maximum numbers of tokens to generate, ignoring the prompt. (Default: 512)
     """
     # NOTE(JW): ChatGLM is implemented as a special case in FastChat inference.
     # Also, it's primarily a model that's fine-tuned for Chinese, so it doesn't
@@ -76,7 +75,7 @@ def main(
     if model_path.endswith("/"):
         model_path = model_path[:-1]
     model_name_cleaned = "--".join(model_path.split("/")[-2:])
-    output_dir = f"data/{task}/{model_name_cleaned}"
+    output_dir = f"{output_dir}/{task}/{model_name_cleaned}"
     output_csv_path = f"{output_dir}/benchmark.json"
     config_json_path = f"{output_dir}/config.json"
     table = Table(title="Benchmark")

@@ -1,4 +1,12 @@
+# OS-related
 **/.DS_Store
+
+# Environment
 .envrc
+
+# Editor
 pyrightconfig.json
 .idea
+
+# Data
+data/

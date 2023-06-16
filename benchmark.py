@@ -175,7 +175,8 @@ def main(
         gen_params["prompt"] = prompt
 
         # Print input prompt.
-        rich.print(f"\n[u]{'Warmup ' if is_warmup else ''}Prompt[/u]:\n{prompt.strip()}\n")
+        rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Prompt[/u cyan]:")
+        print(prompt.strip() + "\n")
 
         # Generate the ouptut from the model.
         output_stream = generate_stream(model, tokenizer, gen_params, device="cuda")
@@ -216,7 +217,8 @@ def main(
             output_json.flush()
 
         # Print the response.
-        rich.print(f"\n[u]{'Warmup ' if is_warmup else ''}Response[/u]:\n{output_text.strip()}\n")
+        rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Response[/u cyan]:")
+        print(output_text.strip() + "\n")
 
         # Print measurement.
         rich.print(measurements)

@@ -3,13 +3,11 @@
 ## Download ShareGPT
 ```
 https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/HTML_cleaned_raw_dataset/sg_90k_part1_html_cleaned.json
-
-https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/HTML_cleaned_raw_dataset/sg_90k_part2_html_cleaned.json
 ```
 
 ## Install Fastchat
 ```
-pip install fastchat
+pip install fschat
 ```
 
 ## Clean data:

@@ -176,7 +176,7 @@ def main(
 
         # Print input prompt.
         rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Prompt[/u cyan]:")
-        print(prompt.strip() + "\n")
+        rich.get_console().print(prompt.strip() + "\n", markup=False)
 
         # Generate the ouptut from the model.
         output_stream = generate_stream(model, tokenizer, gen_params, device="cuda")
@@ -218,7 +218,7 @@ def main(
 
         # Print the response.
         rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Response[/u cyan]:")
-        print(output_text.strip() + "\n")
+        rich.get_console().print(output_text.strip() + "\n")
 
         # Print measurement.
         rich.print(measurements)

@@ -69,6 +69,9 @@ def main(
     if "chatglm" in model_path.lower():
         raise ValueError("ChatGLM is not supported.")
 
+    # Get Rich Console instance.
+    console = rich.get_console()
+
     # Print out what we're about to do.
     if model_path.endswith("/"):
         model_path = model_path[:-1]
@@ -89,7 +92,7 @@ def main(
     table.add_row("Max New Tokens", str(max_new_tokens))
     table.add_row("Output CSV", output_csv_path)
     table.add_row("Config JSON", config_json_path)
-    rich.get_console().print(table)
+    console.print(table)
 
     # Set the device.
     torch.cuda.set_device(f"cuda:{device_index}")
@@ -175,8 +178,8 @@ def main(
         gen_params["prompt"] = prompt
 
         # Print input prompt.
-        rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Prompt[/u cyan]:")
-        rich.get_console().print(prompt.strip() + "\n", markup=False)
+        console.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Prompt[/u cyan]:")
+        console.print(prompt.strip() + "\n", markup=False)
 
         # Generate the ouptut from the model.
         output_stream = generate_stream(model, tokenizer, gen_params, device="cuda")
@@ -217,11 +220,11 @@ def main(
             output_json.flush()
 
         # Print the response.
-        rich.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Response[/u cyan]:")
-        rich.get_console().print(output_text.strip() + "\n")
+        console.print(f"\n[u cyan]{'Warmup ' if is_warmup else ''}Response[/u cyan]:")
+        console.print(output_text.strip() + "\n", markup=False)
 
         # Print measurement.
-        rich.print(measurements)
+        console.print(measurements)
 
 
 if __name__ == "__main__":

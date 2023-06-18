@@ -1,6 +1,6 @@
 # ML.ENERGY Leaderboard
 
-[![Leaderboard](https://custom-icon-badges.herokuapp.com/badge/ML.ENERGY-Leaderboard-blue.svg)](https://ml.energy/leaderboard)
+[![Leaderboard](https://custom-icon-badges.herokuapp.com/badge/ML.ENERGY-Leaderboard-blue.svg?logo=ml-energy)](https://ml.energy/leaderboard)
 [![Deploy](https://github.com/ml-energy/leaderboard/actions/workflows/push_spaces.yaml/badge.svg?branch=web)](https://github.com/ml-energy/leaderboard/actions/workflows/push_spaces.yaml)
 [![Apache-2.0 License](https://custom-icon-badges.herokuapp.com/github/license/ml-energy/leaderboard?logo=law)](/LICENSE)
 

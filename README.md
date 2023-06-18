@@ -2,24 +2,36 @@
 
 How much energy do LLMs consume?
 
-## Devs
+This README focuses on explaining how to run the benchmark yourself.
+The actual leaderboard is here: https://ml.energy/leaderboard.
 
-Current setup in `ampere02`:
+## Setup
 
-1. Find model weights in `/data/leaderboard/weights/`, e.g. subdirectory `llama` and `vicuna`.
-2. Let's share the Huggingface Transformer cache:
+### Model weights
 
-```bash
-export TRANSFORMERS_CACHE=/data/leaderboard/hfcache
-```
+- For models that are directly accessible in Hugging Face Hub, you don't need to do anything.
+- For other models, convert them to Hugging Face format and put them in `/data/leaderboard/weights/lmsys/vicuna-13B`, for example. The last two path components (e.g., `lmsys/vicuna-13B`) are taken as the name of the model.
 
-Run benchmarks like this:
+### Docker container
 
 ```console
-$ docker build -t leaderboard:latest .
-$ docker run -it --name jw-leaderboard --gpus all --cap-add SYS_ADMIN -v /data/leaderboard:/data/leaderboard -v $HOME/workspace/leaderboard:/workspace/leaderboard leaderboard:latest bash
+$ git clone https://github.com/ml-energy/leaderboard.git
+$ cd leaderboard
+$ docker build -t ml-energy:latest .
+# Replace /data/leaderboard with your data directory.
+$ docker run -it \
+    --name leaderboard \
+    --gpus all \
+    -v /data/leaderboard:/data/leaderboard \
+    -v $HOME/workspace/leaderboard:/workspace/leaderboard \
+    ml-energy:latest bash
+```
 
-# cd leaderboard
-# python scripts/benchmark.py --model-path /data/leaderboard/weights/lmsys/vicuna-7B --input-file /data/leaderboard/sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
-# python scripts/benchmark.py --model-path databricks/dolly-v2-12b --input-file /data/leaderboard/sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+## Running the benchmark
+
+```console
+# Inside the container
+$ cd /workspace/leaderboard
+$ python scripts/benchmark.py --model-path /data/leaderboard/weights/lmsys/vicuna-13B --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+$ python scripts/benchmark.py --model-path databricks/dolly-v2-12b --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
 ```

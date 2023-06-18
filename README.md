@@ -27,7 +27,7 @@ $ docker run -it \
     --name leaderboard \
     --gpus all \
     -v /data/leaderboard:/data/leaderboard \
-    -v $HOME/workspace/leaderboard:/workspace/leaderboard \
+    -v $(pwd):/workspace/leaderboard \
     ml-energy:latest bash
 ```
 

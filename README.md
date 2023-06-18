@@ -1,4 +1,4 @@
-<h1><a href="https://ml.energy" style="color: #27cb63; text-decoration: none">ML.ENERGY</a> Leaderboard</h1>
+<h1><a href="https://ml.energy" style="color: #27cb63 !important; text-decoration: none">ML.ENERGY</a> Leaderboard</h1>
 
 How much energy do LLMs consume?
 

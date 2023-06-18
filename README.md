@@ -1,5 +1,9 @@
 # ML.ENERGY Leaderboard
 
+[![Leaderboard](https://custom-icon-badges.herokuapp.com/badge/ML.ENERGY-Leaderboard-27cb63.svg)](https://ml.energy/leaderboard)
+[![Deploy](https://github.com/ml-energy/leaderboard/actions/workflows/push_spaces.yaml/badge.svg?branch=web)](https://github.com/ml-energy/leaderboard/actions/workflows/push_spaces.yaml)
+[![Apache-2.0 License](https://custom-icon-badges.herokuapp.com/github/license/ml-energy/leaderboard?logo=law)](/LICENSE)
+
 How much energy do LLMs consume?
 
 This README focuses on explaining how to run the benchmark yourself.

@@ -1,4 +1,4 @@
-"""Perform inference of one model on one input prompt and measure time and energy."""
+"""Perform inference of one model on a dataset and measure time and energy."""
 
 from __future__ import annotations
 

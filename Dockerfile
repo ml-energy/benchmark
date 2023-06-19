@@ -36,3 +36,5 @@ RUN cd leaderboard \
       && cd ..
 
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache
+
+WORKDIR /workspace/leaderboard

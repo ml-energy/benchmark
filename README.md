@@ -1,3 +1,13 @@
+---
+title: "ML.ENERGY Leaderboard"
+python_version: "3.9"
+app_file: "app.py"
+sdk: "gradio"
+sdk_version: "3.35.2"
+pinned: true
+tags: ["energy", "leaderboard"]
+---
+
 # ML.ENERGY Leaderboard
 
 [![Leaderboard](https://custom-icon-badges.herokuapp.com/badge/ML.ENERGY-Leaderboard-blue.svg?logo=ml-energy)](https://ml.energy/leaderboard)

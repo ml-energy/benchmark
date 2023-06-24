@@ -32,7 +32,7 @@ RUN git clone https://github.com/SymbioticLab/Zeus.git zeus \
 # Install requirements for benchmarking
 ADD . /workspace/leaderboard
 RUN cd leaderboard \
-      && pip install -r requirements.txt \
+      && pip install -r requirements-benchmark.txt \
       && cd ..
 
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache

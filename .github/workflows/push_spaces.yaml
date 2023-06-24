@@ -1,0 +1,35 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'data/**'
+      - 'app.py'
+      - 'LEADERBOARD.md'
+      - 'README.md'
+      - 'requirements.txt'
+
+concurrency:
+  group: ${{ github.ref }}-hfdeploy
+  cancel-in-progress: true
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+          ref: master
+      - name: Push to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          for i in 1 2 3 4 5; do
+            git push -f https://jaywonchung:$HF_TOKEN@huggingface.co/spaces/symbioticlab/ml-energy-leaderboard master:main && break || sleep 5;
+          done

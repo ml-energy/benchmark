@@ -13,6 +13,7 @@ That is, when asked the same thing, they answer in different lengths.
 - `response_length` (token): The average number of tokens in the model's response.
 - `latency` (s): The average time it took for the model to generate a response.
 - `energy` (J): The average energy consumed by the model to generate a response.
+- `parameters`: The number of parameters the model has, in units of billion.
 
 ## Tasks
 

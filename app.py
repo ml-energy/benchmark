@@ -255,7 +255,7 @@ with block:
         with gr.TabItem("Leaderboard"):
             with gr.Row():
                 with gr.Box():
-                    gr.Markdown("## Select benchmark parameters")
+                    gr.Markdown("## Select benchmark results to show")
                     checkboxes = []
                     for key, choices in global_tbm.schema.items():
                         # Specifying `value` makes everything checked by default.

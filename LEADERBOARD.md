@@ -67,3 +67,9 @@ A chat between a human user (prompter) and an artificial intelligence (AI) assis
 - Other model/sampling parameters
 - More models
 - Model quality evaluation numbers (e.g., AI2 Reasoning Challenge, HellaSwag)
+
+# License
+
+This leaderboard is a research preview intended for non-commercial use only.
+The use of LLaMA weights are subject to their [license](https://github.com/facebookresearch/llama/blob/main/MODEL_CARD.md).
+Please direct inquiries and reports of potential license/copyright violation to Jae-Won Chung.

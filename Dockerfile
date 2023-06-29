@@ -20,14 +20,8 @@ RUN mkdir -p /root/.local \
     && rm -f Miniconda3-py39_23.3.1-0-Linux-x86_64.sh \
     && ln -sf /root/.local/miniconda3/etc/profile.d/conda.sh /etc/profile.d/conda.sh
 
-# Install PyTorch
-RUN pip install torch==2.0.1
-
-# Install the HEAD commit of Zeus (for ZeusMonitor)
-RUN git clone https://github.com/SymbioticLab/Zeus.git zeus \
-      && cd zeus \
-      && pip install -e . \
-      && cd ..
+# Install PyTorch and Zeus
+RUN pip install torch==2.0.1 zeus-ml==0.4.0
 
 # Install requirements for benchmarking
 ADD . /workspace/leaderboard

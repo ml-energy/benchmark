@@ -28,18 +28,19 @@ The actual leaderboard is here: https://ml.energy/leaderboard.
 
 ### Docker container
 
+We have our pre-built Docker image published with the tag `mlenergy/leaderboard:latest` ([Dockerfile](/Dockerfile)).
+
 ```console
-$ git clone https://github.com/ml-energy/leaderboard.git
-$ cd leaderboard
-$ docker build -t ml-energy:latest .
-# Replace /data/leaderboard with your data directory.
 $ docker run -it \
-    --name leaderboard \
-    --gpus all \
-    -v /data/leaderboard:/data/leaderboard \
+    --name leaderboard0 \
+    --gpus '"device=0"' \
+    -v /path/to/your/data/dir:/data/leaderboard \
     -v $(pwd):/workspace/leaderboard \
-    ml-energy:latest bash
+    mlenergy/leaderboard:latest bash
 ```
+
+The container internally expects weights to be inside `/data/leaderboard/weights` (e.g., `/data/leaderboard/weights/lmsys/vicuna-7B`), and sets the Hugging Face cache directory to `/data/leaderboard/hfcache`.
+If needed, the repository should be mounted to `/workspace/leaderboard` to override the copy of the repository inside the container.
 
 ## Running the benchmark
 
@@ -48,8 +49,6 @@ We run benchmarks using multiple nodes and GPUs using [Pegasus](https://github.c
 You can still run benchmarks without Pegasus like this:
 
 ```console
-# Inside the container
-$ cd /workspace/leaderboard
-$ python scripts/benchmark.py --model-path /data/leaderboard/weights/lmsys/vicuna-13B --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
-$ python scripts/benchmark.py --model-path databricks/dolly-v2-12b --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+$ docker exec leaderboard0 python scripts/benchmark.py --model-path /data/leaderboard/weights/lmsys/vicuna-13B --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
+$ docker exec leaderboard0 python scripts/benchmark.py --model-path databricks/dolly-v2-12b --input-file sharegpt/sg_90k_part1_html_cleaned_lang_first_sampled.json
 ```

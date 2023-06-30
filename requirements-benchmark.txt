@@ -1,4 +1,4 @@
-zeus-ml
+zeus-ml==0.4.0
 fschat==0.2.14
 rwkv==0.7.5
 einops

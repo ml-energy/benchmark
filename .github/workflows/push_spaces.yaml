@@ -12,7 +12,7 @@ on:
       - 'requirements.txt'
 
 concurrency:
-  group: ${{ github.ref }}-hfdeploy
+  group: ${{ github.ref }}-hfpush
   cancel-in-progress: true
 
 jobs:

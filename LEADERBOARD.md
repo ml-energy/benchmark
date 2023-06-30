@@ -2,8 +2,9 @@ The goal of the ML.ENERGY Leaderboard is to give people a sense of how much **en
 
 ## How is energy different?
 
-Even between models with the exact same architecture and size, the average energy consumption per prompt is different because they have **different verbosity**.
-That is, when asked the same thing, they answer in different lengths.
+The energy consumption of running inference on a model will depends on factors such as architecture, size, and GPU model.
+However, even if we run models with the exact same architecture and size on the same GPU, the average energy consumption **per prompt** is different because different models have **different verbosity**.
+That is, when asked the same thing, different models answer in different lengths.
 
 ## Metrics
 
@@ -62,11 +63,10 @@ A chat between a human user (prompter) and an artificial intelligence (AI) assis
 
 ## Upcoming
 
-- Compare against more optimized inference runtimes, like TensorRT.
-- Other GPUs
-- Other model/sampling parameters
+- Compare energy numbers against more optimized inference runtimes, like TensorRT.
+- More GPU types
 - More models
-- Model quality evaluation numbers (e.g., AI2 Reasoning Challenge, HellaSwag)
+- Other model/sampling parameters
 
 # License
 

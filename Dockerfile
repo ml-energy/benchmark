@@ -1,7 +1,5 @@
 FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
 
-WORKDIR /workspace
-
 # Basic installs
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ='America/Detroit'
@@ -21,14 +19,15 @@ RUN mkdir -p /root/.local \
     && ln -sf /root/.local/miniconda3/etc/profile.d/conda.sh /etc/profile.d/conda.sh
 
 # Install PyTorch and Zeus
-RUN pip install torch==2.0.1 zeus-ml==0.4.0
+RUN pip install torch==2.0.1
 
 # Install requirements for benchmarking
 ADD . /workspace/leaderboard
-RUN cd leaderboard \
-      && pip install -r requirements-benchmark.txt \
-      && cd ..
+RUN cd /workspace/leaderboard \
+      && pip install -r requirements-benchmark.txt
 
+# Where all the weights downloaded from Hugging Face Hub will go to
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache
 
+# So that docker exec container python scripts/benchmark.py will work
 WORKDIR /workspace/leaderboard

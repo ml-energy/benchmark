@@ -13,9 +13,9 @@ def main(data_dir: str) -> None:
     for i, model_name in enumerate(model_names):
         try:
             benchmark = json.load(open(f"{data_dir}/{model_name}/benchmark.json"))
-            print(f"[{i:2d}] {len(benchmark):5d} results found for", model_name)
+            print(f"{i:2d} {len(benchmark):5d} results found for", model_name)
         except json.JSONDecodeError:
-            print(f"[{i:2d}] [ERR] results founds for {model_name}")
+            print(f"{i:2d} [ERR] results found for {model_name}")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ on:
       - 'LEADERBOARD.md'
       - 'README.md'
       - 'requirements.txt'
+      - 'index.html'
+      - 'LICENSE'
 
 concurrency:
   group: ${{ github.ref }}-hfpush

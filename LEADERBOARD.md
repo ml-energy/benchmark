@@ -73,3 +73,7 @@ A chat between a human user (prompter) and an artificial intelligence (AI) assis
 This leaderboard is a research preview intended for non-commercial use only.
 The use of LLaMA weights are subject to their [license](https://github.com/facebookresearch/llama/blob/main/MODEL_CARD.md).
 Please direct inquiries and reports of potential license/copyright violation to Jae-Won Chung.
+
+# Acknowledgements
+
+We thank [Chameleon Cloud](https://www.chameleoncloud.org/) for the A100 GPU nodes (`gpu_a100_pcie`) and [CloudLab](https://cloudlab.us/) for the V100 GPU nodes (`r7525`).

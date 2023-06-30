@@ -66,7 +66,6 @@ A chat between a human user (prompter) and an artificial intelligence (AI) assis
 - Compare energy numbers against more optimized inference runtimes, like TensorRT.
 - More GPU types
 - More models
-- Other model/sampling parameters
 
 # License
 

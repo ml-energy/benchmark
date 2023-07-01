@@ -1,11 +1,14 @@
 ---
 title: "ML.ENERGY Leaderboard"
+emoji: "⚡"
 python_version: "3.9"
 app_file: "app.py"
 sdk: "gradio"
 sdk_version: "3.35.2"
 pinned: true
 tags: ["energy", "leaderboard"]
+colorFrom: "black"
+colorTo: "black"
 ---
 
 # ML.ENERGY Leaderboard

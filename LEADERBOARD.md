@@ -63,11 +63,6 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
 We randomly sampled around 3000 prompts from the [cleaned ShareGPT dataset](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered).
 See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for more detail on how we created the benchmark dataset.
 
-We used identical system prompts for all models (while respecting their own *role* tokens):
-```
-A chat between a human user (prompter) and an artificial intelligence (AI) assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-```
-
 ## NLP evaluation metrics
 
 - `arc`: [AI2 Reasoning Challenge](https://allenai.org/data/arc)'s `challenge` dataset, measures capability to do grade-school level question answering, 25 shot

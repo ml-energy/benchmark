@@ -281,15 +281,16 @@ with block:
     with gr.Tabs():
         # Tab 1: Leaderboard.
         with gr.TabItem("Leaderboard"):
+            # Block 1: Checkboxes to select benchmarking parameters.
             with gr.Row():
                 with gr.Box():
-                    gr.Markdown("## Select benchmark results to show")
+                    gr.Markdown("### Benchmark results to show")
                     checkboxes = []
                     for key, choices in global_tbm.schema.items():
                         # Specifying `value` makes everything checked by default.
                         checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices[:1], label=key))
 
-            # Block 1: Leaderboard table.
+            # Block 2: Leaderboard table.
             with gr.Row():
                 dataframe = gr.Dataframe(type="pandas", elem_id="tab-leaderboard")
             # Make sure the models have clickable links.
@@ -298,7 +299,7 @@ with block:
             for checkbox in checkboxes:
                 checkbox.change(TableManager.set_filter_get_df, inputs=[tbm, *checkboxes], outputs=dataframe)
 
-            # Block 2: Allow users to add new columns.
+            # Block 3: Allow users to add new columns.
             with gr.Row():
                 with gr.Column(scale=3):
                     with gr.Row():
@@ -332,7 +333,7 @@ with block:
                 outputs=[colname_input, formula_input, add_col_message],
             )
 
-            # Block 3: Allow users to plot 2D and 3D scatter plots.
+            # Block 4: Allow users to plot 2D and 3D scatter plots.
             with gr.Row():
                 with gr.Column(scale=3):
                     with gr.Row():
@@ -380,7 +381,7 @@ with block:
                 outputs=[*axis_dropdowns, plot, plot_width_input, plot_height_input, plot_message],
             )
 
-            # Block 4: Leaderboard date.
+            # Block 5: Leaderboard date.
             with gr.Row():
                 gr.HTML(f"<h3 style='color: gray'>Date: {latest_date}</h3>")
 

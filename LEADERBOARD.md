@@ -2,7 +2,7 @@ The goal of the ML.ENERGY Leaderboard is to give people a sense of how much **en
 
 ## How is energy different?
 
-The energy consumption of running inference on a model will depends on factors such as architecture, size, and GPU model.
+The energy consumption of running inference depends on factors such as model architecture, size, and GPU model.
 However, even if we run models with the exact same architecture and size on the same GPU, the average energy consumption **per prompt** is different because different models have **different verbosity**.
 That is, when asked the same thing, different models answer in different lengths.
 

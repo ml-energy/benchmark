@@ -143,7 +143,7 @@ class TableManager:
         return [
             gr.Dropdown.update(choices=columns),
             gr.Dropdown.update(choices=columns),
-            gr.Dropdown.update(choices=["None", *columns])),
+            gr.Dropdown.update(choices=["None", *columns]),
         ]
 
     def set_filter_get_df(self, *filters):

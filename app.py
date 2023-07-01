@@ -133,9 +133,9 @@ class TableManager:
     def get_dropdown(self):
         columns = self.full_df.columns.tolist()[1:] # include gpu and task in the dropdown
         return [
-            gr.Dropdown("nlp_average", choices=columns, label="X"),
-            gr.Dropdown("energy_efficiency", choices=columns, label="Y"),
-            gr.Dropdown(choices=columns, label="Z (optional)"),
+            gr.Dropdown(value="gpu", choices=columns, label="X"),
+            gr.Dropdown(value="nlp_average", choices=columns, label="Y"),
+            gr.Dropdown(value="energy_efficiency", choices=columns, label="Z (optional)"),
         ]
 
     def update_dropdown(self):

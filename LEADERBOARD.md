@@ -83,6 +83,7 @@ A chat between a human user (prompter) and an artificial intelligence (AI) assis
 # License
 
 This leaderboard is a research preview intended for non-commercial use only.
+Model weights were taken as is from the Hugging Face Hub if available and are subject to their licenses.
 The use of LLaMA weights are subject to their [license](https://github.com/facebookresearch/llama/blob/main/MODEL_CARD.md).
 Please direct inquiries/reports of potential violation to Jae-Won Chung.
 

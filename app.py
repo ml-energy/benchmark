@@ -39,10 +39,9 @@ class TableManager:
 
         # The full table where all the data are.
         self.full_df = df
-        # The currently visible table after filtering.
-        self.cur_df = df
-        # The current index of the visible table after filtering.
-        self.cur_index = df.index.to_numpy()
+
+        # Default view of the table is to only show the first options.
+        self.set_filter_get_df()
 
     def _read_tables(self, data_dir: str) -> pd.DataFrame:
         """Read tables."""
@@ -150,7 +149,7 @@ class TableManager:
         """Set the current set of filters and return the filtered DataFrame."""
         # If the filter is empty, we default to the first choice for each key.
         if not filters:
-            filters = [choices[0] for choices in self.schema.values()]
+            filters = [choices[:1] for choices in self.schema.values()]
 
         index = np.full(len(self.full_df), True)
         for setup, choice in zip(self.schema, filters):
@@ -350,7 +349,13 @@ with block:
                     plot_height_input = gr.Textbox("600", lines=1, label="Height (px)")
             with gr.Row():
                 # By default show a plot of average model quality vs energy consumption.
-                plot = gr.Plot(global_tbm.plot_scatter("600", "600", "gpu", "nlp_average", "energy")[0])
+                plot = gr.Plot(global_tbm.plot_scatter(
+                    width=plot_width_input.value,
+                    height=plot_height_input.value,
+                    x=axis_dropdowns[0].value,
+                    y=axis_dropdowns[1].value,
+                    z=axis_dropdowns[2].value,
+                )[0])
             with gr.Row():
                 plot_message = gr.HTML("")
             add_col_btn.click(TableManager.update_dropdown, inputs=tbm, outputs=axis_dropdowns)  # type: ignore
@@ -385,6 +390,6 @@ with block:
             gr.Markdown(open("LEADERBOARD.md").read())
 
     # Load the table on page load.
-    block.load(TableManager.set_filter_get_df, input=tbm, outputs=dataframe)
+    block.load(lambda: global_tbm.set_filter_get_df(), outputs=dataframe)
 
 block.launch()

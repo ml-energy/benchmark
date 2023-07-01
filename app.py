@@ -133,9 +133,9 @@ class TableManager:
     def get_dropdown(self):
         columns = self.full_df.columns.tolist()[1:]
         return [
-            gr.Dropdown(value="gpu", choices=columns, label="X"),
-            gr.Dropdown(value="nlp_average", choices=columns, label="Y"),
-            gr.Dropdown(value="energy_eff", choices=["None", *columns], label="Z (optional)"),
+            gr.Dropdown(value="nlp_average", choices=columns, label="X"),
+            gr.Dropdown(value="energy_eff", choices=columns, label="Y"),
+            gr.Dropdown(choices=["None", *columns], label="Z (optional)"),
         ]
 
     def update_dropdown(self):
@@ -288,7 +288,7 @@ with block:
                     checkboxes = []
                     for key, choices in global_tbm.schema.items():
                         # Specifying `value` makes everything checked by default.
-                        checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices, label=key))
+                        checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices[:1], label=key))
 
             # Block 1: Leaderboard table.
             with gr.Row():

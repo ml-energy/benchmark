@@ -10,7 +10,7 @@ That is, when asked the same thing, different models answer in different lengths
 
 - `gpu`: NVIDIA GPU model name. Note that NLP evaluation was only run once on our A40 GPUs, so this column only changes system-level measurements like latency and energy.
 - `task`: Name of the task. See *Tasks* below for details.
-- `energy_eff`: Our definition of energy efficiency: Average NLP evaluation metric attained per Joule of energy.
+- `energy_eff`: Our definition of energy efficiency: Average NLP evaluation metric attained per Joule of energy (`nlp_average / energy`).
 - `energy` (J): The average energy consumed by the model to generate a response.
 - `nlp_average`: The arithmetic average of the NLP evaluation metrics we obtained. See *NLP evaluation metrics* below for details.
 - `throughput` (token/s): The average number of tokens generated per second.

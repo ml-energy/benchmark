@@ -35,7 +35,7 @@ class TableManager:
         df["model"] = df["model"].apply(format_model_link)
 
         # Sort by our 'energy efficiency' score.
-        df = df.sort_values(by="energy_efficiency", ascending=True)
+        df = df.sort_values(by="energy_eff", ascending=False)
 
         # The full table where all the data are.
         self.full_df = df
@@ -71,24 +71,24 @@ class TableManager:
         if res_df.empty:
             raise ValueError(f"No benchmark CSV files were read from {data_dir=}.")
 
-        df = pd.merge(res_df, df_score, on=["model"])
+        df = pd.merge(res_df, df_score, on=["model"]).round(2)
         
         # Energy efficiency is defined as the amount of average NLP performance
         # the model gets per Joule of energy.
-        df["energy_efficiency"] = df["nlp_average"] / df["energy"]
+        df["energy_eff"] = (df["nlp_average"] / df["energy"]).round(4)
 
         # Order columns.
         columns = df.columns.to_list()
         cols_to_order = ["model"]
         cols_to_order.extend(self.schema.keys())
-        cols_to_order.extend(["energy_efficiency", "energy", "nlp_average"])
+        cols_to_order.extend(["energy_eff", "energy", "nlp_average"])
         columns = cols_to_order + [col for col in columns if col not in cols_to_order]
         df = df[columns]
 
         # Delete rows with *any* NaN values.
         df = df.dropna()
 
-        return df.round(2)
+        return df
 
     def _format_msg(self, text: str) -> str:
         """Formats into HTML that prints in Monospace font."""
@@ -131,20 +131,27 @@ class TableManager:
         return self.cur_df, self._format_msg(f"{verb} column '{column_name}'.")
 
     def get_dropdown(self):
-        columns = self.full_df.columns.tolist()[1:] # include gpu and task in the dropdown
+        columns = self.full_df.columns.tolist()[1:]
         return [
             gr.Dropdown(value="gpu", choices=columns, label="X"),
             gr.Dropdown(value="nlp_average", choices=columns, label="Y"),
-            gr.Dropdown(value="energy_efficiency", choices=columns, label="Z (optional)"),
+            gr.Dropdown(value="energy_eff", choices=["None", *columns], label="Z (optional)"),
         ]
 
     def update_dropdown(self):
         columns = self.full_df.columns.tolist()[1:]
-        dropdown_update = gr.Dropdown.update(choices=columns)
-        return [dropdown_update] * 3
+        return [
+            gr.Dropdown.update(choices=columns),
+            gr.Dropdown.update(choices=columns),
+            gr.Dropdown.update(choices=["None", *columns])),
+        ]
 
     def set_filter_get_df(self, *filters):
         """Set the current set of filters and return the filtered DataFrame."""
+        # If the filter is empty, we default to the first choice for each key.
+        if not filters:
+            filters = [choices[0] for choices in self.schema.values()]
+
         index = np.full(len(self.full_df), True)
         for setup, choice in zip(self.schema, filters):
             index = index & self.full_df[setup].isin(choice)
@@ -378,6 +385,6 @@ with block:
             gr.Markdown(open("LEADERBOARD.md").read())
 
     # Load the table on page load.
-    block.load(lambda tbm: tbm.full_df, inputs=tbm, outputs=dataframe)
+    block.load(TableManager.set_filter_get_df, input=tbm, outputs=dataframe)
 
 block.launch()

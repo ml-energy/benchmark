@@ -1,2 +1,2 @@
-gpu: ["A40", "A100"]
+gpu: ["A100", "A40"]
 task: ["chat", "chat-concise", "instruct", "instruct-concise"]

@@ -19,9 +19,9 @@ class TableManager:
         """Load leaderboard data from CSV files in data_dir."""
         # Load and merge CSV files.
         df = self._read_tables(data_dir)
-        models = json.load(open(f"{data_dir}/models.json"))
 
         # Add the #params column.
+        models = json.load(open(f"{data_dir}/models.json"))
         df["parameters"] = df["model"].apply(lambda x: models[x]["params"])
 
         # Make the first column (model) an HTML anchor to the model's website.
@@ -34,8 +34,8 @@ class TableManager:
             )
         df["model"] = df["model"].apply(format_model_link)
 
-        # Sort by energy.
-        df = df.sort_values(by="energy", ascending=True)
+        # Sort by our 'energy efficiency' score.
+        df = df.sort_values(by="energy_efficiency", ascending=True)
 
         # The full table where all the data are.
         self.full_df = df
@@ -47,6 +47,11 @@ class TableManager:
     def _read_tables(self, data_dir: str) -> pd.DataFrame:
         """Read tables."""
         df_score = pd.read_csv(f"{data_dir}/score.csv")
+
+        # Compute average NLP metrics
+        columns = df_score.columns.to_list()
+        columns.remove("model")
+        df_score["nlp_average"] = df_score[columns].mean(axis=1)
 
         with open(f"{data_dir}/schema.yaml") as file:
             self.schema: dict[str, list] = yaml.safe_load(file)
@@ -66,7 +71,24 @@ class TableManager:
         if res_df.empty:
             raise ValueError(f"No benchmark CSV files were read from {data_dir=}.")
 
-        return pd.merge(res_df, df_score, on=["model"]).round(2)
+        df = pd.merge(res_df, df_score, on=["model"])
+        
+        # Energy efficiency is defined as the amount of average NLP performance
+        # the model gets per Joule of energy.
+        df["energy_efficiency"] = df["nlp_average"] / df["energy"]
+
+        # Order columns.
+        columns = df.columns.to_list()
+        cols_to_order = ["model"]
+        cols_to_order.extend(self.schema.keys())
+        cols_to_order.extend(["energy_efficiency", "energy", "nlp_average"])
+        columns = cols_to_order + [col for col in columns if col not in cols_to_order]
+        df = df[columns]
+
+        # Delete rows with *any* NaN values.
+        df = df.dropna()
+
+        return df.round(2)
 
     def _format_msg(self, text: str) -> str:
         """Formats into HTML that prints in Monospace font."""
@@ -111,8 +133,8 @@ class TableManager:
     def get_dropdown(self):
         columns = self.full_df.columns.tolist()[1:] # include gpu and task in the dropdown
         return [
-            gr.Dropdown(choices=columns, label="X"),
-            gr.Dropdown(choices=columns, label="Y"),
+            gr.Dropdown("nlp_average", choices=columns, label="X"),
+            gr.Dropdown("energy_efficiency", choices=columns, label="Y"),
             gr.Dropdown(choices=columns, label="Z (optional)"),
         ]
 
@@ -320,7 +342,8 @@ with block:
                     plot_width_input = gr.Textbox("600", lines=1, label="Width (px)")
                     plot_height_input = gr.Textbox("600", lines=1, label="Height (px)")
             with gr.Row():
-                plot = gr.Plot()
+                # By default show a plot of average model quality vs energy consumption.
+                plot = gr.Plot(global_tbm.plot_scatter("600", "600", "gpu", "nlp_average", "energy")[0])
             with gr.Row():
                 plot_message = gr.HTML("")
             add_col_btn.click(TableManager.update_dropdown, inputs=tbm, outputs=axis_dropdowns)  # type: ignore

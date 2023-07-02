@@ -35,7 +35,7 @@ class TableManager:
         df["model"] = df["model"].apply(format_model_link)
 
         # Sort by our 'energy efficiency' score.
-        df = df.sort_values(by="energy_eff", ascending=False)
+        df = df.sort_values(by="energy", ascending=True)
 
         # The full table where all the data are.
         self.full_df = df
@@ -46,11 +46,6 @@ class TableManager:
     def _read_tables(self, data_dir: str) -> pd.DataFrame:
         """Read tables."""
         df_score = pd.read_csv(f"{data_dir}/score.csv")
-
-        # Compute average NLP metrics
-        columns = df_score.columns.to_list()
-        columns.remove("model")
-        df_score["nlp_average"] = df_score[columns].mean(axis=1)
 
         with open(f"{data_dir}/schema.yaml") as file:
             self.schema: dict[str, list] = yaml.safe_load(file)
@@ -71,16 +66,12 @@ class TableManager:
             raise ValueError(f"No benchmark CSV files were read from {data_dir=}.")
 
         df = pd.merge(res_df, df_score, on=["model"]).round(2)
-        
-        # Energy efficiency is defined as the amount of average NLP performance
-        # the model gets per Joule of energy.
-        df["energy_eff"] = (df["nlp_average"] / df["energy"]).round(4)
 
         # Order columns.
         columns = df.columns.to_list()
         cols_to_order = ["model"]
         cols_to_order.extend(self.schema.keys())
-        cols_to_order.extend(["energy_eff", "energy", "nlp_average"])
+        cols_to_order.append("energy")
         columns = cols_to_order + [col for col in columns if col not in cols_to_order]
         df = df[columns]
 
@@ -118,10 +109,19 @@ class TableManager:
 
         # Evaluate the formula and catch any error.
         try:
-            col = self.full_df.eval(formula)
-            if isinstance(col, pd.Series):
+            # Give the users some helper functions that can be used in the formula
+            # like "@sum(response_length)".
+            col = self.full_df.eval(
+                formula,
+                local_dict={"sum": sum, "len": len, "max": max, "min": min},
+            )
+            # Only round floating point columns.
+            if isinstance(col, pd.Series) and col.dtype.kind == "f":
                 col = col.round(2)
-            self.full_df[column_name] = col
+            if column_name in self.full_df.columns:
+                self.full_df[column_name] = col
+            else:
+                self.full_df.insert(len(self.schema) + 1, column_name, col)
         except Exception as exc:
             return self.cur_df, self._format_msg(f"Invalid formula: {exc}")
 
@@ -132,8 +132,8 @@ class TableManager:
     def get_dropdown(self):
         columns = self.full_df.columns.tolist()[1:]
         return [
-            gr.Dropdown(value="nlp_average", choices=columns, label="X"),
-            gr.Dropdown(value="energy_eff", choices=columns, label="Y"),
+            gr.Dropdown(choices=columns, label="X"),
+            gr.Dropdown(choices=columns, label="Y"),
             gr.Dropdown(choices=["None", *columns], label="Z (optional)"),
         ]
 
@@ -303,8 +303,8 @@ with block:
             with gr.Row():
                 with gr.Column(scale=3):
                     with gr.Row():
-                        colname_input = gr.Textbox("power", lines=1, label="Custom column name")
-                        formula_input = gr.Textbox("energy/latency", lines=1, label="Formula")
+                        colname_input = gr.Textbox(lines=1, label="Custom column name")
+                        formula_input = gr.Textbox(lines=1, label="Formula (@sum, @len, @max, and @min are supported)")
                 with gr.Column(scale=1):
                     with gr.Row():
                         add_col_btn = gr.Button("Add to table (⏎)", elem_classes=["btn-submit"])
@@ -312,6 +312,14 @@ with block:
                         clear_input_btn = gr.Button("Clear")
             with gr.Row():
                 add_col_message = gr.HTML("")
+            gr.Examples(
+                examples=[
+                    ["power", "energy / latency"],
+                    ["token_per_joule", "response_length / energy"],
+                    ["verbose", "response_length > @sum(response_length) / @len(response_length)"],
+                ],
+                inputs=[colname_input, formula_input],
+            )
             colname_input.submit(
                 TableManager.add_column,
                 inputs=[tbm, colname_input, formula_input],
@@ -349,14 +357,7 @@ with block:
                     plot_width_input = gr.Textbox("600", lines=1, label="Width (px)")
                     plot_height_input = gr.Textbox("600", lines=1, label="Height (px)")
             with gr.Row():
-                # By default show a plot of average model quality vs energy consumption.
-                plot = gr.Plot(global_tbm.plot_scatter(
-                    width=plot_width_input.value,
-                    height=plot_height_input.value,
-                    x=axis_dropdowns[0].value,
-                    y=axis_dropdowns[1].value,
-                    z=axis_dropdowns[2].value,
-                )[0])
+                plot = gr.Plot()
             with gr.Row():
                 plot_message = gr.HTML("")
             add_col_btn.click(TableManager.update_dropdown, inputs=tbm, outputs=axis_dropdowns)  # type: ignore

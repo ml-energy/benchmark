@@ -1,18 +1,10 @@
 The goal of the ML.ENERGY Leaderboard is to give people a sense of how much **energy** LLMs would consume.
 
-## How is energy different?
-
-The energy consumption of running inference depends on factors such as model architecture, size, and GPU model.
-However, even if we run models with the exact same architecture and size on the same GPU, the average energy consumption **per prompt** is different because different models have **different verbosity**.
-That is, when asked the same thing, different models answer in different lengths.
-
 ## Columns
 
 - `gpu`: NVIDIA GPU model name. Note that NLP evaluation was only run once on our A40 GPUs, so this column only changes system-level measurements like latency and energy.
 - `task`: Name of the task. See *Tasks* below for details.
-- `energy_eff`: Our definition of energy efficiency: Average NLP evaluation metric attained per Joule of energy (`nlp_average / energy`).
 - `energy` (J): The average energy consumed by the model to generate a response.
-- `nlp_average`: The arithmetic average of the NLP evaluation metrics we obtained. See *NLP evaluation metrics* below for details.
 - `throughput` (token/s): The average number of tokens generated per second.
 - `latency` (s): The average time it took for the model to generate a response.
 - `response_length` (token): The average number of tokens in the model's response.

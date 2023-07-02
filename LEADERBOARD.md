@@ -63,7 +63,9 @@ See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for mo
 
 ## Upcoming
 
+- Within the Summer, we'll add an LLM Arena for energy consumption!
 - More optimized inference runtimes, like TensorRT.
+- Larger models with distributed inference, like Falcon 40B.
 - More GPU models, like V100.
 - More models, like RWKV.
 

@@ -24,9 +24,9 @@ Otherwise, you can set up Rust [here](https://www.rust-lang.org/tools/install), 
 Every node must have two things:
 
 1. This repository cloned under `~/workspace/leaderboard`.
-  - If you want a different path, search and replace in `setup-nodes.yaml`.
+  - If you want a different path, search and replace in `spawn-containers.yaml`.
 2. Model weights under `/data/leaderboard/weights`.
-  - If you want a different path, search and replace in `setup-nodes.yaml` and `benchmark.yaml`.
+  - If you want a different path, search and replace in `setupspawn-containers.yaml` and `benchmark.yaml`.
 
 ### Specify node names for Pegasus
 
@@ -37,11 +37,11 @@ Modify `hosts.yaml` with nodes. See the file for an example.
 
 ### Set up Docker containers on your nodes with Pegasus
 
-This builds our Docker image and spawns one container per GPU (named `leaderboard%d`), for every node.
+This spawns one container per GPU (named `leaderboard%d`), for every node.
 
 ```console
 $ cd pegasus
-$ cp setup-nodes.yaml queue.yaml
+$ cp spawn-containers.yaml queue.yaml
 $ pegasus b
 ```
 

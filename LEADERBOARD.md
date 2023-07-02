@@ -4,7 +4,7 @@ The goal of the ML.ENERGY Leaderboard is to give people a sense of how much **en
 
 - `gpu`: NVIDIA GPU model name. Note that NLP evaluation was only run once on our A40 GPUs, so this column only changes system-level measurements like latency and energy.
 - `task`: Name of the task. See *Tasks* below for details.
-- `energy` (J): The average energy consumed by the model to generate a response.
+- `energy` (J): The average GPU energy consumed by the model to generate a response.
 - `throughput` (token/s): The average number of tokens generated per second.
 - `latency` (s): The average time it took for the model to generate a response.
 - `response_length` (token): The average number of tokens in the model's response.

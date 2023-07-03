@@ -61,6 +61,11 @@ See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for mo
 - `hellaswag`: [HellaSwag dataset](https://allenai.org/data/hellaswag), measuring grounded commonsense, 10 shot
 - `truthfulqa`: [TruthfulQA dataset](https://arxiv.org/abs/2109.07958), measuring truthfulness against questions that elicit common falsehoods, 0 shot
 
+## Limitations
+
+Currently, inference is run with basically bare PyTorch with batch size 1, which is unrealistic assuming a production serving scenario.
+Hence, absolute latency, throughput, and energy numbers should not be used to estimate figures in real production settings, while relative comparison makes some sense.
+
 ## Upcoming
 
 - Within the Summer, we'll add an LLM Arena for energy consumption!

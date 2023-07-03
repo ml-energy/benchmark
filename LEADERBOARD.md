@@ -50,7 +50,7 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
   - Temperature 0.7
   - Repetition penalty 1.0
 
-## Data
+## Data used for benchmarking
 
 We randomly sampled around 3000 prompts from the [cleaned ShareGPT dataset](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered).
 See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for more detail on how we created the benchmark dataset.

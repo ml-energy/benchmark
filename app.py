@@ -11,6 +11,7 @@ import gradio as gr
 import pandas as pd
 import plotly.io as pio
 import plotly.express as px
+from pandas.api.types import is_numeric_dtype, is_float_dtype
 pio.templates.default = "plotly_white"
 
 
@@ -110,20 +111,32 @@ class TableManager:
         # Evaluate the formula and catch any error.
         try:
             # Give the users some helper functions that can be used in the formula
-            # like "@sum(response_length)".
+            # like "@sum(response_length)". Also wipe out some global variables.
             col = self.full_df.eval(
                 formula,
                 local_dict={"sum": sum, "len": len, "max": max, "min": min},
+                global_dict={"global_tbm": None},
             )
-            # Only round floating point columns.
-            if isinstance(col, pd.Series) and col.dtype.kind == "f":
-                col = col.round(2)
-            if column_name in self.full_df.columns:
-                self.full_df[column_name] = col
-            else:
-                self.full_df.insert(len(self.schema) + 1, column_name, col)
         except Exception as exc:
             return self.cur_df, self._format_msg(f"Invalid formula: {exc}")
+
+        # If the result is a numeric scalar, make it a Series.
+        # We may have deleted some models (rows) form the full dataframe when we
+        # called dropna, so we need to query the maximum index instead of taking len.
+        if isinstance(col, (int, float)):
+            col = pd.Series([col] * (self.full_df.index.max() + 1))
+        # We only accept numeric columns.
+        if not is_numeric_dtype(col):
+            return self.cur_df, self._format_msg("Invalid formula: result must be numeric.")
+        # Round if it's floating point.
+        if is_float_dtype(col):
+            col = col.round(2)
+
+        # If the column already exists, update it.
+        if column_name in self.full_df.columns:
+            self.full_df[column_name] = col
+        else:
+            self.full_df.insert(len(self.schema) + 1, column_name, col)
 
         # If adding a column succeeded, `self.cur_df` should also be updated.
         self.cur_df = self.full_df.loc[self.cur_index]

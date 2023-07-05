@@ -1,14 +1,23 @@
 The goal of the ML.ENERGY Leaderboard is to give people a sense of how much **energy** LLMs would consume.
 
+The code for the leaderboard, backing data, and scripts for benchmarking are all open-source in our [repository](https://github.com/ml-energy/leaderboard).
+We'll see you at the [Discussion board](https://github.com/ml-energy/leaderboard/discussions), where you can ask questions, suggest improvement ideas, or just discuss leaderboard results!
+
 ## Columns
 
-- `gpu`: NVIDIA GPU model name. Note that NLP evaluation was only run once on our A40 GPUs, so this column only changes system-level measurements like latency and energy.
+- `gpu`: NVIDIA GPU model name.
 - `task`: Name of the task. See *Tasks* below for details.
 - `energy` (J): The average GPU energy consumed by the model to generate a response.
 - `throughput` (token/s): The average number of tokens generated per second.
 - `latency` (s): The average time it took for the model to generate a response.
 - `response_length` (token): The average number of tokens in the model's response.
 - `parameters`: The number of parameters the model has, in units of billion.
+- `arc`: [AI2 Reasoning Challenge](https://allenai.org/data/arc)'s `challenge` dataset. Measures capability to do grade-school level question answering, 25 shot.
+- `hellaswag`: [HellaSwag dataset](https://allenai.org/data/hellaswag). Measuring grounded commonsense, 10 shot.
+- `truthfulqa`: [TruthfulQA dataset](https://arxiv.org/abs/2109.07958). Measuring truthfulness against questions that elicit common falsehoods, 0 shot.
+
+NLP evaluation metrics (`arc`, `hellaswag`, and `truthfulqa`) were only run once each on A40 GPUs because their results do not depend on the GPU type.
+Hence, all GPU model rows for the same model share the same NLP evaluation numbers.
 
 ## Tasks
 
@@ -39,6 +48,7 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
 
 - NVIDIA A40 GPU
 - NVIDIA A100 GPU
+- NVIDIA V100 GPU
 
 ### Parameters
 
@@ -50,16 +60,10 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
   - Temperature 0.7
   - Repetition penalty 1.0
 
-## Data used for benchmarking
+### Data
 
 We randomly sampled around 3000 prompts from the [cleaned ShareGPT dataset](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered).
 See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for more detail on how we created the benchmark dataset.
-
-## NLP evaluation metrics
-
-- `arc`: [AI2 Reasoning Challenge](https://allenai.org/data/arc)'s `challenge` dataset, measures capability to do grade-school level question answering, 25 shot
-- `hellaswag`: [HellaSwag dataset](https://allenai.org/data/hellaswag), measuring grounded commonsense, 10 shot
-- `truthfulqa`: [TruthfulQA dataset](https://arxiv.org/abs/2109.07958), measuring truthfulness against questions that elicit common falsehoods, 0 shot
 
 ## Limitations
 
@@ -68,18 +72,18 @@ Hence, absolute latency, throughput, and energy numbers should not be used to es
 
 ## Upcoming
 
-- Within the Summer, we'll add an LLM Arena for energy consumption!
+- Within the Summer, we'll add an online text generation interface for real time energy consumption measurement!
 - More optimized inference runtimes, like TensorRT.
 - Larger models with distributed inference, like Falcon 40B.
 - More models, like RWKV.
 
-# License
+## License
 
 This leaderboard is a research preview intended for non-commercial use only.
 Model weights were taken as is from the Hugging Face Hub if available and are subject to their licenses.
 The use of LLaMA weights are subject to their [license](https://github.com/facebookresearch/llama/blob/main/MODEL_CARD.md).
 Please direct inquiries/reports of potential violation to Jae-Won Chung.
 
-# Acknowledgements
+## Acknowledgements
 
-We thank [Chameleon Cloud](https://www.chameleoncloud.org/) for the A100 80GB GPU nodes (`gpu_a100_pcie`) and [CloudLab](https://cloudlab.us/) for the V100 GPU nodes (`r7525`).
+We thank [Chameleon Cloud](https://www.chameleoncloud.org/) and [CloudLab](https://cloudlab.us/) for the GPU nodes.

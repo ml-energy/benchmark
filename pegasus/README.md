@@ -83,4 +83,4 @@ $ docker run -dit --name leaderboard_nlp_tasks --gpus '"device=0,1"' -v /data/le
 $ docker exec leaderboard_nlp_tasks python lm-evaluation-harness/main.py --device cuda --no_cache --model hf-causal-experimental --model_args pretrained={{model}},trust_remote_code=True,use_accelerate=True --tasks {{task}} --num_fewshot {{shot}}
 ```
 
-change 'model', `task` and `shot` to specific tasks
+change `model`, `task` and `shot` to specific tasks

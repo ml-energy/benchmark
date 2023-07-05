@@ -47,9 +47,11 @@ $ pegasus b
 
 `b` stands for broadcast. Every command is run once on all (`hostname`, `gpu`) combinations.
 
-## Benchmark
+## System benchmark
 
-Now use Pegasus to run benchmarks for all the models across all nodes.
+This will benchmark each model and get you data for the columns `energy`, `throughput`, `latency`, and `response_length`.
+
+Use Pegasus to run benchmarks for all the models across all nodes.
 
 ```console
 $ cd pegasus
@@ -59,9 +61,13 @@ $ pegasus q
 
 `q` stands for queue. Each command is run once on the next available (`hostname`, `gpu`) combination.
 
-## NLP-eval
+After all the tasks finish, aggregate all the data into one node and run [`compute_system_metrics.py`](../scripts/compute_system_metrics.py) to generate CSV files that the leaderboard can display.
 
-Now use Pegasus to run benchmarks for all the models across all nodes.
+## NLP benchmark
+
+We'll use [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness/commit/72b7f0c00a6ff94632c5b873fc24e093ae74fa47) to run models through three NLP datasets: ARC challenge (`arc`), HellaSwag (`hellaswag`), and TruthfulQA (`truthfulqa`).
+
+Use Pegasus to run benchmarks for all the models across all nodes.
 
 ```console
 $ cd pegasus
@@ -69,18 +75,32 @@ $ cp nlp-eval.yaml queue.yaml
 $ pegasus q
 ```
 
-for some tasks, if the cuda memory of a single gpu is not enough, you can use more GPUs like follows —
+After all the tasks finish, aggregate all the data into one node and run [`aggregate_nlp_metrics.py`](../scripts/aggregate_nlp_metrics.py) to generate a single `score.csv` that the leaderboard can display.
 
-1. create a larger docker with more gpus, e.g. 2 gpus:
+### Dealing with OOM
 
-```console
-$ docker run -dit --name leaderboard_nlp_tasks --gpus '"device=0,1"' -v /data/leaderboard:/data/leaderboard -v $HOME/workspace/leaderboard:/workspace/leaderboard ml-energy:latest bash
-```
+Some tasks might run out of memory, in which case you should create a container with more GPUs:
 
-2. then run the specific task with Pegasus or directly run with
+1. Create a container with two GPUs, for example:
 
 ```console
-$ docker exec leaderboard_nlp_tasks python lm-evaluation-harness/main.py --device cuda --no_cache --model hf-causal-experimental --model_args pretrained={{model}},trust_remote_code=True,use_accelerate=True --tasks {{task}} --num_fewshot {{shot}}
+$ docker run -dit \
+    --name leaderboard01 \
+    --gpus '"device=0,1"' \
+    -v /data/leaderboard:/data/leaderboard \
+    -v $HOME/workspace/leaderboard:/workspace/leaderboard \
+    mlenergy/leaderboard:latest bash
 ```
 
-change `model`, `task` and `shot` to specific tasks
+2. Revise `nlp-eval.yaml` and run with Pegasus, or run directly like this on LLaMA 7B and ARC, for example:
+
+```console
+$ docker exec leaderboard01 \
+    python lm-evaluation-harness/main.py \
+    --device cuda \
+    --no_cache \
+    --model hf-causal-experimental \
+    --model_args pretrained=/data/leaderboard/weights/metaai/llama-7B,trust_remote_code=True,use_accelerate=True \
+    --tasks arc_challenge \
+    --num_fewshot 25
+```

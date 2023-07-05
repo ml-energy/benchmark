@@ -12,12 +12,26 @@ import pandas as pd
 import plotly.io as pio
 import plotly.express as px
 from pandas.api.types import is_numeric_dtype, is_float_dtype
+
 pio.templates.default = "plotly_white"
 
 
 class TableManager:
     def __init__(self, data_dir: str) -> None:
-        """Load leaderboard data from CSV files in data_dir."""
+        """Load leaderboard data from CSV files in data_dir.
+
+        Inside `data_dir`, there should be:
+        - `models.json`: a JSON file containing information about each model.
+        - `schema.yaml`: a YAML file containing the schema of the benchmark.
+        - `score.csv`: a CSV file containing the NLP evaluation metrics of each model.
+        - `*_benchmark.csv`: CSV files containing the system benchmark results.
+
+        Especially, the `*_benchmark.csv` files should be named after the
+        parameters used in the benchmark. For example, for the CSV file that
+        contains benchmarking results for A100 and the chat-concise task
+        (see `schema.yaml`) for possible choices, the file should be named
+        `A100_chat-concise_benchmark.csv`.
+        """
         # Load and merge CSV files.
         df = self._read_tables(data_dir)
 
@@ -207,9 +221,9 @@ class TableManager:
 # be used.
 global_tbm = TableManager("data")
 
-# Find the latest release date of the leaderboard repository.
+# Fetch the latest update date of the leaderboard repository.
 resp = requests.get("https://api.github.com/repos/ml-energy/leaderboard/commits/master")
-if resp.status_code == 200:
+if resp.status_code != 200:
     current_date = "[Failed to fetch]"
     print("Failed to fetch the latest release date of the leaderboard repository.")
     print(resp.json())

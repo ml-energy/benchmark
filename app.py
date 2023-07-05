@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import yaml
-import subprocess
+import requests
 import itertools
 import contextlib
-from dateutil import parser
 
 import numpy as np
 import gradio as gr
@@ -208,16 +207,14 @@ class TableManager:
 # be used.
 global_tbm = TableManager("data")
 
-# Run git log to get the latest commit date.
-proc = subprocess.run(
-    ["git", "log", "-1", "--format=%cd"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    encoding="utf-8",
-)
-print(proc.stdout.strip())
-print(proc.stderr.strip())
-current_date = parser.parse(proc.stdout.strip()).strftime("%Y-%m-%d")
+# Find the latest release date of the leaderboard repository.
+resp = requests.get("https://api.github.com/repos/ml-energy/leaderboard/commits/master")
+if resp.status_code == 200:
+    current_date = "[Failed to fetch]"
+    print("Failed to fetch the latest release date of the leaderboard repository.")
+    print(resp.json())
+else:
+    current_date = resp.json()["commit"]["author"]["date"][:10]
 
 # Custom JS.
 # XXX: This is a hack to make the model names clickable.

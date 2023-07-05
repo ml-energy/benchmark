@@ -65,14 +65,32 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
 We randomly sampled around 3000 prompts from the [cleaned ShareGPT dataset](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered).
 See [here](https://github.com/ml-energy/leaderboard/tree/master/sharegpt) for more detail on how we created the benchmark dataset.
 
+## Contributing
+
+Any kind of contribution is more than welcome!
+Please look around our [repository](https://github.com/ml-energy/leaderboard).
+
+Especially, if you want to see a specific model on the leaderboard, please consider adding support to the model.
+We'll consider running those on the hardware we have.
+First, see if the model is available in Hugging Face Hub and compatible with lm-evaluation-harness.
+Then, in our [`benchmark.py`](https://github.com/ml-energy/leaderboard/blob/master/scripts/benchmark.py), implement a way to load the weights of the model and run generative inference.
+
+Currently, we use FastChat to load models and run inference, but we'll eventually abstract the model executor, making it easier to add models that FastChat does not support.
+
 ## Limitations
 
 Currently, inference is run with basically bare PyTorch with batch size 1, which is unrealistic assuming a production serving scenario.
 Hence, absolute latency, throughput, and energy numbers should not be used to estimate figures in real production settings, while relative comparison makes some sense.
 
+Batch size 1, in some sense, is the lowest possible hardware utilization.
+We'll soon benchmark batch sizes larger than 1 without continuous batching for comparison.
+This would show what happens in the case of very high hardware utilization (lest with PyTorch), assuming an ideal case where all sequences in each batch generates the same number of output tokens.
+By doing this, we can provide numbers for reasonable comparison without being tied to any existing generative model serving system.
+
 ## Upcoming
 
 - Within the Summer, we'll add an online text generation interface for real time energy consumption measurement!
+- Batched inference
 - More optimized inference runtimes, like TensorRT.
 - Larger models with distributed inference, like Falcon 40B.
 - More models, like RWKV.

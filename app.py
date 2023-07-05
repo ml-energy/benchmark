@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 import json
 import yaml
+import subprocess
 import itertools
 import contextlib
+from dateutil import parser
 
 import numpy as np
 import gradio as gr
@@ -158,7 +159,7 @@ class TableManager:
             gr.Dropdown.update(choices=["None", *columns]),
         ]
 
-    def set_filter_get_df(self, *filters):
+    def set_filter_get_df(self, *filters) -> pd.DataFrame:
         """Set the current set of filters and return the filtered DataFrame."""
         # If the filter is empty, we default to the first choice for each key.
         if not filters:
@@ -200,16 +201,21 @@ class TableManager:
         return fig, width, height, ""
 
 
-# Find the latest version of the CSV files in data/
-# and initialize the global TableManager.
-latest_date = sorted(os.listdir("data/"))[-1]
-
 # The global instance of the TableManager should only be used when
 # initializing components in the Gradio interface. If the global instance
 # is mutated while handling user sessions, the change will be reflected
 # in every user session. Instead, the instance provided by gr.State should
 # be used.
-global_tbm = TableManager(f"data/{latest_date}")
+global_tbm = TableManager("data")
+
+# Run git log to get the latest commit date.
+proc = subprocess.run(
+    ["git", "log", "-1", "--format=%cd"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    encoding="utf-8",
+)
+current_date = parser.parse(proc.stdout.strip()).strftime("%Y-%m-%d")
 
 # Custom JS.
 # XXX: This is a hack to make the model names clickable.
@@ -397,7 +403,7 @@ with block:
 
             # Block 5: Leaderboard date.
             with gr.Row():
-                gr.HTML(f"<h3 style='color: gray'>Date: {latest_date}</h3>")
+                gr.HTML(f"<h3 style='color: gray'>Date: {current_date}</h3>")
 
         # Tab 2: About page.
         with gr.TabItem("About"):

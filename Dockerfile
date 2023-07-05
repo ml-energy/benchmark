@@ -26,6 +26,14 @@ ADD . /workspace/leaderboard
 RUN cd /workspace/leaderboard \
       && pip install -r requirements-benchmark.txt
 
+# Clone lm-evaluation-harness and install
+RUN cd /workspace \
+      && git clone https://github.com/EleutherAI/lm-evaluation-harness.git \
+      && cd lm-evaluation-harness \
+      && git checkout 72b7f0c00a6ff94632c5b873fc24e093ae74fa47 \
+      && rm -r .git \
+      && pip install -e .
+
 # Where all the weights downloaded from Hugging Face Hub will go to
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache
 

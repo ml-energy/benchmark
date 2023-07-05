@@ -215,6 +215,8 @@ proc = subprocess.run(
     stderr=subprocess.PIPE,
     encoding="utf-8",
 )
+print(proc.stdout.strip())
+print(proc.stderr.strip())
 current_date = parser.parse(proc.stdout.strip()).strftime("%Y-%m-%d")
 
 # Custom JS.

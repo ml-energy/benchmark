@@ -12,7 +12,6 @@
     - databricks/dolly-v2-12b
     - FreedomIntelligence/phoenix-inst-chat-7b
     - h2oai/h2ogpt-gm-oasst1-en-2048-open-llama-7b-preview-300bt-v2
-    - lmsys/fastchat-t5-3b-v1.0
     - Neutralzz/BiLLa-7B-SFT
     - nomic-ai/gpt4all-13b-snoozy
     - openaccess-ai-collective/manticore-13b-chat-pyg
@@ -35,7 +34,6 @@
     - databricks/dolly-v2-12b
     - FreedomIntelligence/phoenix-inst-chat-7b
     - h2oai/h2ogpt-gm-oasst1-en-2048-open-llama-7b-preview-300bt-v2
-    - lmsys/fastchat-t5-3b-v1.0
     - Neutralzz/BiLLa-7B-SFT
     - nomic-ai/gpt4all-13b-snoozy
     - openaccess-ai-collective/manticore-13b-chat-pyg
@@ -58,7 +56,6 @@
     - databricks/dolly-v2-12b
     - FreedomIntelligence/phoenix-inst-chat-7b
     - h2oai/h2ogpt-gm-oasst1-en-2048-open-llama-7b-preview-300bt-v2
-    - lmsys/fastchat-t5-3b-v1.0
     - Neutralzz/BiLLa-7B-SFT
     - nomic-ai/gpt4all-13b-snoozy
     - openaccess-ai-collective/manticore-13b-chat-pyg
@@ -66,3 +63,8 @@
     - project-baize/baize-v2-7B
     - StabilityAI/stablelm-tuned-alpha-7b
     - togethercomputer/RedPajama-INCITE-7B-Chat
+
+- command:
+    - docker exec leaderboard{{ gpu }} python lm-evaluation-harness/main.py --device cuda --no_cache --model hf-seq2seq --model_args pretrained=lmsys/fastchat-t5-3b-v1.0,trust_remote_code=True,use_accelerate=True --tasks arc_challenge --num_fewshot 25
+    - docker exec leaderboard{{ gpu }} python lm-evaluation-harness/main.py --device cuda --no_cache --model hf-seq2seq --model_args pretrained=lmsys/fastchat-t5-3b-v1.0,trust_remote_code=True,use_accelerate=True --tasks hellaswag --num_fewshot 10
+    - docker exec leaderboard{{ gpu }} python lm-evaluation-harness/main.py --device cuda --no_cache --model hf-seq2seq --model_args pretrained=lmsys/fastchat-t5-3b-v1.0,trust_remote_code=True,use_accelerate=True --tasks truthfulqa_mc --num_fewshot 0

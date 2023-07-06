@@ -31,7 +31,7 @@ def main(data_dir: str, out_file: str = "score.csv") -> None:
     for model_dir in models:
         for task, metric in TASK_METRICS.items():
             model_name = "/".join(model_dir.split("--")[-2:])
-            results = json.load(open(f"{data_dir}/{model_dir}/{task}"))
+            results = json.load(open(f"{data_dir}/{model_dir}/{task}.json"))
             df.loc[model_name, TASK_SHORT_NAMES[task]] = float(results["results"][task][metric]) * 100.0
     df = df.reset_index().rename(columns={"index": "model"})
 

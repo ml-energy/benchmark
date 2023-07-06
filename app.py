@@ -5,6 +5,7 @@ import yaml
 import requests
 import itertools
 import contextlib
+from dateutil import parser, tz
 
 import numpy as np
 import gradio as gr
@@ -228,7 +229,8 @@ if resp.status_code != 200:
     print("Failed to fetch the latest release date of the leaderboard repository.")
     print(resp.json())
 else:
-    current_date = resp.json()["commit"]["author"]["date"][:10]
+    current_datetime = parser.parse(resp.json()["commit"]["author"]["date"])
+    current_date = current_datetime.astimezone(tz.gettz("US/Eastern")).strftime("%Y-%m-%d")
 
 # Custom JS.
 # XXX: This is a hack to make the model names clickable.
@@ -416,7 +418,7 @@ with block:
 
             # Block 5: Leaderboard date.
             with gr.Row():
-                gr.HTML(f"<h3 style='color: gray'>Date: {current_date}</h3>")
+                gr.HTML(f"<h3 style='color: gray'>Last updated: {current_date}</h3>")
 
         # Tab 2: About page.
         with gr.TabItem("About"):

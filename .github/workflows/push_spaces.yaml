@@ -12,6 +12,7 @@ on:
       - 'requirements.txt'
       - 'index.html'
       - 'LICENSE'
+      - '.github/workflows/push_spaces.yaml'
 
 concurrency:
   group: ${{ github.ref }}-hfpush

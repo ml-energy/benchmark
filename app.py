@@ -205,11 +205,12 @@ class TableManager:
 
         # Strip the <a> tag from model names.
         text = self.cur_df["model"].apply(lambda x: x.split(">")[1].split("<")[0])
+        # Hide model names since they clutter the plots, and only show them on hover.
         if z is None or z == "None" or z == "":
-            fig = px.scatter(self.cur_df, x=x, y=y, text=text)
+            fig = px.scatter(self.cur_df, x=x, y=y, hover_name=text)
         else:
-            fig = px.scatter_3d(self.cur_df, x=x, y=y, z=z, text=text)
-        fig.update_traces(textposition="top center")
+            fig = px.scatter_3d(self.cur_df, x=x, y=y, z=z, hover_name=text)
+        fig.update_traces(marker=dict(size=12, line=dict(width=2, color="DarkSlateGrey")))
         fig.update_layout(width=width, height=height)
 
         return fig, width, height, ""
@@ -334,6 +335,7 @@ with block:
                 checkbox.change(TableManager.set_filter_get_df, inputs=[tbm, *checkboxes], outputs=dataframe)
 
             # Block 3: Allow users to add new columns.
+            gr.Markdown("---\n### Add custom columns to the table")
             with gr.Row():
                 with gr.Column(scale=3):
                     with gr.Row():
@@ -376,6 +378,7 @@ with block:
             )
 
             # Block 4: Allow users to plot 2D and 3D scatter plots.
+            gr.Markdown("---\n### Scatter plot (Hover over marker to show model name)")
             with gr.Row():
                 with gr.Column(scale=3):
                     with gr.Row():

@@ -283,13 +283,13 @@ function format_model_link() {{
 css = """
 /* Make ML.ENERGY look like a clickable logo. */
 .text-logo {
-    color: #27cb63 !important;
+    color: #23d175 !important;
     text-decoration: none !important;
 }
 
 /* Make the submit button the same color as the logo. */
 .btn-submit {
-    background: #27cb63 !important;
+    background: #23d175 !important;
     color: white !important;
     border: 0 !important;
 }

@@ -321,7 +321,7 @@ Time and energy are of course not the only things we care about -- so we also be
 including the ARC Challenge (reasoning), HellaSwag (common sense), and TruthfulQA (truthfulness).</p>
 
 <p style="font-size: 16px">For more detailed information, please take a look at the <b>About</b> tab.
-Every benchmark is limited in some sense -- Before you interpret the results, please take a look at the *Limitations* section there, too.</p>
+Every benchmark is limited in some sense -- Before you interpret the results, please take a look at the <b>Limitations</b> section there, too.</p>
 """
 
 block = gr.Blocks(css=css)

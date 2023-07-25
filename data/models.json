@@ -101,12 +101,12 @@
     },
     "metaai/Llama-2-7b-chat-hf": {
         "url": "https://huggingface.co/meta-llama/Llama-2-7b-chat-hf",
-        "nickname": "MetaAI/Llama-2-7B",
+        "nickname": "MetaAI/Llama-2-7B-chat",
         "params": 7
     },
     "metaai/Llama-2-13b-chat-hf": {
         "url": "https://huggingface.co/meta-llama/Llama-2-13b-chat-hf",
-        "nickname": "MetaAI/Llama-2-13B",
+        "nickname": "MetaAI/Llama-2-13B-chat",
         "params": 13
     }
 }

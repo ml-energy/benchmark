@@ -534,12 +534,12 @@ with gr.Blocks(css=custom_css) as block:
                 energy_comparison_message = gr.HTML(visible=False)
 
             with gr.Row():
-                worth_energy_vote_btn = gr.Button(value="The better response was worth the extra energy.", visible=False)
-                notworth_energy_vote_btn = gr.Button(value="Not really worth it.", visible=False)
+                worth_energy_vote_btn = gr.Button(value="The better response was worth 👍 the extra energy.", visible=False)
+                notworth_energy_vote_btn = gr.Button(value="Not really worth it. 👎", visible=False)
                 energy_vote_btn_list: list[gr.component.Component] = [worth_energy_vote_btn, notworth_energy_vote_btn]
 
             with gr.Row():
-                play_again_btn = gr.Button("Play again!", visible=False)
+                play_again_btn = gr.Button("Play again!", visible=False, elem_classes=["btn-submit"])
 
             gr.Markdown(open("docs/colosseum_bottom.md").read())
 

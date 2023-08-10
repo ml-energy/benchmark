@@ -1,1 +1,1 @@
-.[app]
+spitfight[app]

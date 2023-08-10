@@ -27,6 +27,6 @@ python -m fastchat.data.sample --in sg_90k_part1_html_cleaned_lang_first.json --
 ```
 
 ## Sorted data
-'''
+```
 python sort.py --data-dir sg_90k_part1_html_cleaned_lang_first_sampled.json --out-file sg_90k_part1_html_cleaned_lang_first_sampled_sorted.json
-'''
+```

@@ -4,7 +4,7 @@ emoji: "⚡"
 python_version: "3.9"
 app_file: "app.py"
 sdk: "gradio"
-sdk_version: "3.35.2"
+sdk_version: "3.39.0"
 pinned: true
 tags: ["energy", "leaderboard"]
 colorFrom: "black"
@@ -22,7 +22,12 @@ How much energy do LLMs consume?
 This README focuses on explaining how to run the benchmark yourself.
 The actual leaderboard is here: https://ml.energy/leaderboard.
 
-## Setup
+## Colosseum
+
+We instrumented [Hugging Face TGI](https://github.com/huggingface/text-generation-inference) so that it measures and returns GPU energy consumption.
+Then, our [controller](/spitfight/colosseum/controller) server receives user prompts from the [Gradio app](/app.py), selects two models randomly, and streams model responses back with energy consumption.
+
+## Setup for benchmarking
 
 ### Model weights
 

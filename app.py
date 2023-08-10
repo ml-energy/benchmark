@@ -5,6 +5,9 @@ import yaml
 import requests
 import itertools
 import contextlib
+import argparse
+import os
+from typing import Literal
 from dateutil import parser, tz
 
 import numpy as np
@@ -13,8 +16,9 @@ import pandas as pd
 import plotly.io as pio
 import plotly.express as px
 from pandas.api.types import is_numeric_dtype, is_float_dtype
-
 pio.templates.default = "plotly_white"
+
+from spitfight.colosseum.client import ControllerClient
 
 
 class TableManager:
@@ -215,7 +219,6 @@ class TableManager:
 
         return fig, width, height, ""
 
-
 # The global instance of the TableManager should only be used when
 # initializing components in the Gradio interface. If the global instance
 # is mutated while handling user sessions, the change will be reflected
@@ -280,7 +283,7 @@ function format_model_link() {{
 """
 
 # Custom CSS.
-css = """
+custom_css = """
 /* Make ML.ENERGY look like a clickable logo. */
 .text-logo {
     color: #23d175 !important;
@@ -311,6 +314,14 @@ table th:first-child {
 .tab-nav > button {
     font-size: 18px !important;
 }
+
+/* Color texts. */
+.green-text {
+    color: #23d175 !important;
+}
+.red-text {
+    color: #ff3860 !important;
+}
 """
 
 intro_text = """
@@ -324,13 +335,262 @@ including the ARC Challenge (reasoning), HellaSwag (common sense), and TruthfulQ
 Every benchmark is limited in some sense -- Before you interpret the results, please take a look at the <b>Limitations</b> section there, too.</p>
 """
 
-block = gr.Blocks(css=css)
-with block:
+# The app will not start without a controller address set.
+controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
+global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
+
+ANONYMOUS_MODEL_TEXT = "## Anonymous 🤫"
+
+# Colosseum helper functions.
+def enable_interact():
+    return [gr.update(interactive=True)] * 2
+
+def disable_interact():
+    return [gr.update(interactive=False)] * 2
+
+def consumed_less_energy_message(energy_a, energy_b):
+    """Return a message that indicates that the user chose the model that consumed less energy.
+
+    By default report in "%f %" but if the difference is larger than 2 times, report in "%f X".
+    """
+    less_energy = min(energy_a, energy_b)
+    more_energy = max(energy_a, energy_b)
+    factor = less_energy / more_energy
+    if factor <= 0.5:
+        message = f"<h2>That response also <span class='green-text'>consumed {1/factor:.1f}X less energy</span>!</h2>"
+    else:
+        message = f"<h2>That response also <span class='green-text'>consumed {100 - factor * 100:.1f}% less energy</span>!</h2>"
+    return message
+
+def consumed_more_energy_message(energy_a, energy_b):
+    """Return a message that indicates that the user chose the model that consumed more energy.
+
+    By default report in "%f %" but if the difference is larger than 2 times, report in "%f X".
+    """
+    less_energy = min(energy_a, energy_b)
+    more_energy = max(energy_a, energy_b)
+    factor = more_energy / less_energy
+    if factor >= 2.0:
+        message = f"<h2>That response <span class='red-text'>consumed {factor:.1f}x more energy</span>.</h2>"
+    else:
+        message = f"<h2>That response <span class='red-text'>consumed {factor * 100 - 100:.1f}% more energy</span>.</h2>"
+    return message
+
+# Colosseum event handlers
+def add_prompt_disable_submit(prompt, history_a, history_b):
+    """Add the user's prompt to the two model's history and disable the submit button."""
+    client = global_controller_client.fork()
+    return [
+        gr.Textbox.update(value=" ", interactive=False),
+        gr.Button.update(interactive=False),
+        history_a + [[prompt, ""]],
+        history_b + [[prompt, ""]],
+        client,
+    ]
+
+def generate_responses(client: ControllerClient, history_a, history_b):
+    """Generate responses for the two models."""
+    for resp_a, resp_b in itertools.zip_longest(
+        client.prompt(prompt=history_a[-1][0], index=0),
+        client.prompt(prompt=history_b[-1][0], index=1),
+    ):
+        if resp_a is not None:
+            history_a[-1][1] += resp_a
+        if resp_b is not None:
+            history_b[-1][1] += resp_b
+        yield [history_a, history_b]
+
+def make_resp_vote_func(victory_index: Literal[0, 1]):
+    """Return a function that will be called when the user clicks on response preference vote buttons."""
+    def resp_vote_func(client: ControllerClient):
+        vote_response = client.response_vote(victory_index=victory_index)
+        model_name_a, model_name_b = map(lambda n: f"## {n}", vote_response.model_names)
+        energy_a, energy_b = vote_response.energy_consumptions
+        # User liked the model that also consumed less energy.
+        if (victory_index == 0 and energy_a <= energy_b) or (victory_index == 1 and energy_a >= energy_b):
+            energy_message = consumed_less_energy_message(energy_a, energy_b)
+            return [
+                # Disable response vote buttons
+                gr.Button.update(interactive=False), gr.Button.update(interactive=False),
+                # Reveal model names
+                gr.Markdown.update(model_name_a), gr.Markdown.update(model_name_b),
+                # Display energy consumption comparison message
+                gr.Markdown.update(energy_message, visible=True),
+                # Keep energy vote buttons hidden
+                gr.Button.update(visible=False, interactive=False), gr.Button.update(visible=False, interactive=False),
+                # Enable reset button
+                gr.Button.update(visible=True, interactive=True),
+            ]
+        # User liked the model that consumed more energy.
+        else:
+            energy_message = consumed_more_energy_message(energy_a, energy_b)
+            return [
+                # Disable response vote buttons
+                gr.Button.update(interactive=False), gr.Button.update(interactive=False),
+                # Leave model names hidden
+                gr.Markdown.update(ANONYMOUS_MODEL_TEXT), gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
+                # Display energy consumption comparison message
+                gr.Markdown.update(energy_message, visible=True),
+                # Reveal and enable energy vote buttons
+                gr.Button.update(visible=True, interactive=True), gr.Button.update(visible=True, interactive=True),
+                # Keep the reset button disabled
+                gr.Button.update(visible=False, interactive=False),
+            ]
+    return resp_vote_func
+
+def make_energy_vote_func(is_worth: bool):
+    """Return a function that will be called when the user clicks on energy vote buttons."""
+    def energy_vote_func(client: ControllerClient, energy_message: str):
+        vote_response = client.energy_vote(is_worth=is_worth)
+        model_name_a, model_name_b = map(lambda n: f"## {n}", vote_response.model_names)
+        return [
+            # Reveal model names
+            gr.Markdown.update(model_name_a), gr.Markdown.update(model_name_b),
+            # Disable energy vote buttons
+            gr.Button.update(interactive=False), gr.Button.update(interactive=False),
+            # Enable reset button
+            gr.Button.update(interactive=True, visible=True),
+            # Append to the energy comparison message
+            energy_message[:-5] + (" Fair enough.</h2>" if is_worth else " Wasn't worth it.</h2>"),
+        ]
+    return energy_vote_func
+
+def play_again():
+    return [
+        # Clear chatbot history
+        None, None,
+        # Turn on prompt textbox and submit button
+        gr.Textbox.update(value="", interactive=True), gr.Button.update(interactive=True),
+        # Mask model names
+        gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
+        gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
+        # Hide energy vote buttons and message
+        gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Markdown.update(visible=False),
+        # Disable reset button
+        gr.Button.update(interactive=False, visible=False),
+    ]
+
+focus_prompt_input_js = """
+function() {
+    for (let textarea of document.getElementsByTagName("textarea")) {
+        if (textarea.hasAttribute("autofocus")) {
+            textarea.focus();
+            return;
+        }
+    }
+}
+"""
+
+with gr.Blocks(css=custom_css) as block:
     tbm = gr.State(global_tbm)  # type: ignore
     with gr.Box():
         gr.HTML("<h1><a href='https://ml.energy' class='text-logo'>ML.ENERGY</a> Leaderboard</h1>")
 
     with gr.Tabs():
+        # Tab: Colosseum.
+        with gr.TabItem("Colosseum ⚔️️"):
+            gr.Markdown(open("docs/colosseum_top.md").read())
+
+            with gr.Group():
+                with gr.Row():
+                    prompt_input = gr.Textbox(
+                        show_label=False,
+                        placeholder="Type your prompt and press ENTER",
+                        autofocus=True,
+                        container=False,
+                        scale=20,
+                        elem_id="prompt-textarea",
+                    )
+                    prompt_submit_btn = gr.Button(
+                        value="⚔️️ Fight!",
+                        elem_classes=["btn-submit"],
+                        min_width=60,
+                        scale=1,
+                    )
+
+            with gr.Row():
+                masked_model_names = []
+                chatbots = []
+                resp_vote_btn_list: list[gr.component.Component] = []
+                with gr.Column():
+                    with gr.Row():
+                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
+                    with gr.Row():
+                        chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=600))
+                    with gr.Row():
+                        left_resp_vote_btn = gr.Button(value="👈 Model A is better", interactive=False)
+                        resp_vote_btn_list.append(left_resp_vote_btn)
+
+                with gr.Column():
+                    with gr.Row():
+                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
+                    with gr.Row():
+                        chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=600))
+                    with gr.Row():
+                        right_resp_vote_btn = gr.Button(value="👉 Model B is better", interactive=False)
+                        resp_vote_btn_list.append(right_resp_vote_btn)
+
+            with gr.Row():
+                energy_comparison_message = gr.HTML(visible=False)
+
+            with gr.Row():
+                worth_energy_vote_btn = gr.Button(value="The better response was worth the extra energy.", visible=False)
+                notworth_energy_vote_btn = gr.Button(value="Not really worth it.", visible=False)
+                energy_vote_btn_list: list[gr.component.Component] = [worth_energy_vote_btn, notworth_energy_vote_btn]
+
+            with gr.Row():
+                play_again_btn = gr.Button("Play again!", visible=False)
+
+            gr.Markdown(open("docs/colosseum_bottom.md").read())
+
+            controller_client = gr.State()
+
+
+            (prompt_input
+                .submit(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True)
+                .then(enable_interact, None, resp_vote_btn_list, queue=False))
+            (prompt_submit_btn
+                .click(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True)
+                .then(enable_interact, None, resp_vote_btn_list, queue=False))
+
+            left_resp_vote_btn.click(
+                make_resp_vote_func(victory_index=0),
+                [controller_client],
+                [*resp_vote_btn_list, *masked_model_names, energy_comparison_message, *energy_vote_btn_list, play_again_btn],
+                queue=False,
+            )
+            right_resp_vote_btn.click(
+                make_resp_vote_func(victory_index=1),
+                [controller_client],
+                [*resp_vote_btn_list, *masked_model_names, energy_comparison_message, *energy_vote_btn_list, play_again_btn],
+                queue=False,
+            )
+
+            worth_energy_vote_btn.click(
+                make_energy_vote_func(is_worth=True),
+                [controller_client, energy_comparison_message],
+                [*masked_model_names, *energy_vote_btn_list, play_again_btn, energy_comparison_message],
+                queue=False,
+            )
+            notworth_energy_vote_btn.click(
+                make_energy_vote_func(is_worth=False),
+                [controller_client, energy_comparison_message],
+                [*masked_model_names, *energy_vote_btn_list, play_again_btn, energy_comparison_message],
+                queue=False,
+            )
+
+            (play_again_btn
+                .click(
+                    play_again,
+                    None,
+                    [*chatbots, prompt_input, prompt_submit_btn, *masked_model_names, *energy_vote_btn_list, energy_comparison_message, play_again_btn],
+                    queue=False,
+                )
+                .then(None, _js=focus_prompt_input_js, queue=False))
+
+
         # Tab: Leaderboard.
         with gr.Tab("Leaderboard"):
             with gr.Box():
@@ -340,7 +600,7 @@ with block:
             with gr.Row():
                 with gr.Box():
                     gr.Markdown("### Benchmark results to show")
-                    checkboxes = []
+                    checkboxes: list[gr.CheckboxGroup] = []
                     for key, choices in global_tbm.schema.items():
                         # Specifying `value` makes everything checked by default.
                         checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices[:1], label=key))
@@ -349,10 +609,10 @@ with block:
             with gr.Row():
                 dataframe = gr.Dataframe(type="pandas", elem_id="tab-leaderboard")
             # Make sure the models have clickable links.
-            dataframe.change(None, None, None, _js=dataframe_update_js)
+            dataframe.change(None, None, None, _js=dataframe_update_js, queue=False)
             # Table automatically updates when users check or uncheck any checkbox.
             for checkbox in checkboxes:
-                checkbox.change(TableManager.set_filter_get_df, inputs=[tbm, *checkboxes], outputs=dataframe)
+                checkbox.change(TableManager.set_filter_get_df, inputs=[tbm, *checkboxes], outputs=dataframe, queue=False)
 
             # Block: Allow users to add new columns.
             with gr.Box():
@@ -381,21 +641,25 @@ with block:
                     TableManager.add_column,
                     inputs=[tbm, colname_input, formula_input],
                     outputs=[dataframe, add_col_message],
+                    queue=False,
                 )
                 formula_input.submit(
                     TableManager.add_column,
                     inputs=[tbm, colname_input, formula_input],
                     outputs=[dataframe, add_col_message],
+                    queue=False,
                 )
                 add_col_btn.click(
                     TableManager.add_column,
                     inputs=[tbm, colname_input, formula_input],
                     outputs=[dataframe, add_col_message],
+                    queue=False,
                 )
                 clear_input_btn.click(
                     lambda: (None, None, None),
                     inputs=None,
                     outputs=[colname_input, formula_input, add_col_message],
+                    queue=False,
                 )
 
             # Block: Allow users to plot 2D and 3D scatter plots.
@@ -425,42 +689,51 @@ with block:
                     )[0])  # type: ignore
                 with gr.Row():
                     plot_message = gr.HTML("")
-                add_col_btn.click(TableManager.update_dropdown, inputs=tbm, outputs=axis_dropdowns)  # type: ignore
+                add_col_btn.click(TableManager.update_dropdown, inputs=tbm, outputs=axis_dropdowns, queue=False)  # type: ignore
                 plot_width_input.submit(
                     TableManager.plot_scatter,
                     inputs=[tbm, plot_width_input, plot_height_input, *axis_dropdowns],
                     outputs=[plot, plot_width_input, plot_height_input, plot_message],
+                    queue=False,
                 )
                 plot_height_input.submit(
                     TableManager.plot_scatter,
                     inputs=[tbm, plot_width_input, plot_height_input, *axis_dropdowns],
                     outputs=[plot, plot_width_input, plot_height_input, plot_message],
+                    queue=False,
                 )
                 plot_btn.click(
                     TableManager.plot_scatter,
                     inputs=[tbm, plot_width_input, plot_height_input, *axis_dropdowns],
                     outputs=[plot, plot_width_input, plot_height_input, plot_message],
+                    queue=False,
                 )
                 clear_plot_btn.click(
                     lambda: (None,) * 7,
                     None,
                     outputs=[*axis_dropdowns, plot, plot_width_input, plot_height_input, plot_message],
+                    queue=False,
                 )
 
             # Block: Leaderboard date.
             with gr.Row():
                 gr.HTML(f"<h3 style='color: gray'>Last updated: {current_date}</h3>")
 
-        # Tab: Online demo.
-        with gr.Tab("Online demo (Coming in August!)"):
-            gr.Markdown("# Online demo with real time energy measurements\n\nComing soon in August!")
-
         # Tab: About page.
         with gr.Tab("About"):
             # Read in LEADERBOARD.md
-            gr.Markdown(open("LEADERBOARD.md").read())
+            gr.Markdown(open("docs/leaderboard.md").read())
 
     # Load the table on page load.
     block.load(lambda: global_tbm.set_filter_get_df(), outputs=dataframe)
 
-block.launch()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--share", action="store_true", help="Specify if sharing is enabled")
+    parser.add_argument("--concurrency", type=int, default=10)
+
+    args = parser.parse_args()
+    block.queue(
+        concurrency_count=args.concurrency, status_update_rate=10, api_open=False
+    ).launch(share=args.share, show_error=True)

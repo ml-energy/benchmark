@@ -7,3 +7,12 @@
 # Editor
 pyrightconfig.json
 .idea
+
+# Python
+*.egg-info
+**/__pycache__
+build/
+
+# Data files
+*.log
+pegasus/consumed.yaml

@@ -12,6 +12,7 @@ extras_require = {
         "text_generation @ git+https://github.com/ml-energy/text_generation_energy@master",
     ],
     "benchmark": ["zeus-ml", "fschat==0.2.23", "tyro", "rich"],
+    "dev": ["pytest"],
 }
 
 extras_require["all"] = list(set(sum(extras_require.values(), [])))

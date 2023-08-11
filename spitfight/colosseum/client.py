@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import unittest
 import contextlib
 from uuid import uuid4, UUID
-from copy import deepcopy
 from typing import Generator, Literal
 
 import requests
@@ -92,15 +90,3 @@ def _check_response(response: requests.Response) -> None:
         raise gr.Error(response.json()["detail"])
     elif response.status_code >= 500:
         raise gr.Error("Failed to talk to our backend server. Please try again later.")
-
-
-class TestControllerClient(unittest.TestCase):
-    def test_new_uuid_on_deepcopy(self):
-        client = ControllerClient("http://localhost:8000")
-        clients = [client.fork() for _ in range(50)]
-        request_ids = [client.request_id for client in clients]
-        assert len(set(request_ids)) == len(request_ids)
-
-
-if __name__ == "__main__":
-    unittest.main()

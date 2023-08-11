@@ -45,14 +45,15 @@ def get_system_prompt(task: Task | str) -> str:
 
 
 def apply_model_characteristics(
-    system_prompt: str,
     prompt: str,
     model_name: str,
+    system_prompt: str | None = None,
 ) -> tuple[str, str | None, list[int]]:
     """Apply and return model-specific differences."""
     conv = get_conversation_template(model_name)
 
-    conv.system_message = system_prompt
+    if system_prompt is not None:
+        conv.system_message = system_prompt
     conv.messages = []
     conv.offset = 0
 

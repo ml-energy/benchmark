@@ -44,9 +44,10 @@ class RequestState(BaseModel):
     This model is also serialized as is and logged.
     """
     request_id: str
-    prompt: str
     model_names: list[str]
-    responses: list[str] = ["EMPTY", "EMPTY"]
+    raw_prompt: str
+    responses: list[str] = ["UNSET", "UNSET"]
+    model_prompts: list[str] = ["UNSET", "UNSET"]
     energy_consumptions: list[float] = [0.0, 0.0]
     response_victory_index: Optional[Literal[0, 1]] = None
     extra_energy_was_worth: Optional[bool] = None
@@ -172,7 +173,7 @@ class Controller:
             model_names = [worker.model_name for worker in workers]
             self.request_states[request_id] = RequestState(
                 request_id=request_id,
-                prompt=prompt,
+                raw_prompt=prompt,
                 model_names=model_names,
             )
         request_state = self.request_states[request_id]
@@ -185,11 +186,13 @@ class Controller:
         except RuntimeError:
             controller_logger.error("Worker %s is dead.", model_name)
             raise
+
+        # Models have different prompt formatting requirements and stopping criteria.
         prompt, stop_str, stop_token_ids = apply_model_characteristics(
-            system_prompt=get_system_prompt("chat"),
             prompt=prompt,
             model_name=worker.model_id,
         )
+        request_state.model_prompts[model_index] = prompt
 
         # Request the model worker to stream the response to the user's prompt.
         response = ""

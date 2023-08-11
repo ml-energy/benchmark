@@ -1,8 +1,8 @@
 services:
-  Falcon-7B:
+  MPT-7B:
     container_name: worker0
     image: mlenergy/tgi:latest
-    command: ["--model-id", "tiiuae/falcon-7b-instruct", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
+    command: ["--model-id", "mosaicml/mpt-7b-chat", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:
       - leaderboard

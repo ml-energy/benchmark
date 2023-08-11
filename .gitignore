@@ -3,6 +3,7 @@
 
 # Environment
 .envrc
+.env
 
 # Editor
 pyrightconfig.json

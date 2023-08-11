@@ -339,7 +339,7 @@ Every benchmark is limited in some sense -- Before you interpret the results, pl
 controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
 global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
 
-ANONYMOUS_MODEL_TEXT = "## Anonymous 🤫"
+ANONYMOUS_MODEL_TEXT = "## Anonymous Model 🤫"
 
 # Colosseum helper functions.
 def enable_interact():
@@ -495,7 +495,7 @@ with gr.Blocks(css=custom_css) as block:
                 with gr.Row():
                     prompt_input = gr.Textbox(
                         show_label=False,
-                        placeholder="Type your prompt and press ENTER",
+                        placeholder="Input your prompt, e.g., 'Explain machine learning in simple terms.'",
                         autofocus=True,
                         container=False,
                         scale=20,
@@ -514,21 +514,21 @@ with gr.Blocks(css=custom_css) as block:
                 resp_vote_btn_list: list[gr.component.Component] = []
                 with gr.Column():
                     with gr.Row():
-                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
-                    with gr.Row():
                         chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=600))
                     with gr.Row():
                         left_resp_vote_btn = gr.Button(value="👈 Model A is better", interactive=False)
                         resp_vote_btn_list.append(left_resp_vote_btn)
-
-                with gr.Column():
                     with gr.Row():
                         masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
+
+                with gr.Column():
                     with gr.Row():
                         chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=600))
                     with gr.Row():
                         right_resp_vote_btn = gr.Button(value="👉 Model B is better", interactive=False)
                         resp_vote_btn_list.append(right_resp_vote_btn)
+                    with gr.Row():
+                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
 
             with gr.Row():
                 energy_comparison_message = gr.HTML(visible=False)

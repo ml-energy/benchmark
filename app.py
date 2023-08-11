@@ -322,6 +322,21 @@ table th:first-child {
 .red-text {
     color: #ff3860 !important;
 }
+
+/* Flashing model name borders. */
+@keyframes blink {
+    0%, 33%, 67%, 100% {
+        border-color: transparent;
+    }
+    17%, 50%, 83% {
+        border-color: #23d175;
+    }
+}
+
+.model-name-text {
+    border: 2px solid transparent; /* Transparent border initially */
+    animation: blink 3s ease-in-out 1; /* One complete cycle of animation, lasting 3 seconds */
+}
 """
 
 intro_text = """
@@ -338,8 +353,6 @@ Every benchmark is limited in some sense -- Before you interpret the results, pl
 # The app will not start without a controller address set.
 controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
 global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
-
-ANONYMOUS_MODEL_TEXT = "## Anonymous Model 🤫"
 
 # Colosseum helper functions.
 def enable_interact():
@@ -413,7 +426,7 @@ def make_resp_vote_func(victory_index: Literal[0, 1]):
                 # Disable response vote buttons
                 gr.Button.update(interactive=False), gr.Button.update(interactive=False),
                 # Reveal model names
-                gr.Markdown.update(model_name_a), gr.Markdown.update(model_name_b),
+                gr.Markdown.update(model_name_a, visible=True), gr.Markdown.update(model_name_b, visible=True),
                 # Display energy consumption comparison message
                 gr.Markdown.update(energy_message, visible=True),
                 # Keep energy vote buttons hidden
@@ -428,7 +441,7 @@ def make_resp_vote_func(victory_index: Literal[0, 1]):
                 # Disable response vote buttons
                 gr.Button.update(interactive=False), gr.Button.update(interactive=False),
                 # Leave model names hidden
-                gr.Markdown.update(ANONYMOUS_MODEL_TEXT), gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
+                gr.Markdown.update(visible=False), gr.Markdown.update(visible=False),
                 # Display energy consumption comparison message
                 gr.Markdown.update(energy_message, visible=True),
                 # Reveal and enable energy vote buttons
@@ -445,7 +458,7 @@ def make_energy_vote_func(is_worth: bool):
         model_name_a, model_name_b = map(lambda n: f"## {n}", vote_response.model_names)
         return [
             # Reveal model names
-            gr.Markdown.update(model_name_a), gr.Markdown.update(model_name_b),
+            gr.Markdown.update(model_name_a, visible=True), gr.Markdown.update(model_name_b, visible=True),
             # Disable energy vote buttons
             gr.Button.update(interactive=False), gr.Button.update(interactive=False),
             # Enable reset button
@@ -462,8 +475,7 @@ def play_again():
         # Turn on prompt textbox and submit button
         gr.Textbox.update(value="", interactive=True), gr.Button.update(interactive=True),
         # Mask model names
-        gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
-        gr.Markdown.update(ANONYMOUS_MODEL_TEXT),
+        gr.Markdown.update(value="", visible=False), gr.Markdown.update(value="", visible=False),
         # Hide energy vote buttons and message
         gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Markdown.update(visible=False),
         # Disable reset button
@@ -514,21 +526,21 @@ with gr.Blocks(css=custom_css) as block:
                 resp_vote_btn_list: list[gr.component.Component] = []
                 with gr.Column():
                     with gr.Row():
-                        chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=600))
+                        masked_model_names.append(gr.Markdown(visible=False, elem_classes=["model-name-text"]))
+                    with gr.Row():
+                        chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=400))
                     with gr.Row():
                         left_resp_vote_btn = gr.Button(value="👈 Model A is better", interactive=False)
                         resp_vote_btn_list.append(left_resp_vote_btn)
-                    with gr.Row():
-                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
 
                 with gr.Column():
                     with gr.Row():
-                        chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=600))
+                        masked_model_names.append(gr.Markdown(visible=False, elem_classes=["model-name-text"]))
+                    with gr.Row():
+                        chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=400))
                     with gr.Row():
                         right_resp_vote_btn = gr.Button(value="👉 Model B is better", interactive=False)
                         resp_vote_btn_list.append(right_resp_vote_btn)
-                    with gr.Row():
-                        masked_model_names.append(gr.Markdown(ANONYMOUS_MODEL_TEXT))
 
             with gr.Row():
                 energy_comparison_message = gr.HTML(visible=False)
@@ -548,11 +560,11 @@ with gr.Blocks(css=custom_css) as block:
 
             (prompt_input
                 .submit(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
-                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True, show_progress="hidden")
                 .then(enable_interact, None, resp_vote_btn_list, queue=False))
             (prompt_submit_btn
                 .click(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
-                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True, show_progress="hidden")
                 .then(enable_interact, None, resp_vote_btn_list, queue=False))
 
             left_resp_vote_btn.click(

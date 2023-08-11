@@ -535,7 +535,7 @@ with gr.Blocks(css=custom_css) as block:
 
             with gr.Row():
                 worth_energy_vote_btn = gr.Button(value="The better response was worth 👍 the extra energy.", visible=False)
-                notworth_energy_vote_btn = gr.Button(value="Not really worth it. 👎", visible=False)
+                notworth_energy_vote_btn = gr.Button(value="Not really worth that more. 👎", visible=False)
                 energy_vote_btn_list: list[gr.component.Component] = [worth_energy_vote_btn, notworth_energy_vote_btn]
 
             with gr.Row():

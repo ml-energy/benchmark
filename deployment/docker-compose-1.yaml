@@ -11,6 +11,8 @@ services:
     volumes:
       - /data/leaderboard/tgi-data:/data
     deploy:
+      restart_policy:
+        condition: any
       resources:
         reservations:
           devices:
@@ -27,6 +29,8 @@ services:
     volumes:
       - /data/leaderboard/tgi-data:/data
     deploy:
+      restart_policy:
+        condition: any
       resources:
         reservations:
           devices:

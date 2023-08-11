@@ -9,7 +9,8 @@ on:
       - 'pegasus/**'
       - 'scripts/**'
       - 'sharegpt/**'
-      - 'Dockerfile'
+      - 'spitfight/**'
+      - 'deployment/benchmark.Dockerfile'
       - 'LICENSE'
       - 'requirements-benchmark.txt'
       - '.gitignore'
@@ -41,7 +42,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          file: Dockerfile
+          file: deployment/benchmark.Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

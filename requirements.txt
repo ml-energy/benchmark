@@ -1,1 +1,1 @@
-./[app]
+spitfight @ git+https://github.com/ml-energy/leaderboard@master

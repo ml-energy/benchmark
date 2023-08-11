@@ -332,10 +332,19 @@ table th:first-child {
         border-color: #23d175;
     }
 }
-
+/* Older browser compatibility */
+@-webkit-keyframes blink {
+    0%, 33%, 67%, 100% {
+        border-color: transparent;
+    }
+    17%, 50%, 83% {
+        border-color: #23d175;
+    }
+}
 .model-name-text {
     border: 2px solid transparent; /* Transparent border initially */
     animation: blink 3s ease-in-out 1; /* One complete cycle of animation, lasting 3 seconds */
+    -webkit-animation: blink 3s ease-in-out 1; /* Older browser compatibility */
 }
 """
 

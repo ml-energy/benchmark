@@ -52,12 +52,7 @@ def apply_model_characteristics(
     """Apply and return model-specific differences."""
     conv = get_conversation_template(model_name)
 
-    if "llama-2" in model_name.lower():
-        conv.system = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
-    elif "stablelm" in model_name.lower():
-        conv.system = f"""<|SYSTEM|># {system_prompt}\n"""
-    else:
-        conv.system = system_prompt
+    conv.system_message = system_prompt
     conv.messages = []
     conv.offset = 0
 

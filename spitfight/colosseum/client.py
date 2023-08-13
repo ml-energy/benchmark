@@ -27,7 +27,7 @@ class ControllerClient:
         """Initialize the controller client."""
         self.controller_addr = controller_addr
         self.timeout = timeout
-        self.request_id = str(request_id) or str(uuid4())
+        self.request_id = str(uuid4()) if request_id is None else str(request_id)
 
     def fork(self) -> ControllerClient:
         """Return a copy of the client with a new request ID."""

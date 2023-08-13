@@ -752,9 +752,7 @@ with gr.Blocks(css=custom_css) as block:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--share", action="store_true", help="Specify if sharing is enabled")
-    parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument("--concurrency", type=int, default=50)
 
     args = parser.parse_args()
-    block.queue(
-        concurrency_count=args.concurrency, status_update_rate=10, api_open=False
-    ).launch(share=args.share, show_error=True)
+    block.queue(concurrency_count=args.concurrency, api_open=False).launch(share=args.share, show_error=True)

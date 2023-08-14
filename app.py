@@ -517,7 +517,6 @@ with gr.Blocks(css=custom_css) as block:
                     prompt_input = gr.Textbox(
                         show_label=False,
                         placeholder="Input your prompt, e.g., 'Explain machine learning in simple terms.'",
-                        autofocus=True,
                         container=False,
                         scale=20,
                         elem_id="prompt-textarea",
@@ -628,7 +627,7 @@ with gr.Blocks(css=custom_css) as block:
 
             # Block: Leaderboard table.
             with gr.Row():
-                dataframe = gr.Dataframe(type="pandas", elem_id="tab-leaderboard")
+                dataframe = gr.Dataframe(type="pandas", elem_id="tab-leaderboard", interactive=False)
             # Make sure the models have clickable links.
             dataframe.change(None, None, None, _js=dataframe_update_js, queue=False)
             # Table automatically updates when users check or uncheck any checkbox.

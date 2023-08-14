@@ -378,11 +378,8 @@ def consumed_less_energy_message(energy_a, energy_b):
     less_energy = min(energy_a, energy_b)
     more_energy = max(energy_a, energy_b)
     factor = less_energy / more_energy
-    if factor <= 0.5:
-        message = f"<h2>That response also <span class='green-text'>consumed {1/factor:.1f}X less energy</span>!</h2>"
-    else:
-        message = f"<h2>That response also <span class='green-text'>consumed {100 - factor * 100:.1f}% less energy</span>!</h2>"
-    return message
+    how_much = f"{1 / factor:.1f}x" if factor <= 0.5 else f"{100 - factor * 100:.1f}%"
+    return f"<h2>That response also <span class='green-text'>consumed {how_much} less energy</span> ({energy_a:,.0f} J vs. {energy_b:,.0f} J)!</h2>"
 
 def consumed_more_energy_message(energy_a, energy_b):
     """Return a message that indicates that the user chose the model that consumed more energy.
@@ -392,11 +389,8 @@ def consumed_more_energy_message(energy_a, energy_b):
     less_energy = min(energy_a, energy_b)
     more_energy = max(energy_a, energy_b)
     factor = more_energy / less_energy
-    if factor >= 2.0:
-        message = f"<h2>That response <span class='red-text'>consumed {factor:.1f}x more energy</span>.</h2>"
-    else:
-        message = f"<h2>That response <span class='red-text'>consumed {factor * 100 - 100:.1f}% more energy</span>.</h2>"
-    return message
+    how_much = f"{factor:.1f}x" if factor >= 2.0 else f"{factor * 100 - 100:.1f}%"
+    return f"<h2>That response <span class='red-text'>consumed {how_much} more energy</span> ({energy_a:,.0f} J vs. {energy_b:,.0f} J).</h2>"
 
 # Colosseum event handlers
 def add_prompt_disable_submit(prompt, history_a, history_b):

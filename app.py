@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import yaml
 import requests
 import itertools
@@ -365,6 +366,7 @@ global_controller_client = ControllerClient(controller_addr=controller_addr, tim
 
 # Load the list of models. To reload, the app should be restarted.
 available_models = global_controller_client.get_available_models()
+random.shuffle(available_models)
 model_preference_dropdown_choices = [f"One is {model}" for model in available_models]
 model_preference_dropdown_choices = ["Two random models"] + model_preference_dropdown_choices
 user_pref_to_model_name = dict(zip(model_preference_dropdown_choices, ["Random"] + available_models))

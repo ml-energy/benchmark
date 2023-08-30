@@ -22,6 +22,9 @@ pio.templates.default = "plotly_white"
 
 from spitfight.colosseum.client import ControllerClient
 
+COLOSSEUM_UP = True
+COLOSSEUM_BACK_ON = "September 4th"
+
 
 class TableManager:
     def __init__(self, data_dir: str) -> None:
@@ -348,6 +351,12 @@ table th:first-child {
     animation: blink 3s ease-in-out 1; /* One complete cycle of animation, lasting 3 seconds */
     -webkit-animation: blink 3s ease-in-out 1; /* Older browser compatibility */
 }
+
+/* Grey out components when the Colosseum is down. */
+.greyed-out {
+  pointer-events: none;
+  opacity: 0.4;
+}
 """
 
 intro_text = """
@@ -368,7 +377,7 @@ global_controller_client = ControllerClient(controller_addr=controller_addr, tim
 # Load the list of models. To reload, the app should be restarted.
 RANDOM_MODEL_NAME = "Random"
 RANDOM_USER_PREFERENCE = "Two random models"
-global_available_models = global_controller_client.get_available_models()
+global_available_models = global_controller_client.get_available_models() if COLOSSEUM_UP else []
 model_name_to_user_pref = {model: f"One is {model}" for model in global_available_models}
 model_name_to_user_pref[RANDOM_MODEL_NAME] = RANDOM_USER_PREFERENCE
 user_pref_to_model_name = {v: k for k, v in model_name_to_user_pref.items()}
@@ -529,13 +538,18 @@ with gr.Blocks(css=custom_css) as block:
     with gr.Tabs():
         # Tab: Colosseum.
         with gr.TabItem("Colosseum ⚔️️"):
-            gr.Markdown(open("docs/colosseum_top.md").read())
+            if COLOSSEUM_UP:
+                gr.Markdown(open("docs/colosseum_top.md").read())
+            else:
+                gr.HTML(f"<br/><h2 style='text-align: center'>The Colosseum is currently down. We'll be back on <u><b>{COLOSSEUM_BACK_ON}</b></u>.</h2>")
+                gr.HTML("<h3 style='text-align: center'>The energy leaderboard is still available.</h3><br/>")
 
             with gr.Row():
                 model_preference_dropdown = gr.Dropdown(
                     value=RANDOM_USER_PREFERENCE,
                     label="Prefer a specific model?",
-                    interactive=True,
+                    interactive=COLOSSEUM_UP,
+                    elem_classes=None if COLOSSEUM_UP else ["greyed-out"],
                 )
 
             with gr.Group():
@@ -545,13 +559,15 @@ with gr.Blocks(css=custom_css) as block:
                         placeholder="Input your prompt, e.g., 'Explain machine learning in simple terms.'",
                         container=False,
                         scale=20,
-                        elem_id="prompt-textarea",
+                        interactive=COLOSSEUM_UP,
+                        elem_classes=None if COLOSSEUM_UP else ["greyed-out"],
                     )
                     prompt_submit_btn = gr.Button(
                         value="⚔️️ Fight!",
-                        elem_classes=["btn-submit"],
+                        elem_classes=["btn-submit"] if COLOSSEUM_UP else ["greyed-out"],
                         min_width=60,
                         scale=1,
+                        interactive=COLOSSEUM_UP,
                     )
 
             with gr.Row():
@@ -562,7 +578,7 @@ with gr.Blocks(css=custom_css) as block:
                     with gr.Row():
                         masked_model_names.append(gr.Markdown(visible=False, elem_classes=["model-name-text"]))
                     with gr.Row():
-                        chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=400))
+                        chatbots.append(gr.Chatbot(label="Model A", elem_id="chatbot", height=400, elem_classes=None if COLOSSEUM_UP else ["greyed-out"]))
                     with gr.Row():
                         left_resp_vote_btn = gr.Button(value="👈 Model A is better", interactive=False)
                         resp_vote_btn_list.append(left_resp_vote_btn)
@@ -571,7 +587,7 @@ with gr.Blocks(css=custom_css) as block:
                     with gr.Row():
                         masked_model_names.append(gr.Markdown(visible=False, elem_classes=["model-name-text"]))
                     with gr.Row():
-                        chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=400))
+                        chatbots.append(gr.Chatbot(label="Model B", elem_id="chatbot", height=400, elem_classes=None if COLOSSEUM_UP else ["greyed-out"]))
                     with gr.Row():
                         right_resp_vote_btn = gr.Button(value="👉 Model B is better", interactive=False)
                         resp_vote_btn_list.append(right_resp_vote_btn)

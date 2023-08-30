@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import random
 import yaml
@@ -365,11 +366,10 @@ controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
 global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
 
 # Load the list of models. To reload, the app should be restarted.
-available_models = global_controller_client.get_available_models()
-random.shuffle(available_models)
-model_preference_dropdown_choices = [f"One is {model}" for model in available_models]
-model_preference_dropdown_choices = ["Two random models"] + model_preference_dropdown_choices
-user_pref_to_model_name = dict(zip(model_preference_dropdown_choices, ["Random"] + available_models))
+global_available_models = global_controller_client.get_available_models()
+model_name_to_user_pref = {model: f"One is {model}" for model in global_available_models}
+model_name_to_user_pref["Random"] = "Two random models"
+user_pref_to_model_name = {v: k for k, v in model_name_to_user_pref.items()}
 
 # Colosseum helper functions.
 def enable_interact():
@@ -401,6 +401,14 @@ def consumed_more_energy_message(energy_a, energy_b):
     return f"<h2>That response <span class='red-text'>consumed {how_much} more energy</span> ({energy_a:,.0f} J vs. {energy_b:,.0f} J).</h2>"
 
 # Colosseum event handlers
+def on_load():
+    """Intialize the dataframe, shuffle the model preference dropdown choices."""
+    dataframe = global_tbm.set_filter_get_df()
+    available_models = copy.deepcopy(global_available_models)
+    random.shuffle(available_models)
+    available_models.insert(0, "Random")
+    return dataframe, gr.Dropdown.update(choices=[model_name_to_user_pref[model] for model in available_models])
+
 def add_prompt_disable_submit(prompt, history_a, history_b):
     """Add the user's prompt to the two model's history and disable further submission."""
     client = global_controller_client.fork()
@@ -482,6 +490,9 @@ def make_energy_vote_func(is_worth: bool):
     return energy_vote_func
 
 def play_again():
+    available_models = copy.deepcopy(global_available_models)
+    random.shuffle(available_models)
+    available_models.insert(0, "Random")
     return [
         # Clear chatbot history
         None, None,
@@ -491,8 +502,8 @@ def play_again():
         gr.Markdown.update(value="", visible=False), gr.Markdown.update(value="", visible=False),
         # Hide energy vote buttons and message
         gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Markdown.update(visible=False),
-        # Enable model preference dropdown
-        gr.Dropdown.update(interactive=True),
+        # Enable model preference dropdown and shuffle choices
+        gr.Dropdown.update(choices=[model_name_to_user_pref[model] for model in available_models], interactive=True),
         # Disable reset button
         gr.Button.update(interactive=False, visible=False),
     ]
@@ -520,8 +531,7 @@ with gr.Blocks(css=custom_css) as block:
 
             with gr.Row():
                 model_preference_dropdown = gr.Dropdown(
-                    choices=model_preference_dropdown_choices,
-                    value=model_preference_dropdown_choices[0],
+                    value="Two random models",
                     label="Prefer a specific model?",
                     interactive=True,
                 )
@@ -759,7 +769,7 @@ with gr.Blocks(css=custom_css) as block:
             gr.Markdown(open("docs/leaderboard.md").read())
 
     # Load the table on page load.
-    block.load(lambda: global_tbm.set_filter_get_df(), outputs=dataframe)
+    block.load(on_load, outputs=[dataframe, model_preference_dropdown], queue=False)
 
 
 if __name__ == "__main__":

@@ -366,9 +366,11 @@ controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
 global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
 
 # Load the list of models. To reload, the app should be restarted.
+RANDOM_MODEL_NAME = "Random"
+RANDOM_USER_PREFERENCE = "Two random models"
 global_available_models = global_controller_client.get_available_models()
 model_name_to_user_pref = {model: f"One is {model}" for model in global_available_models}
-model_name_to_user_pref["Random"] = "Two random models"
+model_name_to_user_pref[RANDOM_MODEL_NAME] = RANDOM_USER_PREFERENCE
 user_pref_to_model_name = {v: k for k, v in model_name_to_user_pref.items()}
 
 # Colosseum helper functions.
@@ -406,7 +408,7 @@ def on_load():
     dataframe = global_tbm.set_filter_get_df()
     available_models = copy.deepcopy(global_available_models)
     random.shuffle(available_models)
-    available_models.insert(0, "Random")
+    available_models.insert(0, RANDOM_MODEL_NAME)
     return dataframe, gr.Dropdown.update(choices=[model_name_to_user_pref[model] for model in available_models])
 
 def add_prompt_disable_submit(prompt, history_a, history_b):
@@ -492,7 +494,7 @@ def make_energy_vote_func(is_worth: bool):
 def play_again():
     available_models = copy.deepcopy(global_available_models)
     random.shuffle(available_models)
-    available_models.insert(0, "Random")
+    available_models.insert(0, RANDOM_MODEL_NAME)
     return [
         # Clear chatbot history
         None, None,
@@ -503,7 +505,7 @@ def play_again():
         # Hide energy vote buttons and message
         gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Markdown.update(visible=False),
         # Enable model preference dropdown and shuffle choices
-        gr.Dropdown.update(choices=[model_name_to_user_pref[model] for model in available_models], interactive=True),
+        gr.Dropdown.update(value=RANDOM_USER_PREFERENCE, choices=[model_name_to_user_pref[model] for model in available_models], interactive=True),
         # Disable reset button
         gr.Button.update(interactive=False, visible=False),
     ]
@@ -531,7 +533,7 @@ with gr.Blocks(css=custom_css) as block:
 
             with gr.Row():
                 model_preference_dropdown = gr.Dropdown(
-                    value="Two random models",
+                    value=RANDOM_USER_PREFERENCE,
                     label="Prefer a specific model?",
                     interactive=True,
                 )

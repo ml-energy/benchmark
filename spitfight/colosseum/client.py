@@ -58,7 +58,7 @@ class ControllerClient:
         """Generate the response of the `index`th model with the prompt.
 
         `user_pref` is the user's preference for the model to use. It can be
-        `"random"` or one of the models in the list returned by `get_available_models`.
+        `"Random"` or one of the models in the list returned by `get_available_models`.
         """
         prompt_request = PromptRequest(
             request_id=self.request_id,

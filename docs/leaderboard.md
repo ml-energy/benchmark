@@ -35,7 +35,7 @@ This affects the number of decoding iterations the model has to run in order to 
 
 ## Setup
 
-Find our benchmark script for one model [here](https://github.com/ml-energy/leaderboard/blob/master/benchmark.py).
+Find our benchmark script for one model [here](https://github.com/ml-energy/leaderboard/blob/master/scripts/benchmark.py).
 
 ### Software
 

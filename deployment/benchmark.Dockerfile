@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04
 
 # Basic installs
 ARG DEBIAN_FRONTEND=noninteractive
@@ -18,13 +18,9 @@ RUN mkdir -p /root/.local \
     && rm -f Miniconda3-py39_23.3.1-0-Linux-x86_64.sh \
     && ln -sf /root/.local/miniconda3/etc/profile.d/conda.sh /etc/profile.d/conda.sh
 
-# Install PyTorch and Zeus
-RUN pip install torch==2.0.1
-
-# Install requirements for benchmarking
+# Install spitfight
 ADD . /workspace/leaderboard
-RUN cd /workspace/leaderboard \
-      && pip install -r requirements-benchmark.txt
+RUN cd /workspace/leaderboard && pip install -e .[benchmark]
 
 # Clone lm-evaluation-harness and install
 RUN cd /workspace \

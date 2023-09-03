@@ -2,6 +2,8 @@
 
 This directory holds all the data for the leaderboard table.
 
+Code that reads in the data here can be found in the constructor of `TableManager` in `app.py`.
+
 ## Parameters
 
 There are two types of parameters: (1) Those that become radio buttons on the leaderboard and (2) those that become columns on the leaderboard table.

@@ -12,3 +12,4 @@ By using our service, you agree to these Terms of Use and accept that the Servic
 
 Please direct general questions and issues related to the Colosseum to our GitHub repository's [discussion board](https://github.com/ml-energy/leaderboard/discussions).
 You can find the ML.ENERGY initiative members in [our homepage](https://ml.energy#members).
+If you need direct communication, please email admins@ml.energy.

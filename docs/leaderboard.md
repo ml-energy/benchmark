@@ -119,3 +119,9 @@ Please direct inquiries/reports of potential violation to Jae-Won Chung.
 ## Acknowledgements
 
 We thank [Chameleon Cloud](https://www.chameleoncloud.org/) and [CloudLab](https://cloudlab.us/) for the GPU nodes.
+
+## Contact
+
+Please direct general questions and issues related to the leaderboard to our GitHub repository's [discussion board](https://github.com/ml-energy/leaderboard/discussions).
+You can find the ML.ENERGY initiative members in [our homepage](https://ml.energy#members).
+If you need direct communication, please email admins@ml.energy.

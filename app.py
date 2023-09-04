@@ -22,8 +22,8 @@ pio.templates.default = "plotly_white"
 
 from spitfight.colosseum.client import ControllerClient
 
-COLOSSEUM_UP = False
-COLOSSEUM_BACK_ON = "September 4th"
+COLOSSEUM_UP = True
+COLOSSEUM_BACK_ON = ""
 
 
 class TableManager:

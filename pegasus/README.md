@@ -65,7 +65,7 @@ After all the tasks finish, aggregate all the data into one node and run [`compu
 
 ## NLP benchmark
 
-We'll use [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness/tree/72b7f0c00a6ff94632c5b873fc24e093ae74fa47) to run models through three NLP datasets: ARC challenge (`arc`), HellaSwag (`hellaswag`), and TruthfulQA (`truthfulqa`).
+We'll use [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness/tree/e9f1af36d2f6f8449e3cd132e6885d3b010ec838) to run models through three NLP datasets: ARC challenge (`arc`), HellaSwag (`hellaswag`), and TruthfulQA (`truthfulqa`).
 
 Use Pegasus to run benchmarks for all the models across all nodes.
 

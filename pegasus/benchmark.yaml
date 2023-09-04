@@ -25,6 +25,7 @@
     - project-baize/baize-v2-7B
     - StabilityAI/stablelm-tuned-alpha-7b
     - togethercomputer/RedPajama-INCITE-7B-Chat
+    - Salesforce/xgen-7b-8k-inst
   task:
     - chat
     - chat-concise

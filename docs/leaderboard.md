@@ -42,7 +42,7 @@ Find our benchmark script for one model [here](https://github.com/ml-energy/lead
 - PyTorch 2.0.1
 - [Zeus](https://ml.energy/zeus) -- For GPU time and energy measurement
 - [FastChat](https://github.com/lm-sys/fastchat) -- For running inference on various models
-- [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness/tree/e9f1af36d2f6f8449e3cd132e6885d3b010ec838) -- For NLP evaluation metrics
+- [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness/tree/d1537059b515511801ae9b742f8e949f1bfcd010) -- For NLP evaluation metrics
 
 ### Hardware
 

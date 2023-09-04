@@ -26,7 +26,7 @@ RUN cd /workspace/leaderboard && pip install -e .[benchmark]
 RUN cd /workspace \
       && git clone https://github.com/EleutherAI/lm-evaluation-harness.git \
       && cd lm-evaluation-harness \
-      && git checkout e9f1af36d2f6f8449e3cd132e6885d3b010ec838 \
+      && git checkout d1537059b515511801ae9b742f8e949f1bfcd010 \
       && rm -r .git \
       && pip install -e .
 

@@ -30,6 +30,11 @@ RUN cd /workspace \
       && rm -r .git \
       && pip install -e .
 
+# Apply patches
+# Salesforce xgen inference fix (https://github.com/lm-sys/FastChat/pull/2350)
+RUN cd /root/.local/miniconda3/lib/python3.9/site-packages/fastchat \
+      && patch -p1 < /workspace/leaderboard/deployment/fastchat_xgen_fix.patch
+
 # Where all the weights downloaded from Hugging Face Hub will go to
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache
 

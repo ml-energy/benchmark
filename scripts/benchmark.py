@@ -40,11 +40,35 @@ SYSTEM_PROMPTS = {
     ),
 }
 
+class CustomDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        sample = self.data[index]
+        return sample["conversations"][0]["value"]
+
+
+def dataloader(input_file: str, batch_size: int) -> Generator[tuple[bool, list[str]], None, None]:
+    """Yields a tuple of whether this is a warmup run and the input prompt."""
+    for _ in range(3):
+        yield True, ["Say something long and random. I don't care about the content." for _ in range (batch_size)]
+    data = json.load(open(input_file, "r"))
+    custom_dataset = CustomDataset(data)
+    data_loader = DataLoader(custom_dataset, batch_size=batch_size, shuffle=False)
+    for prompt in data_loader:
+        yield False, prompt
+
+
 @dataclass
 class Output:
     response_length: int
     input: str
     output: str
+
 
 @torch.inference_mode()
 def run_inference(
@@ -218,9 +242,6 @@ def run_inference(
 
     return result
 
-def write_error_to_file(filename, error_message):
-    with open(filename, 'a') as file:
-        file.write(error_message + '\n')
 
 def main(
     model_path: str,
@@ -232,7 +253,7 @@ def main(
     temperature: float = 0.7,
     repitition_penalty: float = 1.0,
     max_new_tokens: int = 512,
-    batch: int = 1,
+    batch_size: int = 1,
 ) -> None:
     """Run benchmarking for one model on the entire input file.
 
@@ -262,8 +283,8 @@ def main(
         model_path = model_path[:-1]
     model_name_cleaned = "--".join(model_path.split("/")[-2:])
     output_dir = f"{output_dir}/{task}/{model_name_cleaned}"
-    output_csv_path = f"{output_dir}/benchmark_batch_{batch}.json"
-    config_json_path = f"{output_dir}/config.json"
+    output_csv_path = f"{output_dir}/benchmark_batch_{batch_size}.json"
+    config_json_path = f"{output_dir}/config_batch_{batch_size}.json"
     table = Table(title="Benchmark")
     table.add_column("Configuration")
     table.add_column("Value")
@@ -341,45 +362,23 @@ def main(
                 "temperature": temperature,
                 "repitition_penalty": repitition_penalty,
                 "max_new_tokens": max_new_tokens,
-                "batch_size": batch,
+                "batch_size": batch_size,
             },
             config_json,
             indent=4,
         )
         config_json.write("\n")
 
-    class CustomDataset(Dataset):
-        def __init__(self, data):
-            self.data = data
-
-        def __len__(self):
-            return len(self.data)
-
-        def __getitem__(self, index):
-            sample = self.data[index]
-            return sample["conversations"][0]["value"]
-
-
-    def dataloader(input_file: str, batch_size: batch) -> Generator[tuple[bool, str], None, None]:
-        """Yields a tuple of whether this is a warmup run and the input prompt."""
-        for _ in range(3):
-            yield True, ["Say something long and random. I don't care about the content." for _ in range (batch)]
-        data = json.load(open(input_file, "r"))
-        custom_dataset = CustomDataset(data)
-        data_loader = DataLoader(custom_dataset, batch_size=batch_size, shuffle=False)
-        for prompt in data_loader:
-            yield False, prompt
-
     # Warm up the GPU with some random prompts.
     # Forward through all the prompts.
     is_first = True
     convs = []
     prompts = []
-    data_iter = iter(dataloader(input_file, batch))
+    data_iter = iter(dataloader(input_file, batch_size))
     
     for is_warmup, input_prompts in data_iter:
         # Construct the input prompt.
-        for i in range(batch):
+        for i in range(batch_size):
             conv = copy.deepcopy(conv_base)
             conv.append_message(conv.roles[0], input_prompts[i])
             conv.append_message(conv.roles[1], "")
@@ -404,18 +403,19 @@ def main(
         if results:
             # Record numbers.
             if not is_warmup:
-                response_length = sum([result.response_length for result in results])  # number of valid tokens
-                latency = measurements.time
-                throughput = response_length / latency
-                energy = measurements.total_energy
+                total_num_tokens = sum([result.response_length for result in results])  # total number of tokens
+                latency = measurements.time  # seconds, identical for all requests
+                throughput = total_num_tokens / latency  # tokens per second
+                energy = measurements.total_energy  # Joules, total across all requests
+                # Fields should be interpreted as per-request
                 output = {
                     "model": model_name_cleaned,
                     "throughput": throughput,
-                    "response_length": response_length,
+                    "response_length": total_num_tokens / batch_size,
                     "latency": latency,
-                    "energy": energy,
+                    "energy": energy / batch_size,
                     "input": [prompt.strip() for prompt in prompts],
-                    "output": [(result.output).strip() for result in results],
+                    "output": [result.output.strip() for result in results],
                 }
                 output_str = json.dumps(output, indent=4)
                 if not is_warmup:

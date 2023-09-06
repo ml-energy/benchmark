@@ -108,5 +108,10 @@
         "url": "https://huggingface.co/meta-llama/Llama-2-13b-chat-hf",
         "nickname": "MetaAI/Llama-2-13B-chat",
         "params": 13
+    },
+    "Salesforce/xgen-7b-8k-inst": {
+        "url": "https://huggingface.co/Salesforce/xgen-7b-8k-inst",
+        "nickname": "Salesforce/xgen-7b-8k-inst",
+        "params": 7
     }
 }

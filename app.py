@@ -23,7 +23,7 @@ pio.templates.default = "plotly_white"
 from spitfight.colosseum.client import ControllerClient
 
 COLOSSEUM_UP = True
-COLOSSEUM_BACK_ON = ""
+COLOSSEUM_DOWN_MESSAGE = f"<br/><h2 style='text-align: center'>The Colosseum is currently down. We'll be back on <u><b>September 4th</b></u>.</h2>"
 
 
 class TableManager:
@@ -371,7 +371,11 @@ Every benchmark is limited in some sense -- Before you interpret the results, pl
 """
 
 # The app will not start without a controller address set.
-controller_addr = os.environ["COLOSSEUM_CONTROLLER_ADDR"]
+controller_addr = os.environ.get("COLOSSEUM_CONTROLLER_ADDR")
+if controller_addr is None:
+    COLOSSEUM_UP = False
+    COLOSSEUM_DOWN_MESSAGE = "<br/><h2 style='text-align: center'>Disabled Colosseum for local testing.</h2>"
+    controller_addr = "localhost"
 global_controller_client = ControllerClient(controller_addr=controller_addr, timeout=15)
 
 # Load the list of models. To reload, the app should be restarted.
@@ -541,7 +545,7 @@ with gr.Blocks(css=custom_css) as block:
             if COLOSSEUM_UP:
                 gr.Markdown(open("docs/colosseum_top.md").read())
             else:
-                gr.HTML(f"<br/><h2 style='text-align: center'>The Colosseum is currently down. We'll be back on <u><b>{COLOSSEUM_BACK_ON}</b></u>.</h2>")
+                gr.HTML(COLOSSEUM_DOWN_MESSAGE)
                 gr.HTML("<h3 style='text-align: center'>The energy leaderboard is still available.</h3><br/>")
 
             with gr.Row():

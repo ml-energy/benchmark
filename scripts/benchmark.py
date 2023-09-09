@@ -104,7 +104,10 @@ def run_inference(
         temperature, repetition_penalty, top_p, top_k
     )
 
-    input_ids = tokenizer(prompts, padding=True).input_ids
+    prompts_encode = tokenizer(prompts, padding=True)
+    input_ids = prompts_encode.input_ids
+    attention_masks = prompts_encode.attention_mask
+    
     output_ids = [[] for _ in range(batch_size)]
 
     if model.config.is_encoder_decoder:
@@ -113,10 +116,12 @@ def run_inference(
         max_src_len = context_len - max_new_tokens - 1
 
     input_ids = [input_id[-max_src_len:] for input_id in input_ids]
+    attention_masks = torch.as_tensor([attention_mask[-max_src_len:] for attention_mask in attention_masks], device=device)
 
     if model.config.is_encoder_decoder:
         encoder_output = model.encoder(
-            input_ids=torch.as_tensor(input_ids, device=device)
+            input_ids=torch.as_tensor(input_ids, device=device),
+            attention_mask=attention_masks
         )[0]
         start_ids = torch.as_tensor(
             [[model.generation_config.decoder_start_token_id] for _ in range(batch_size)],
@@ -126,6 +131,12 @@ def run_inference(
     
     past_key_values = out = None
     stopped = np.array(batch_size*[False])
+
+    # stop string length
+    stop_str_length = np.zeros(batch_size, dtype=int)
+    if stop_str and isinstance(stop_str, str):
+        stop_str_length[:] = len(tokenizer(stop_str).input_ids)
+
     for i in range(max_new_tokens):
         if i == 0:  # prefill
             if model.config.is_encoder_decoder:
@@ -136,7 +147,7 @@ def run_inference(
                 )
                 logits = model.lm_head(out[0])
             else:
-                out = model(torch.as_tensor(input_ids, device=device), use_cache=True)
+                out = model(torch.as_tensor(input_ids, device=device), use_cache=True, attention_mask=attention_masks)
                 logits = out.logits
             past_key_values = out.past_key_values
         else:  # decoding
@@ -157,9 +168,16 @@ def run_inference(
                     ),
                     use_cache=True,
                     past_key_values=past_key_values,
+                    attention_mask=attention_masks,
                 )
                 logits = out.logits
             past_key_values = out.past_key_values
+
+        # update attention mask
+        attention_masks = torch.cat(
+            [attention_masks, torch.ones((batch_size, 1), device=device)],
+            dim=1
+        )
 
         if logits_processor:
             if repetition_penalty > 1.0:
@@ -213,14 +231,15 @@ def run_inference(
                 for each_stop in stop_str:
                     pos_array = np.char.rfind(output_np, each_stop, rfind_start)
                     find_stop = pos_array != -1
+                    # update stop_str_length with each stop_str_length for each request
+                    stop_str_length[find_stop] = len(tokenizer(each_stop).input_ids)
             else:
                 raise ValueError("Invalid stop field type.")
 
             stop_str_indices = np.where(find_stop & ~stopped)[0]
             if stop_str_indices.size > 0:
                 for j in stop_str_indices:
-                    # TODO: find a elegant way to figure out the size of stop_str, here just suppose stop_str has one token
-                    result[j].response_length = i
+                    result[j].response_length = i+1-stop_str_length[j]
                     result[j].output = output[j][:pos_array[j]]
                 stopped[find_stop] = True
 
@@ -378,7 +397,7 @@ def main(
     
     for is_warmup, input_prompts in data_iter:
         # Construct the input prompt.
-        for i in range(batch_size):
+        for i in range(len(input_prompts)):
             conv = copy.deepcopy(conv_base)
             conv.append_message(conv.roles[0], input_prompts[i])
             conv.append_message(conv.roles[1], "")

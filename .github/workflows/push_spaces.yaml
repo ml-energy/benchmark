@@ -6,13 +6,14 @@ on:
       - master
     paths:
       - 'data/**'
+      - 'docs/**'
       - 'app.py'
-      - 'LEADERBOARD.md'
       - 'README.md'
       - 'requirements.txt'
       - 'index.html'
       - 'LICENSE'
       - '.github/workflows/push_spaces.yaml'
+      - 'spitfight/**'
 
 concurrency:
   group: ${{ github.ref }}-hfpush

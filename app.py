@@ -22,7 +22,7 @@ pio.templates.default = "plotly_white"
 
 from spitfight.colosseum.client import ControllerClient
 
-COLOSSEUM_UP = False
+COLOSSEUM_UP = True
 COLOSSEUM_DOWN_MESSAGE = f"<br/><h2 style='text-align: center'>The Colosseum is currently down for maintenance.</h2>"
 
 

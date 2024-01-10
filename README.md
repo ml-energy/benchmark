@@ -7,8 +7,6 @@ sdk: "gradio"
 sdk_version: "3.39.0"
 pinned: true
 tags: ["energy", "leaderboard"]
-colorFrom: "black"
-colorTo: "black"
 ---
 
 # ML.ENERGY Leaderboard

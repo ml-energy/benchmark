@@ -61,22 +61,4 @@ $ docker exec leaderboard0 python scripts/benchmark.py --model-path databricks/d
 
 ## Citation
 
-For the ML.ENERGY Leaderboard:
-```bibtex
-@misc{ml-energy-leaderboard,
-    author={Jae-Won Chung and Jiachen Liu and Zhiyu Wu and Yuxuan Xia and Mosharaf Chowdhury},
-    title={{ML.ENERGY} Leaderboard},
-    year={2023},
-    howpublished={\url{https://ml.energy/leaderboard}},
-}
-```
-
-For the [Zeus](https://ml.energy/zeus) framework used for benchmarking:
-```bibtex
-@inproceedings{zeus:nsdi23,
-    author={Jie You and Jae-Won Chung and Mosharaf Chowdhury},
-    booktitle={USENIX NSDI},
-    title={Zeus: Understanding and Optimizing {GPU} Energy Consumption of {DNN} Training},
-    year={2023},
-}
-```
+Please refer to our BibTeX file: [`citation.bib`](/docs/citation.bib).

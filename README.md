@@ -65,7 +65,7 @@ For the ML.ENERGY Leaderboard:
 ```bibtex
 @misc{ml-energy-leaderboard,
     author={Jae-Won Chung and Jiachen Liu and Zhiyu Wu and Yuxuan Xia and Mosharaf Chowdhury},
-    title={\{ML.ENERGY\} Leaderboard},
+    title={{ML.ENERGY} Leaderboard},
     year={2023},
     howpublished={\url{https://ml.energy/leaderboard}},
 }

@@ -20,7 +20,7 @@ extras_require = {
         "datasets==2.15.0",
         "diffusers==0.23.1",
         "transformers==4.35.2",
-        "accelerat==0.24.1",
+        "accelerate==0.24.1",
         "torchmetrics==1.2.0",
         "pillow==10.1.0",
     ],

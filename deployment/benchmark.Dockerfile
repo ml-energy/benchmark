@@ -37,6 +37,7 @@ RUN cd /root/.local/miniconda3/lib/python3.9/site-packages \
 
 # Where all the weights downloaded from Hugging Face Hub will go to
 ENV TRANSFORMERS_CACHE=/data/leaderboard/hfcache
+ENV HF_HOME=/data/leaderboard/hfcache
 
 # So that docker exec container python scripts/benchmark.py will work
 WORKDIR /workspace/leaderboard

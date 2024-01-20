@@ -1,0 +1,22 @@
+# This YAML dictionary will expand into 8 (models) x 6 (batch sizes) = 48 job commands,
+# where {{ model }} and {{ batch_size }} are filled in with all possible combinations.
+# {{ gpu }} is defined in `hosts.yaml`, and will be filled in when Pegasus
+# determines the specific node and gpu the generated job command will run on.
+- command:
+    - docker exec leaderboard{{ gpu }} python scripts/diffusion/benchmark.py --model {{ model }} --batch_size {{ batch_size }} --warmup
+  model:
+    - runwayml/stable-diffusion-v1-5
+    - stabilityai/stable-diffusion-xl-base-1.0
+    - stabilityai/stable-diffusion-2-1
+    - prompthero/openjourney
+    - kakaobrain/karlo-v1-alpha
+    - kandinsky-community/kandinsky-2-2-decoder
+    - CompVis/ldm-text2im-large-256
+    - SimianLuo/LCM_Dreamshaper_v7
+  batch_size:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32

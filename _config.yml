@@ -1,5 +1,4 @@
 exclude:
-  - assets/
   - deployment/
   - pegasus/
   - scripts/

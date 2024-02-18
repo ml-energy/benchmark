@@ -35,5 +35,5 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           for i in 1 2 3 4 5; do
-            git push -f https://jaywonchung:$HF_TOKEN@huggingface.co/spaces/symbioticlab/ml-energy-leaderboard master:main && break || sleep 5;
+            git push -f https://jaywonchung:$HF_TOKEN@huggingface.co/spaces/ml-energy/leaderboard master:main && break || sleep 5;
           done

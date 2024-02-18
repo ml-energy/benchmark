@@ -1,0 +1,7 @@
+exclude:
+  - assets/
+  - deployment/
+  - pegasus/
+  - scripts/
+  - sharegpt/
+  - tests/

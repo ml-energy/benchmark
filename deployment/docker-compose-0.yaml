@@ -36,12 +36,10 @@ services:
             - driver: nvidia
               device_ids: ["1"]
               capabilities: [gpu]
-  FastChat-T5-3B:
+  Vicuna-13B:
     container_name: worker2
     image: mlenergy/tgi:latest
-    command: ["--model-id", "lmsys/fastchat-t5-3b-v1.0", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
-    environment:
-      PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
+    command: ["--model-id", "lmsys/vicuna-13b-v1.5", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:
       - leaderboard

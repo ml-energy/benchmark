@@ -1,7 +1,7 @@
 services:
   Llama2-70B-INT8:
     container_name: worker4
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "meta-llama/Llama-2-70b-chat-hf", "--num-shard", "2", "--otlp-endpoint", "http://jaeger:4317", "--quantize", "bitsandbytes"]
     shm_size: 1g
     environment:
@@ -21,7 +21,7 @@ services:
               capabilities: [gpu]
   MPT-30B:
     container_name: worker5
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "mosaicml/mpt-30b-chat", "--num-shard", "2", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:

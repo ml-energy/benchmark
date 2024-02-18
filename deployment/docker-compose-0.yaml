@@ -1,7 +1,7 @@
 services:
   MPT-7B:
     container_name: worker0
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "mosaicml/mpt-7b-chat", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:
@@ -19,7 +19,7 @@ services:
               capabilities: [gpu]
   Llama2-7B:
     container_name: worker1
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "/weights/metaai/Llama-2-7b-chat-hf", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:
@@ -38,7 +38,7 @@ services:
               capabilities: [gpu]
   Vicuna-13B:
     container_name: worker2
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "lmsys/vicuna-13b-v1.5", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:
@@ -56,7 +56,7 @@ services:
               capabilities: [gpu]
   Llama2-13B:
     container_name: worker3
-    image: mlenergy/tgi:latest
+    image: mlenergy/tgi:v1.0.0
     command: ["--model-id", "/weights/metaai/Llama-2-13b-chat-hf", "--num-shard", "1", "--otlp-endpoint", "http://jaeger:4317"]
     shm_size: 1g
     networks:

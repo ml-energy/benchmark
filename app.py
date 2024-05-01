@@ -22,7 +22,7 @@ pio.templates.default = "plotly_white"
 
 from spitfight.colosseum.client import ControllerClient
 
-COLOSSEUM_UP = False
+COLOSSEUM_UP = True
 COLOSSEUM_DOWN_MESSAGE = f"<br/><h2 style='text-align: center'>The Colosseum is currently down for maintenance.</h2>"
 COLOSSUMM_YOUTUBE_DEMO_EMBED_HTML = '<div style="width: 100%; min-width: 400px;"><div style="position: relative; width: 100%; overflow: hidden; padding-top: 56.25%"><p><iframe width="560" height="315" style="margin: auto; position: absolute; top: 0; left: 0; right: 0; width: 100%; height: 100%; border: none;" src="https://www.youtube.com/embed/tvNM_gLffFs?si=rW1-10pt5BffJEGH" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe><p></div></div>'
 

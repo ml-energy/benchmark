@@ -1,0 +1,9 @@
+{
+  "Model": "guoyww/animatediff-motion-adapter-v1-5-3",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "Energy/video (J)": 3202.3456999999935,
+  "Batch latency (s)": 5.03039321899414,
+  "Batch size": 1,
+  "Denoising steps": 25,
+  "Frames": 16
+}

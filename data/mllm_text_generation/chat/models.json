@@ -1,0 +1,32 @@
+{
+  "facebook/chameleon-30b": {
+    "url": "https://huggingface.co/facebook/chameleon-30b",
+    "nickname": "Chameleon 30B",
+    "params": "34B"
+  },
+  "facebook/chameleon-7b": {
+    "url": "https://huggingface.co/facebook/chameleon-7b",
+    "nickname": "Chameleon 7B",
+    "params": "7B"
+  },
+  "llava-hf/llama3-llava-next-8b-hf": {
+    "url": "https://huggingface.co/llava-hf/llama3-llava-next-8b-hf",
+    "nickname": "LLaVA NeXT 8B",
+    "params": "8B"
+  },
+  "llava-hf/llava-1.5-13b-hf": {
+    "url": "https://huggingface.co/llava-hf/llava-1.5-13b-hf",
+    "nickname": "LLaVA 1.5 13B",
+    "params": "13B"
+  },
+  "llava-hf/llava-1.5-7b-hf": {
+    "url": "https://huggingface.co/llava-hf/llava-1.5-7b-hf",
+    "nickname": "LLaVA 1.5 7B",
+    "params": "7B"
+  },
+  "microsoft/Phi-3-vision-128k-instruct": {
+    "url": "https://huggingface.co/microsoft/Phi-3-vision-128k-instruct",
+    "nickname": "Phi 3 Vision",
+    "params": "4B"
+  }
+}

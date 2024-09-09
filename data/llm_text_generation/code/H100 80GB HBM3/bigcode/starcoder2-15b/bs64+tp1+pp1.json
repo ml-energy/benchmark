@@ -1,0 +1,12 @@
+{
+  "Model": "bigcode/starcoder2-15b",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 25.725552104818174,
+  "Avg TPOT (s)": 0.0586860490830722,
+  "Token tput (tok/s)": 938.6986115628259,
+  "Avg Output Tokens": 65.73780487804878,
+  "Avg BS (reqs)": 63.37314017227878,
+  "Max BS (reqs)": 64
+}

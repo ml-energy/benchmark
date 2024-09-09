@@ -1,0 +1,12 @@
+{
+  "Model": "google/gemma-2-2b-it",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 72.15207959222636,
+  "Avg TPOT (s)": 0.030190263209418828,
+  "Token tput (tok/s)": 1052.2489146419148,
+  "Avg Output Tokens": 488.404,
+  "Avg BS (reqs)": 31.938609136551175,
+  "Max BS (reqs)": 32
+}

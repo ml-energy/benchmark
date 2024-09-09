@@ -1,6 +1,7 @@
 name: Deploy
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -34,6 +35,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          git lfs install
           for i in 1 2 3 4 5; do
             git push -f https://jaywonchung:$HF_TOKEN@huggingface.co/spaces/ml-energy/leaderboard master:main && break || sleep 5;
           done

@@ -1,0 +1,6 @@
+requests
+aiohttp
+numpy
+tqdm
+evalplus==0.2.0
+zeus-ml

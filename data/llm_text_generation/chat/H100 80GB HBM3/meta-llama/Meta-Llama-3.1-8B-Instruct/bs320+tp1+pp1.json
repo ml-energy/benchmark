@@ -1,0 +1,12 @@
+{
+  "Model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 56.59848084111025,
+  "Avg TPOT (s)": 0.11608570649570985,
+  "Token tput (tok/s)": 2342.560104448569,
+  "Avg Output Tokens": 483.5195,
+  "Avg BS (reqs)": 319.1868381240545,
+  "Max BS (reqs)": 320
+}

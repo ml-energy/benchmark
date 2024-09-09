@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mistral-Nemo-Instruct-2407",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 57.924891373439145,
+  "Avg TPOT (s)": 0.23001808831044732,
+  "Token tput (tok/s)": 2123.6265644271543,
+  "Avg Output Tokens": 439.643,
+  "Avg BS (reqs)": 760.1775636613902,
+  "Max BS (reqs)": 768
+}

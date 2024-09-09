@@ -1,0 +1,12 @@
+{
+  "Model": "codellama/CodeLlama-13b-hf",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 2,
+  "PP": 1,
+  "Energy/req (J)": 49.092220733460245,
+  "Avg TPOT (s)": 0.06535704584778282,
+  "Token tput (tok/s)": 934.2626026225545,
+  "Avg Output Tokens": 97.97835365853659,
+  "Avg BS (reqs)": 63.543663546178564,
+  "Max BS (reqs)": 64
+}

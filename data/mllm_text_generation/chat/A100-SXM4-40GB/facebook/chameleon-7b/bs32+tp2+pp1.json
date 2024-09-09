@@ -1,0 +1,12 @@
+{
+  "Model": "facebook/chameleon-7b",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 2,
+  "PP": 1,
+  "Energy/req (J)": 162.1355736979664,
+  "Avg TPOT (s)": 0.05032196093433985,
+  "Token tput (tok/s)": 541.6100159758948,
+  "Avg Output Tokens": 222.706,
+  "Avg BS (reqs)": 31.829048140043763,
+  "Max BS (reqs)": 32
+}

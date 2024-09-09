@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 8,
+  "PP": 1,
+  "Energy/req (J)": 625.2197333844545,
+  "Avg TPOT (s)": 0.17125744286953287,
+  "Token tput (tok/s)": 1031.7301106575553,
+  "Avg Output Tokens": 387.518,
+  "Avg BS (reqs)": 191.57543062653795,
+  "Max BS (reqs)": 192
+}

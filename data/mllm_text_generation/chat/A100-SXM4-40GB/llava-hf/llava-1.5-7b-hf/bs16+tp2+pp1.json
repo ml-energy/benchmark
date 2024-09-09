@@ -1,0 +1,12 @@
+{
+  "Model": "llava-hf/llava-1.5-7b-hf",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 2,
+  "PP": 1,
+  "Energy/req (J)": 108.92071031193782,
+  "Avg TPOT (s)": 0.03829518914837486,
+  "Token tput (tok/s)": 405.520809103269,
+  "Avg Output Tokens": 134.416,
+  "Avg BS (reqs)": 15.89064558629776,
+  "Max BS (reqs)": 16
+}

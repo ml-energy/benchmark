@@ -1,0 +1,12 @@
+{
+  "Model": "google/codegemma-7b",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 2,
+  "PP": 1,
+  "Energy/req (J)": 21.603657810117927,
+  "Avg TPOT (s)": 0.13770051975366276,
+  "Token tput (tok/s)": 1626.700615481442,
+  "Avg Output Tokens": 89.06371951219512,
+  "Avg BS (reqs)": 316.96080992815155,
+  "Max BS (reqs)": 320
+}

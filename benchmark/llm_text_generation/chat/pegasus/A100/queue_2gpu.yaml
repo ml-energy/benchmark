@@ -1,0 +1,4 @@
+- command:
+    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --gpu-ids {{ gpu }} --backends vllm --server-images mlenergy/vllm:v0.5.4-openai --request-rate inf --power-limits 400 --max-num-seqs 320 256 192 128 63 32 --data-dup-factor 1"
+  model:
+    - google/gemma-2-27b-it

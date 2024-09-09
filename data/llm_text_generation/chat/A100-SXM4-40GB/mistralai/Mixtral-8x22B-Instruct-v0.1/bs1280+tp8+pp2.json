@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 8,
+  "PP": 2,
+  "Energy/req (J)": 459.8858965632277,
+  "Avg TPOT (s)": 0.7616762496743738,
+  "Token tput (tok/s)": 1588.7075343635433,
+  "Avg Output Tokens": 387.10325,
+  "Avg BS (reqs)": 2491.515950069348,
+  "Max BS (reqs)": 2560
+}

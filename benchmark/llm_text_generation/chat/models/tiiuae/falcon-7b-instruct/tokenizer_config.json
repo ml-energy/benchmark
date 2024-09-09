@@ -1,0 +1,14 @@
+{
+  "bos_token": "",
+  "add_prefix_space": false,
+  "eos_token": "<|endoftext|>",
+  "model_input_names": [
+    "input_ids",
+    "attention_mask"
+  ],
+  "model_max_length": 2048,
+  "name_or_path": "tiiuae/falcon_tokenizer",
+  "special_tokens_map_file": null,
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "chat_template": "{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% else %}{% set loop_messages = messages %}{% set system_message = '' %}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if loop.index0 == 0 %}{{ system_message }}{% endif %}{{ '\n\n' + (message['role'] | title) + ': ' + message['content'] }}{% endfor %}{% if add_generation_prompt %}{{ '\n\nAssistant:' }}{% endif %}"
+}

@@ -1,0 +1,12 @@
+{
+  "Model": "llava-hf/llama3-llava-next-8b-hf",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 116.88388630762931,
+  "Avg TPOT (s)": 0.10020022304979281,
+  "Token tput (tok/s)": 778.2951127379962,
+  "Avg Output Tokens": 222.478,
+  "Avg BS (reqs)": 121.60809716599191,
+  "Max BS (reqs)": 128
+}

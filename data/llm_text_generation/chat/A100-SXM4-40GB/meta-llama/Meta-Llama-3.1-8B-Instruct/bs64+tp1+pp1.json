@@ -1,0 +1,12 @@
+{
+  "Model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 78.05486169614683,
+  "Avg TPOT (s)": 0.05020906793675275,
+  "Token tput (tok/s)": 1245.2100098835203,
+  "Avg Output Tokens": 481.347,
+  "Avg BS (reqs)": 63.880287214143486,
+  "Max BS (reqs)": 64
+}

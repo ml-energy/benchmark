@@ -1,0 +1,16 @@
+{
+  "added_tokens_decoder": {},
+  "auto_map": {
+    "AutoTokenizer": [
+      "tokenization_phi3_small.Phi3SmallTokenizer",
+      "tokenization_phi3_small.Phi3SmallTokenizer"
+    ]
+  },
+  "bos_token": "<|endoftext|>",
+  "chat_template": "{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content']  + ' ' %}{% else %}{% set loop_messages = messages %}{% set system_message = '' %}{% endif %}{{ bos_token }}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if loop.index0 == 0 %}{% set content = system_message + message['content'] %}{% else %}{% set content = message['content'] %}{% endif %}{% if (message['role'] == 'user') %}{{'<|user|>' + '\n' + content + '<|end|>' + '\n' + '<|assistant|>' + '\n'}}{% elif (message['role'] == 'assistant') %}{{content + '<|end|>' + '\n'}}{% endif %}{% endfor %}",
+  "clean_up_tokenization_spaces": true,
+  "eos_token": "<|endoftext|>",
+  "model_max_length": 8192,
+  "pad_token": "<|endoftext|>",
+  "tokenizer_class": "Phi3SmallTokenizer"
+}

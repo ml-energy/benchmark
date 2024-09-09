@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 52.77501217263819,
+  "Avg TPOT (s)": 0.07175363628754416,
+  "Token tput (tok/s)": 1657.485705962107,
+  "Avg Output Tokens": 421.633,
+  "Avg BS (reqs)": 127.7351276568985,
+  "Max BS (reqs)": 128
+}

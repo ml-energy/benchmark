@@ -1,0 +1,12 @@
+{
+  "Model": "microsoft/Phi-3-mini-4k-instruct",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 58.70265225909801,
+  "Avg TPOT (s)": 0.08111878269030422,
+  "Token tput (tok/s)": 2135.6849934107013,
+  "Avg Output Tokens": 476.7835,
+  "Avg BS (reqs)": 191.6329381192139,
+  "Max BS (reqs)": 192
+}

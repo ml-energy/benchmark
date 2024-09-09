@@ -1,0 +1,12 @@
+{
+  "Model": "microsoft/Phi-3-small-8k-instruct",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 64.4022769583488,
+  "Avg TPOT (s)": 0.04997028091718587,
+  "Token tput (tok/s)": 1253.632401513481,
+  "Avg Output Tokens": 409.371,
+  "Avg BS (reqs)": 63.86312343271106,
+  "Max BS (reqs)": 64
+}

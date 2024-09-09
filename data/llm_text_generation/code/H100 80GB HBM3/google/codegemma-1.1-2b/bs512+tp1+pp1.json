@@ -1,0 +1,12 @@
+{
+  "Model": "google/codegemma-1.1-2b",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 13.503080977938424,
+  "Avg TPOT (s)": 0.13402123438251803,
+  "Token tput (tok/s)": 2970.5653110190456,
+  "Avg Output Tokens": 239.41666666666666,
+  "Avg BS (reqs)": 507.82708585247883,
+  "Max BS (reqs)": 512
+}

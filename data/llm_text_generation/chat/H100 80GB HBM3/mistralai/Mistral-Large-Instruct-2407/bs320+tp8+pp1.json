@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mistral-Large-Instruct-2407",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 8,
+  "PP": 1,
+  "Energy/req (J)": 786.6240051770778,
+  "Avg TPOT (s)": 0.2415873737102111,
+  "Token tput (tok/s)": 1134.344086099511,
+  "Avg Output Tokens": 511.5885,
+  "Avg BS (reqs)": 319.2314660309893,
+  "Max BS (reqs)": 320
+}

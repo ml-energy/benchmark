@@ -1,0 +1,12 @@
+{
+  "Model": "microsoft/Phi-3-vision-128k-instruct",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 140.0660075932654,
+  "Avg TPOT (s)": 0.05273931413169685,
+  "Token tput (tok/s)": 285.46719905525896,
+  "Avg Output Tokens": 161.336,
+  "Avg BS (reqs)": 15.897521272660008,
+  "Max BS (reqs)": 16
+}

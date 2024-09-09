@@ -1,0 +1,58 @@
+{
+  "kandinsky-community/kandinsky-2-2-decoder": {
+    "url": "https://huggingface.co/kandinsky-community/kandinsky-2-2-decoder",
+    "nickname": "Kandinsky 2.2",
+    "total_params": "4.9B",
+    "denoising_params": "1.3B",
+    "resolution": "512x512"
+  },
+  "kandinsky-community/kandinsky-3": {
+    "url": "https://huggingface.co/kandinsky-community/kandinsky-3",
+    "nickname": "Kandinsky 3",
+    "total_params": "12.0B",
+    "denoising_params": "3.1B",
+    "resolution": "1024x1024"
+  },
+  "prompthero/openjourney-v4": {
+    "url": "https://huggingface.co/prompthero/openjourney-v4",
+    "nickname": "Openjourney V4",
+    "total_params": "1.1B",
+    "denoising_params": "0.9B",
+    "resolution": "512x512"
+  },
+  "segmind/SSD-1B": {
+    "url": "https://huggingface.co/segmind/SSD-1B",
+    "nickname": "SSD 1B",
+    "total_params": "2.2B",
+    "denoising_params": "1.3B",
+    "resolution": "1024x1024"
+  },
+  "stabilityai/sdxl-turbo": {
+    "url": "https://huggingface.co/stabilityai/sdxl-turbo",
+    "nickname": "Stable Diffusion XL Turbo",
+    "total_params": "3.5B",
+    "denoising_params": "2.6B",
+    "resolution": "512x512"
+  },
+  "stabilityai/stable-diffusion-2-1": {
+    "url": "https://huggingface.co/stabilityai/stable-diffusion-2-1",
+    "nickname": "Stable Diffusion 2.1",
+    "total_params": "1.3B",
+    "denoising_params": "0.9B",
+    "resolution": "768x768"
+  },
+  "stabilityai/stable-diffusion-3-medium-diffusers": {
+    "url": "https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers",
+    "nickname": "Stable Diffusion 3 Medium",
+    "total_params": "7.7B",
+    "denoising_params": "2.0B",
+    "resolution": "1024x1024"
+  },
+  "stabilityai/stable-diffusion-xl-base-1.0": {
+    "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+    "nickname": "Stable Diffusion XL Base 1.0",
+    "total_params": "3.5B",
+    "denoising_params": "2.6B",
+    "resolution": "1024x1024"
+  }
+}

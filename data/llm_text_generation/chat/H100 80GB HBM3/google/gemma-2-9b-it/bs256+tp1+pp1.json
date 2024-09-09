@@ -1,0 +1,12 @@
+{
+  "Model": "google/gemma-2-9b-it",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 63.738593156362974,
+  "Avg TPOT (s)": 0.12669453026707894,
+  "Token tput (tok/s)": 1682.4984819715721,
+  "Avg Output Tokens": 380.8515,
+  "Avg BS (reqs)": 255.379498634897,
+  "Max BS (reqs)": 256
+}

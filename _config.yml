@@ -1,6 +1,12 @@
 exclude:
+  - benchmark/
   - deployment/
-  - pegasus/
-  - scripts/
-  - sharegpt/
+  - spitfight/
+  - docs/
   - tests/
+  - .gitignore
+  - app.py
+  - LICENSE
+  - README.md
+  - requirements.txt
+  - setup.py

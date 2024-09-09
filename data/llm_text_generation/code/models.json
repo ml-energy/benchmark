@@ -1,0 +1,47 @@
+{
+  "bigcode/starcoder2-15b": {
+    "url": "https://huggingface.co/bigcode/starcoder2-15b",
+    "nickname": "Starcoder2 15B",
+    "params": "15B"
+  },
+  "bigcode/starcoder2-3b": {
+    "url": "https://huggingface.co/bigcode/starcoder2-3b",
+    "nickname": "Starcoder2 3B",
+    "params": "3B"
+  },
+  "bigcode/starcoder2-7b": {
+    "url": "https://huggingface.co/bigcode/starcoder2-7b",
+    "nickname": "Starcoder2 7B",
+    "params": "7B"
+  },
+  "codellama/CodeLlama-13b-hf": {
+    "url": "https://huggingface.co/codellama/CodeLlama-13b-hf",
+    "nickname": "CodeLlama 13B",
+    "params": "13B"
+  },
+  "codellama/CodeLlama-34b-hf": {
+    "url": "https://huggingface.co/codellama/CodeLlama-34b-hf",
+    "nickname": "CodeLlama 34B",
+    "params": "34B"
+  },
+  "codellama/CodeLlama-70b-hf": {
+    "url": "https://huggingface.co/codellama/CodeLlama-70b-hf",
+    "nickname": "CodeLlama 70B",
+    "params": "70B"
+  },
+  "codellama/CodeLlama-7b-hf": {
+    "url": "https://huggingface.co/codellama/CodeLlama-7b-hf",
+    "nickname": "CodeLlama 7B",
+    "params": "7B"
+  },
+  "google/codegemma-1.1-2b": {
+    "url": "https://huggingface.co/google/codegemma-1.1-2b",
+    "nickname": "CodeGemma 2B",
+    "params": "2B"
+  },
+  "google/codegemma-7b": {
+    "url": "https://huggingface.co/google/codegemma-7b",
+    "nickname": "CodeGemma 7B",
+    "params": "7B"
+  }
+}

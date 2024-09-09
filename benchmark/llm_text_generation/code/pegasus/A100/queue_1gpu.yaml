@@ -1,0 +1,10 @@
+- command:
+    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --gpu-ids {{ gpu }} --backends vllm --server-images mlenergy/vllm:v0.5.4-openai --request-rates inf --power-limits 400 --max-num-seqs 1536 1280 1024 768 512 320 256 192 128 64 32 --data-dup-factor 20"
+  model:
+    - codellama/CodeLlama-7b-hf
+    - codellama/CodeLlama-13b-hf
+    - bigcode/starcoder2-3b
+    - bigcode/starcoder2-7b
+    - bigcode/starcoder2-15b
+    - google/codegemma-1.1-2b
+    - google/codegemma-7b

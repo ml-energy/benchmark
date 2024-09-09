@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 66.94868198958522,
+  "Avg TPOT (s)": 0.034933955026261024,
+  "Token tput (tok/s)": 1780.407398477601,
+  "Avg Output Tokens": 427.8055,
+  "Avg BS (reqs)": 63.86752165446854,
+  "Max BS (reqs)": 64
+}

@@ -1,0 +1,12 @@
+{
+  "Model": "bigcode/starcoder2-3b",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 6.6858125527024574,
+  "Avg TPOT (s)": 0.04768676369269587,
+  "Token tput (tok/s)": 1214.8263667720319,
+  "Avg Output Tokens": 62.573780487804875,
+  "Avg BS (reqs)": 63.35639246778989,
+  "Max BS (reqs)": 64
+}

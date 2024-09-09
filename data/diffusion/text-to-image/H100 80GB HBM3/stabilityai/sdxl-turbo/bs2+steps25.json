@@ -1,0 +1,8 @@
+{
+  "Model": "stabilityai/sdxl-turbo",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "Energy/image (J)": 305.55374999998605,
+  "Batch latency (s)": 2.05529043674469,
+  "Batch size": 2,
+  "Denoising steps": 25
+}

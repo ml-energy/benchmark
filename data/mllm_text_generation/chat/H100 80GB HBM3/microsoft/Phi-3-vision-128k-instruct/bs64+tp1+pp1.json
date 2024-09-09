@@ -1,0 +1,12 @@
+{
+  "Model": "microsoft/Phi-3-vision-128k-instruct",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 105.84577665820471,
+  "Avg TPOT (s)": 0.08847632583938847,
+  "Token tput (tok/s)": 576.0570249939833,
+  "Avg Output Tokens": 158.778,
+  "Avg BS (reqs)": 62.955385595920966,
+  "Max BS (reqs)": 64
+}

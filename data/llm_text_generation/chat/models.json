@@ -1,0 +1,72 @@
+{
+  "google/gemma-2-27b-it": {
+    "url": "https://huggingface.co/google/gemma-2-27b-it",
+    "nickname": "Gemma 2 27B",
+    "params": "27B"
+  },
+  "google/gemma-2-2b-it": {
+    "url": "https://huggingface.co/google/gemma-2-2b-it",
+    "nickname": "Gemma 2 2B",
+    "params": "2B"
+  },
+  "google/gemma-2-9b-it": {
+    "url": "https://huggingface.co/google/gemma-2-9b-it",
+    "nickname": "Gemma 2 9B",
+    "params": "9B"
+  },
+  "meta-llama/Meta-Llama-3.1-70B-Instruct": {
+    "url": "https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct",
+    "nickname": "Llama 3.1 70B",
+    "params": "70B"
+  },
+  "meta-llama/Meta-Llama-3.1-405B-Instruct": {
+    "url": "https://huggingface.co/meta-llama/Meta-Llama-3.1-405B-Instruct",
+    "nickname": "Llama 3.1 405B",
+    "params": "405B"
+  },
+  "meta-llama/Meta-Llama-3.1-8B-Instruct": {
+    "url": "https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "nickname": "Llama 3.1 8B",
+    "params": "8B"
+  },
+  "microsoft/Phi-3-medium-4k-instruct": {
+    "url": "https://huggingface.co/microsoft/Phi-3-medium-4k-instruct",
+    "nickname": "Phi 3 Medium",
+    "params": "14B"
+  },
+  "microsoft/Phi-3-mini-4k-instruct": {
+    "url": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct",
+    "nickname": "Phi 3 Mini",
+    "params": "4B"
+  },
+  "microsoft/Phi-3-small-8k-instruct": {
+    "url": "https://huggingface.co/microsoft/Phi-3-small-8k-instruct",
+    "nickname": "Phi 3 Small",
+    "params": "7B"
+  },
+  "mistralai/Mistral-7B-Instruct-v0.3": {
+    "url": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3",
+    "nickname": "Mistral 7B",
+    "params": "7B"
+  },
+  "mistralai/Mistral-Large-Instruct-2407": {
+    "url": "https://huggingface.co/mistralai/Mistral-Large-Instruct-2407",
+    "nickname": "Mistral Large",
+    "params": "123B"
+  },
+  "mistralai/Mistral-Nemo-Instruct-2407": {
+    "url": "https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407",
+    "nickname": "Mistral Nemo",
+    "params": "12B"
+  },
+  "mistralai/Mixtral-8x22B-Instruct-v0.1": {
+    "url": "https://huggingface.co/mistralai/Mixtral-8x22B-Instruct-v0.1",
+    "nickname": "Mixtral 8x22B",
+    "params": "141B"
+  },
+  "mistralai/Mixtral-8x7B-Instruct-v0.1": {
+    "url": "https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "nickname": "Mixtral 8x7B",
+    "params": "47B"
+  }
+}

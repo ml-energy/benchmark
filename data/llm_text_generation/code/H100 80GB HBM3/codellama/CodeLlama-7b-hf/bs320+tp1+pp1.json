@@ -1,0 +1,12 @@
+{
+  "Model": "codellama/CodeLlama-7b-hf",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 16.499213018664747,
+  "Avg TPOT (s)": 0.1094953076818696,
+  "Token tput (tok/s)": 1791.439206656535,
+  "Avg Output Tokens": 101.04512195121951,
+  "Avg BS (reqs)": 315.4925373134328,
+  "Max BS (reqs)": 320
+}

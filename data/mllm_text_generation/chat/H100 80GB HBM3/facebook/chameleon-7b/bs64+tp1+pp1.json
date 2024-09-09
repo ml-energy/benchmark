@@ -1,0 +1,12 @@
+{
+  "Model": "facebook/chameleon-7b",
+  "GPU": "NVIDIA H100 80GB HBM3",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 99.20255360985469,
+  "Avg TPOT (s)": 0.055586748694060086,
+  "Token tput (tok/s)": 786.9751694790266,
+  "Avg Output Tokens": 202.732,
+  "Avg BS (reqs)": 63.38335220838052,
+  "Max BS (reqs)": 64
+}

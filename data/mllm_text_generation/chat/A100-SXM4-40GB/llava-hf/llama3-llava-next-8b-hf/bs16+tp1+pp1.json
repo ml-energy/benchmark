@@ -1,0 +1,12 @@
+{
+  "Model": "llava-hf/llama3-llava-next-8b-hf",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 176.05613608679172,
+  "Avg TPOT (s)": 0.04654002320241598,
+  "Token tput (tok/s)": 323.4463260373963,
+  "Avg Output Tokens": 228.27,
+  "Avg BS (reqs)": 15.91955412301907,
+  "Max BS (reqs)": 16
+}

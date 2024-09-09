@@ -1,0 +1,12 @@
+{
+  "Model": "mistralai/Mistral-Nemo-Instruct-2407",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "TP": 1,
+  "PP": 1,
+  "Energy/req (J)": 71.96639367576424,
+  "Avg TPOT (s)": 0.09190341066722198,
+  "Token tput (tok/s)": 1306.8637504719647,
+  "Avg Output Tokens": 437.3835,
+  "Avg BS (reqs)": 127.7542641325536,
+  "Max BS (reqs)": 128
+}

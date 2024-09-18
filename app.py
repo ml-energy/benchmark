@@ -868,16 +868,7 @@ def on_load():
     """Intialize the dataframe, shuffle the model preference dropdown choices."""
     dataframe = global_ltbm.set_filter_get_df()
     dataframes = [global_tbm.set_filter_get_df() for global_tbm in global_tbms]
-    available_models = copy.deepcopy(global_available_models)
-    random.shuffle(available_models)
-    available_models.insert(0, RANDOM_MODEL_NAME)
-    return (
-        dataframe,
-        *dataframes,
-        gr.Dropdown.update(
-            choices=[model_name_to_user_pref[model] for model in available_models]
-        ),
-    )
+    return dataframe, *dataframes
 
 
 def add_prompt_disable_submit(prompt, history_a, history_b):
@@ -886,16 +877,15 @@ def add_prompt_disable_submit(prompt, history_a, history_b):
     return [
         gr.Textbox.update(value=" ", interactive=False),
         gr.Button.update(interactive=False),
-        gr.Dropdown.update(interactive=False),
         history_a + [[prompt, ""]],
         history_b + [[prompt, ""]],
         client,
     ]
 
 
-def generate_responses(client: ControllerClient, user_preference, history_a, history_b):
+def generate_responses(client: ControllerClient, history_a, history_b):
     """Generate responses for the two models."""
-    model_preference = user_pref_to_model_name[user_preference]
+    model_preference = RANDOM_MODEL_NAME
     for resp_a, resp_b in itertools.zip_longest(
         client.prompt(
             prompt=history_a[-1][0], index=0, model_preference=model_preference
@@ -985,12 +975,6 @@ def play_again():
         gr.Markdown.update(value="", visible=False), gr.Markdown.update(value="", visible=False),
         # Hide energy vote buttons and message
         gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Markdown.update(visible=False),
-        # Enable model preference dropdown and shuffle choices
-        gr.Dropdown.update(
-            value=RANDOM_USER_PREFERENCE,
-            choices=[model_name_to_user_pref[model] for model in available_models],
-            interactive=True,
-        ),
         # Disable reset button
         gr.Button.update(interactive=False, visible=False),
     ]
@@ -1025,14 +1009,6 @@ with gr.Blocks(css=custom_css) as block:
                 gr.HTML(COLOSSEUM_DOWN_MESSAGE)
                 gr.HTML("<h3 style='text-align: center'>The energy leaderboard is still available.</h3><br/>")
                 gr.HTML(COLOSSUMM_YOUTUBE_DEMO_EMBED_HTML)
-
-            with gr.Row():
-                model_preference_dropdown = gr.Dropdown(
-                    value=RANDOM_USER_PREFERENCE,
-                    label="Prefer a specific model?",
-                    interactive=COLOSSEUM_UP,
-                    elem_classes=None if COLOSSEUM_UP else ["greyed-out"],
-                )
 
             with gr.Group():
                 with gr.Row():
@@ -1123,12 +1099,12 @@ with gr.Blocks(css=custom_css) as block:
 
 
             (prompt_input
-                .submit(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, model_preference_dropdown, *chatbots, controller_client], queue=False)
-                .then(generate_responses, [controller_client, model_preference_dropdown, *chatbots], [*chatbots], queue=True, show_progress="hidden")
+                .submit(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True, show_progress="hidden")
                 .then(enable_interact(2), None, resp_vote_btn_list, queue=False))
             (prompt_submit_btn
-                .click(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, model_preference_dropdown, *chatbots, controller_client], queue=False)
-                .then(generate_responses, [controller_client, model_preference_dropdown, *chatbots], [*chatbots], queue=True, show_progress="hidden")
+                .click(add_prompt_disable_submit, [prompt_input, *chatbots], [prompt_input, prompt_submit_btn, *chatbots, controller_client], queue=False)
+                .then(generate_responses, [controller_client, *chatbots], [*chatbots], queue=True, show_progress="hidden")
                 .then(enable_interact(2), None, resp_vote_btn_list, queue=False))
 
             left_resp_vote_btn.click(
@@ -1161,7 +1137,7 @@ with gr.Blocks(css=custom_css) as block:
                 .click(
                     play_again,
                     None,
-                    [*chatbots, prompt_input, prompt_submit_btn, *masked_model_names, *energy_vote_btn_list, energy_comparison_message, model_preference_dropdown, play_again_btn],
+                    [*chatbots, prompt_input, prompt_submit_btn, *masked_model_names, *energy_vote_btn_list, energy_comparison_message, play_again_btn],
                     queue=False,
                 )
                 .then(None, _js=focus_prompt_input_js, queue=False))
@@ -1285,7 +1261,7 @@ with gr.Blocks(css=custom_css) as block:
     # Load the table on page load.
     block.load(
         on_load,
-        outputs=[dataframe, *dataframes, model_preference_dropdown],
+        outputs=[dataframe, *dataframes],
         queue=False,
     )
 

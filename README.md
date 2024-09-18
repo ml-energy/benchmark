@@ -23,13 +23,13 @@ The actual leaderboard is here: https://ml.energy/leaderboard.
 ## Repository Organization
 
 ```
- leaderboard/
-├──  benchmark/      # Benchmark scripts & instructions
-├──  data/           # Benchmark results
-├──  deployment/     # Colosseum deployment files
-├──  spitfight/      # Python package for the Colosseum
-├──  app.py          # Leaderboard Gradio app definition
-└──  index.html      # Embeds the leaderboard HuggingFace Space
+leaderboard/
+├── benchmark/      # Benchmark scripts & instructions
+├── data/           # Benchmark results
+├── deployment/     # Colosseum deployment files
+├── spitfight/      # Python package for the Colosseum
+├── app.py          # Leaderboard Gradio app definition
+└── index.html      # Embeds the leaderboard HuggingFace Space
 ```
 
 ## Colosseum

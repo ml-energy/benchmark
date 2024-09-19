@@ -1,8 +1,8 @@
 {
   "Model": "stabilityai/stable-diffusion-2-1",
   "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/image (J)": 307.12399999999906,
-  "Batch latency (s)": 3.64911527633667,
+  "Energy/image (J)": 305.03673749999143,
+  "Batch latency (s)": 3.63439359664917,
   "Batch size": 8,
   "Denoising steps": 25
 }

@@ -1,8 +1,8 @@
 {
   "Model": "kandinsky-community/kandinsky-3",
   "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/image (J)": 677.2662250000052,
-  "Batch latency (s)": 4.657700920104981,
+  "Energy/image (J)": 682.126500000013,
+  "Batch latency (s)": 4.641835880279541,
   "Batch size": 4,
   "Denoising steps": 25
 }

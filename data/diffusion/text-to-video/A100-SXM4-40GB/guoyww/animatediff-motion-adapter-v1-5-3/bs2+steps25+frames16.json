@@ -1,8 +1,8 @@
 {
   "Model": "guoyww/animatediff-motion-adapter-v1-5-3",
   "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/video (J)": 3613.7226499999874,
-  "Batch latency (s)": 19.047373509407045,
+  "Energy/video (J)": 3714.9077000000048,
+  "Batch latency (s)": 19.319639086723328,
   "Batch size": 2,
   "Denoising steps": 25,
   "Frames": 16

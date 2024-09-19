@@ -15,7 +15,7 @@ def main(results_dir: Path, output_file: Path) -> None:
     for model_dir in sorted(glob(f"{results_dir}/*/*")):
         model_name = "/".join(model_dir.split("/")[-2:])
         print(f"  {model_name}")
-        result_file_cand = glob(f"{model_dir}/bs1+*+results.json")
+        result_file_cand = glob(f"{model_dir}/bs1+*+steps25+results.json")
         assert len(result_file_cand) == 1, model_name
         results_data = json.load(open(result_file_cand[0]))
         denosing_module_name = "unet" if "unet" in results_data["num_parameters"] else "transformer"

@@ -1,8 +1,8 @@
 {
   "Model": "segmind/SSD-1B",
   "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/image (J)": 672.6853499999968,
-  "Batch latency (s)": 7.193562436103821,
+  "Energy/image (J)": 688.6121250000084,
+  "Batch latency (s)": 7.168970584869385,
   "Batch size": 4,
   "Denoising steps": 25
 }

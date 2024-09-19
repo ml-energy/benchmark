@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import time
 import json
 import argparse
+import multiprocessing as mp
 from pprint import pprint
 from pathlib import Path
 from contextlib import suppress
@@ -11,6 +13,7 @@ from dataclasses import dataclass, field, asdict
 import torch
 import pynvml
 import numpy as np
+import pandas as pd
 from PIL import Image
 from datasets import load_dataset, Dataset
 from transformers.trainer_utils import set_seed
@@ -35,9 +38,9 @@ class Results:
     model: str
     num_parameters: dict[str, int]
     gpu_model: str
-    num_inference_steps: int
     power_limit: int
     batch_size: int
+    num_inference_steps: int
     num_prompts: int
     average_clip_score: float = 0.0
     total_runtime: float = 0.0
@@ -118,6 +121,28 @@ def load_partiprompts(
     return len(batched) * batch_size, batched
 
 
+def power_monitor(csv_path: str, gpu_indices: list[int], chan: mp.SimpleQueue) -> None:
+    pynvml.nvmlInit()
+    handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in gpu_indices]
+
+    fields = [
+        (pynvml.NVML_FI_DEV_POWER_AVERAGE, pynvml.NVML_POWER_SCOPE_GPU),
+        (pynvml.NVML_FI_DEV_POWER_AVERAGE, pynvml.NVML_POWER_SCOPE_MEMORY),
+    ]
+
+    columns = ["timestamp"] + sum([[f"gpu{i}", f"vram{i}"] for i in gpu_indices], [])
+    power: list[list] = []
+    while chan.empty():
+        row = [time.monotonic()]
+        values = [pynvml.nvmlDeviceGetFieldValues(h, fields) for h in handles]
+        for value in values:
+            row.extend((value[0].value.uiVal, value[1].value.uiVal))
+        power.append(row)
+        time.sleep(max(0.0, 0.1 - (time.monotonic() - row[0])))
+
+    pd.DataFrame(power, columns=columns).to_csv(csv_path, index=False)
+
+
 def calculate_clip_score(
     model: CLIPModel,
     processor: CLIPProcessor,
@@ -183,8 +208,8 @@ def benchmark(args: argparse.Namespace) -> None:
 
     results_dir = Path(args.result_root) / args.model
     results_dir.mkdir(parents=True, exist_ok=True)
-    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}")
-    image_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+generated"
+    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}")
+    image_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}+generated"
     image_dir.mkdir(exist_ok=True)
 
     arg_out_filename = f"{benchmark_name}+args.json"
@@ -222,26 +247,41 @@ def benchmark(args: argparse.Namespace) -> None:
         ResultIntermediateBatched(prompts=batch) for batch in batched_prompts
     ]
 
+    pmon = None
+    pmon_chan = None
+    if args.monitor_power:
+        pmon_chan = mp.SimpleQueue()
+        pmon = mp.get_context("spawn").Process(
+            target=power_monitor,
+            args=(f"{benchmark_name}+power.csv", [g.gpu_index for g in zeus_monitor.gpus.gpus], pmon_chan),
+        )
+        pmon.start()
+
     torch.cuda.reset_peak_memory_stats(device="cuda:0")
-    zeus_monitor.begin_window("benchmark", sync_cuda=False)
+    zeus_monitor.begin_window("benchmark", sync_execution=False)
 
     for ind, intermediate in enumerate(intermediates):
         print(f"Batch {ind + 1}/{len(intermediates)}")
-        zeus_monitor.begin_window("batch", sync_cuda=False)
+        zeus_monitor.begin_window("batch", sync_execution=False)
         images = pipeline(
             intermediate.prompts,
             generator=rng,
             num_inference_steps=args.num_inference_steps,
             output_type="np",
         ).images
-        batch_measurements = zeus_monitor.end_window("batch", sync_cuda=False)
+        batch_measurements = zeus_monitor.end_window("batch", sync_execution=False)
 
         intermediate.images = images
         intermediate.batch_latency = batch_measurements.time
         intermediate.batch_energy = batch_measurements.total_energy
 
-    measurements = zeus_monitor.end_window("benchmark", sync_cuda=False)
+    measurements = zeus_monitor.end_window("benchmark", sync_execution=False)
     peak_memory = torch.cuda.max_memory_allocated(device="cuda:0")
+
+    if pmon is not None and pmon_chan is not None:
+        pmon_chan.put("stop")
+        pmon.join(timeout=5.0)
+        pmon.terminate()
 
     # Scale images to [0, 256] and convert to uint8
     for intermediate in intermediates:
@@ -292,9 +332,9 @@ def benchmark(args: argparse.Namespace) -> None:
         model=args.model,
         num_parameters=count_parameters(pipeline),
         gpu_model=gpu_model,
-        num_inference_steps=args.num_inference_steps,
         power_limit=args.power_limit,
         batch_size=args.batch_size,
+        num_inference_steps=args.num_inference_steps,
         num_prompts=num_prompts,
         average_clip_score=sum(r.clip_score for r in results) / len(results),
         total_runtime=measurements.time,
@@ -326,6 +366,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-save-every", type=int, default=10, help="Save images to file every N prompts.")
     parser.add_argument("--seed", type=int, default=0, help="The seed to use for the RNG.")
     parser.add_argument("--huggingface-token", type=str, help="The HuggingFace token to use.")
+    parser.add_argument("--monitor-power", default=False, action="store_true", help="Whether to monitor power over time.")
     args = parser.parse_args()
 
     benchmark(args)

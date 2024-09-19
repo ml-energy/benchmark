@@ -1,0 +1,8 @@
+{
+  "Model": "prompthero/openjourney-v4",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "Energy/image (J)": 150.57691875000017,
+  "Batch latency (s)": 25.000647592544556,
+  "Batch size": 64,
+  "Denoising steps": 25
+}

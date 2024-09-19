@@ -27,10 +27,10 @@ class Results:
     model: str
     num_parameters: dict[str, int]
     gpu_model: str
-    num_infernece_steps: int
-    num_frames: int
     power_limit: int
     batch_size: int
+    num_inference_steps: int
+    num_frames: int
     num_prompts: int
     total_runtime: float = 0.0
     total_energy: float = 0.0
@@ -80,6 +80,7 @@ def load_text_image_prompts(
     path: str,
     batch_size: int,
     num_batches: int | None = None,
+    image_resize: tuple[int, int] | None = None,
 ) -> tuple[int, list[tuple[list[str], list[Image.Image]]]]:
     """Load the dataset to feed the model and return it as a list of batches of prompts.
 
@@ -93,6 +94,9 @@ def load_text_image_prompts(
     dataset = json.load(open(path))
     assert len(dataset["caption"]) == len(dataset["video_id"])
 
+    dataset["caption"] *= 10
+    dataset["video_id"] *= 10
+
     if num_batches is not None:
         if len(dataset["caption"]) < num_batches * batch_size:
             raise ValueError("Not enough data for the requested number of batches.")
@@ -103,6 +107,8 @@ def load_text_image_prompts(
     dataset["first_frame"] = [
         load_image(str(image_path / f"{video_id}.jpg")) for video_id in dataset["video_id"]
     ]
+    if image_resize is not None:
+        dataset["first_frame"] = [image.resize(image_resize) for image in dataset["first_frame"]]
 
     batched = [
         (dataset["caption"][i : i + batch_size], dataset["first_frame"][i : i + batch_size])
@@ -135,8 +141,8 @@ def benchmark(args: argparse.Namespace) -> None:
 
     results_dir = Path(args.result_root) / args.model
     results_dir.mkdir(parents=True, exist_ok=True)
-    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}")
-    video_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+generated"
+    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}")
+    video_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}+generated"
     video_dir.mkdir(exist_ok=True)
 
     arg_out_filename = f"{benchmark_name}+args.json"
@@ -150,11 +156,16 @@ def benchmark(args: argparse.Namespace) -> None:
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
     gpu_model = pynvml.nvmlDeviceGetName(handle)
-    pynvml.nvmlDeviceSetPersistenceMode(handle, pynvml.NVML_FEATURE_ENABLED)
-    pynvml.nvmlDeviceSetPowerManagementLimit(handle, args.power_limit * 1000)
+    # pynvml.nvmlDeviceSetPersistenceMode(handle, pynvml.NVML_FEATURE_ENABLED)
+    # pynvml.nvmlDeviceSetPowerManagementLimit(handle, args.power_limit * 1000)
     pynvml.nvmlShutdown()
 
-    num_prompts, batched_prompts = load_text_image_prompts(args.dataset_path, args.batch_size, args.num_batches)
+    num_prompts, batched_prompts = load_text_image_prompts(
+        args.dataset_path,
+        args.batch_size,
+        args.num_batches,
+        (args.width, args.height),
+    )
 
     pipeline = get_pipeline(args.model)
 
@@ -189,7 +200,7 @@ def benchmark(args: argparse.Namespace) -> None:
     fps_param_name = fps_param_name_candidates[0]
 
     torch.cuda.reset_peak_memory_stats(device="cuda:0")
-    zeus_monitor.begin_window("benchmark", sync_cuda=False)
+    zeus_monitor.begin_window("benchmark", sync_execution=False)
 
     # Build common parameter dict for all batches
     params: dict[str, Any] = dict(
@@ -210,15 +221,15 @@ def benchmark(args: argparse.Namespace) -> None:
         if args.add_text_prompt:
             params["prompt"] = intermediate.prompts
 
-        zeus_monitor.begin_window("batch", sync_cuda=False)
+        zeus_monitor.begin_window("batch", sync_execution=False)
         frames = pipeline(**params).frames
-        batch_measurements = zeus_monitor.end_window("batch", sync_cuda=False)
+        batch_measurements = zeus_monitor.end_window("batch", sync_execution=False)
 
         intermediate.frames = frames
         intermediate.batch_latency = batch_measurements.time
         intermediate.batch_energy = batch_measurements.total_energy
 
-    measurements = zeus_monitor.end_window("benchmark", sync_cuda=False)
+    measurements = zeus_monitor.end_window("benchmark", sync_execution=False)
     peak_memory = torch.cuda.max_memory_allocated(device="cuda:0")
 
     results: list[Result] = []
@@ -255,10 +266,10 @@ def benchmark(args: argparse.Namespace) -> None:
         model=args.model,
         num_parameters=count_parameters(pipeline),
         gpu_model=gpu_model,
-        num_infernece_steps=args.num_inference_steps,
-        num_frames=args.num_frames,
         power_limit=args.power_limit,
         batch_size=args.batch_size,
+        num_inference_steps=args.num_inference_steps,
+        num_frames=args.num_frames,
         num_prompts=num_prompts,
         total_runtime=measurements.time,
         total_energy=measurements.total_energy,
@@ -289,8 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-inference-steps", type=int, default=50, help="The number of denoising steps.")
     parser.add_argument("--num-frames", type=int, default=1, help="The number of frames to generate.")
     parser.add_argument("--fps", type=int, default=16, help="Frames per second for micro-conditioning.")
-    parser.add_argument("--height", type=int, help="Height of the generated video.")
-    parser.add_argument("--width", type=int, help="Width of the generated video.")
+    parser.add_argument("--height", type=int, required=True, help="Height of the generated video.")
+    parser.add_argument("--width", type=int, required=True, help="Width of the generated video.")
     parser.add_argument("--num-batches", type=int, default=None, help="The number of batches to use from the dataset.")
     parser.add_argument("--save-every", type=int, default=10, help="Save generations to file every N prompts.")
     parser.add_argument("--seed", type=int, default=0, help="The seed to use for the RNG.")

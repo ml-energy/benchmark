@@ -1,8 +1,8 @@
 {
   "Model": "kandinsky-community/kandinsky-2-2-decoder",
   "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/image (J)": 155.2100000000035,
-  "Batch latency (s)": 2.180539679527283,
+  "Energy/image (J)": 155.19958750000222,
+  "Batch latency (s)": 2.1782283782958984,
   "Batch size": 8,
   "Denoising steps": 25
 }

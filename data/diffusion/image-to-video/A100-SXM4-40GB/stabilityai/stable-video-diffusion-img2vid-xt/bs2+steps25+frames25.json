@@ -1,0 +1,9 @@
+{
+  "Model": "stabilityai/stable-video-diffusion-img2vid-xt",
+  "GPU": "NVIDIA A100-SXM4-40GB",
+  "Energy/video (J)": 15291.016625000047,
+  "Batch latency (s)": 82.90474811196327,
+  "Batch size": 2,
+  "Denoising steps": 25,
+  "Frames": 25
+}

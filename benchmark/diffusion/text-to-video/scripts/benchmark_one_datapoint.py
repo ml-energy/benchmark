@@ -32,10 +32,10 @@ class Results:
     model: str
     num_parameters: dict[str, int]
     gpu_model: str
-    num_inference_steps: int
-    num_frames: int
     power_limit: int
     batch_size: int
+    num_inference_steps: int
+    num_frames: int
     num_prompts: int
     total_runtime: float = 0.0
     total_energy: float = 0.0
@@ -119,7 +119,7 @@ def load_text_prompts(
     Returns:
         Total number of prompts and a list of batches of prompts.
     """
-    dataset = json.load(open(path))["caption"]
+    dataset = json.load(open(path))["caption"] * 10
     if num_batches is not None:
         if len(dataset) < num_batches * batch_size:
             raise ValueError("Dataset is too small for the given number of batches.")
@@ -151,8 +151,8 @@ def benchmark(args: argparse.Namespace) -> None:
 
     results_dir = Path(args.result_root) / args.model
     results_dir.mkdir(parents=True, exist_ok=True)
-    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}")
-    video_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+generated"
+    benchmark_name = str(results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}")
+    video_dir = results_dir / f"bs{args.batch_size}+pl{args.power_limit}+steps{args.num_inference_steps}+generated"
     video_dir.mkdir(exist_ok=True)
 
     arg_out_filename = f"{benchmark_name}+args.json"
@@ -190,7 +190,7 @@ def benchmark(args: argparse.Namespace) -> None:
     ]
 
     torch.cuda.reset_peak_memory_stats(device="cuda:0")
-    zeus_monitor.begin_window("benchmark", sync_cuda=False)
+    zeus_monitor.begin_window("benchmark", sync_execution=False)
 
     # Build common parameter dict for all batches
     params: dict[str, Any] = dict(
@@ -208,15 +208,15 @@ def benchmark(args: argparse.Namespace) -> None:
 
         params["prompt"] = intermediate.prompts
 
-        zeus_monitor.begin_window("batch", sync_cuda=False)
+        zeus_monitor.begin_window("batch", sync_execution=False)
         frames = pipeline(**params).frames
-        batch_measurements = zeus_monitor.end_window("batch", sync_cuda=False)
+        batch_measurements = zeus_monitor.end_window("batch", sync_execution=False)
 
         intermediate.frames = frames
         intermediate.batch_latency = batch_measurements.time
         intermediate.batch_energy = batch_measurements.total_energy
 
-    measurements = zeus_monitor.end_window("benchmark", sync_cuda=False)
+    measurements = zeus_monitor.end_window("benchmark", sync_execution=False)
     peak_memory = torch.cuda.max_memory_allocated(device="cuda:0")
 
     results: list[Result] = []
@@ -253,10 +253,10 @@ def benchmark(args: argparse.Namespace) -> None:
         model=args.model,
         num_parameters=count_parameters(pipeline),
         gpu_model=gpu_model,
-        num_inference_steps=args.num_inference_steps,
-        num_frames=args.num_frames,
         power_limit=args.power_limit,
         batch_size=args.batch_size,
+        num_inference_steps=args.num_inference_steps,
+        num_frames=args.num_frames,
         num_prompts=num_prompts,
         total_runtime=measurements.time,
         total_energy=measurements.total_energy,

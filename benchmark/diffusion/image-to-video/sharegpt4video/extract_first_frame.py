@@ -3,7 +3,7 @@ import json
 
 import cv2
 
-DATASET_PATH = "sharegpt4video_700.json"
+DATASET_PATH = "sharegpt4video_100.json"
 
 
 def main() -> None:

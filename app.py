@@ -6,7 +6,6 @@ where UI elements are actually defined.
 
 from __future__ import annotations
 
-from abc import abstractmethod
 import copy
 import json
 import random
@@ -17,6 +16,7 @@ import contextlib
 import argparse
 import os
 from pathlib import Path
+from abc import abstractmethod
 from typing import Literal, Any
 from dateutil import parser, tz
 
@@ -61,12 +61,12 @@ class TableManager:
         """Return the name of the leaderboard."""
 
     @abstractmethod
-    def get_intro_text(self) -> tuple[str, str]:
-        """Return the type of the introduction text and the introduction text."""
+    def get_intro_text(self) -> str:
+        """Return the introduction text to be inserted above the table."""
 
     @abstractmethod
-    def get_detail_text(self) -> tuple[str, str]:
-        """Return the type of the detail text and the detail text."""
+    def get_detail_text(self, detail_mode: bool) -> str:
+        """Return the detail text chunk to be inserted below the table."""
 
     def get_benchmark_checkboxes(self) -> dict[str, list[str]]:
         """Return data for the benchmark selection checkboxes."""
@@ -84,7 +84,7 @@ class TableManager:
         """Return all available models."""
 
     @abstractmethod
-    def set_filter_get_df(self, *filters) -> pd.DataFrame:
+    def set_filter_get_df(self, detail_mode: bool, *filters) -> pd.DataFrame:
         """Set the current set of filters and return the filtered DataFrame."""
 
 
@@ -127,7 +127,7 @@ class LLMTableManager(TableManager):
                             model_df[key] = val
                         # Format the model name as an HTML anchor.
                         model_df["Model"] = self._wrap_model_name(model_info["url"], model_info["nickname"])
-                        model_df["Params"] = model_info["params"]
+                        model_df["Params (B)"] = model_info["params"]
                         res_df = pd.concat([res_df, model_df])
 
         if res_df.empty:
@@ -137,7 +137,7 @@ class LLMTableManager(TableManager):
 
         # Order columns
         columns = res_df.columns.to_list()
-        cols_to_order = ["Model", "Params"]
+        cols_to_order = ["Model", "Params (B)"]
         cols_to_order.extend(self.schema.keys())
         columns = cols_to_order + [col for col in columns if col not in cols_to_order]
         res_df = res_df[columns]
@@ -145,21 +145,21 @@ class LLMTableManager(TableManager):
         # Order rows
         res_df = res_df.sort_values(by=["Model", *self.schema.keys(), "Energy/req (J)"])
 
-        self.cur_df = self.full_df = res_df.round(2)
+        self.full_df = res_df.round(2)
 
         # We need to set the default view separately when `gr.State` is forked.
-        self.set_filter_get_df()
+        self.set_filter_get_df(detail_mode=False)
 
     def get_benchmark_checkboxes(self) -> dict[str, list[str]]:
         return self.schema
 
     def get_benchmark_sliders(self) -> dict[str, tuple[float, float, float, float]]:
-        return {"Target Time Per Output Token (TPOT) (s)": (0.0, 0.5, 0.01, 0.2)}
+        return {"Target Average TPOT (Time Per Output Token) (s)": (0.0, 0.5, 0.01, 0.2)}
 
     def get_all_models(self) -> list[str]:
         return self.full_df["Model"].apply(self._unwrap_model_name).unique().tolist()
 
-    def set_filter_get_df(self, *filters) -> pd.DataFrame:
+    def set_filter_get_df(self, detail_mode: bool, *filters) -> pd.DataFrame:
         """Set the current set of filters and return the filtered DataFrame.
 
         Filters can either be completely empty, or be a concatenated list of
@@ -175,15 +175,15 @@ class LLMTableManager(TableManager):
         # Checkboxes
         for setup, choice in zip(self.schema, filters):
             index = index & self.full_df[setup].isin(choice)
-        self.cur_df = self.full_df.loc[index]
+        cur_df = self.full_df.loc[index]
 
         # Sliders (We just have TPOT for now.)
         # For each `Model`, we want to first filter out rows whose `Avg TPOT (s)` is greater than the slider value.
         # Finally, only just leave the row whose `Energy/req (J)` is the smallest.
         tpot_slo = filters[-1]
-        self.cur_df = (
-            self.cur_df
-                .groupby("Model")[self.cur_df.columns]
+        cur_df = (
+            cur_df
+                .groupby("Model")[cur_df.columns]
                 .apply(lambda x: x[x["Avg TPOT (s)"] <= tpot_slo], include_groups=True)
                 .sort_values(by="Energy/req (J)")
                 .reset_index(drop=True)
@@ -191,26 +191,16 @@ class LLMTableManager(TableManager):
                 .head(1)
         )
 
-        return self.cur_df
+        if not detail_mode:
+            core_columns = ["Model", "Params (B)", "GPU", "Energy/req (J)"]
+            readable_name_mapping = {
+                "Params (B)": "Parameters (Billions)",
+                "GPU": "GPU model",
+                "Energy/req (J)": "Energy per response (Joules)",
+            }
+            cur_df = cur_df[core_columns].rename(columns=readable_name_mapping)
 
-    def get_detail_text(self) -> tuple[str, str]:
-        text = """
-            Columns
-            - **Model**: The name of the model.
-            - **GPU**: Name of the GPU model used for benchmarking.
-            - **Params**: Number of parameters in the model.
-            - **TP**: Tensor parallelism degree.
-            - **PP**: Pipeline parallelism degree. (TP * PP is the total number of GPUs used.)
-            - **Energy/req (J)**: Energy consumed per request in Joules.
-            - **Avg TPOT (s)**: Average time per output token in seconds.
-            - **Token tput (toks/s)**: Average number of tokens generated by the engine per second.
-            - **Avg Output Tokens**: Average number of output tokens in the LLM's response.
-            - **Avg BS**: Average batch size of the serving engine over time.
-            - **Max BS**: Maximum batch size configuration of the serving engine.
-
-            For more detailed information, please take a look at the **About** tab.
-            """
-        return "markdown", text
+        return cur_df
 
 
 class LLMChatTableManager(LLMTableManager):
@@ -219,21 +209,59 @@ class LLMChatTableManager(LLMTableManager):
     def get_tab_name(self) -> str:
         return "LLM Chat"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>How much energy do GenAI models consume?</h2>
 
             <h3>LLM chatbot response generation</h3>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various instruction-tuned LLMs in terms of how much time and energy they consume for inference.
+            Large language models (LLMs), especially the instruction-tuned ones, can generate human-like responses to chat prompts.
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for LLM chat energy consumption.
             </p>
 
             <p style="font-size: 16px">
-            An average Time Per Output Token (TPOT) of 0.20 seconds roughly corresponds to a person reading at 240 words per minute and 1.3 tokens per word.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
+
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Params (B)**: Number of parameters in the model.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **TP**: Tensor parallelism degree.
+                - **PP**: Pipeline parallelism degree. (TP * PP is the total number of GPUs used.)
+                - **Energy/req (J)**: Energy consumed per request in Joules.
+                - **Avg TPOT (s)**: Average time per output token in seconds.
+                - **Token tput (toks/s)**: Average number of tokens generated by the engine per second.
+                - **Avg Output Tokens**: Average number of output tokens in the LLM's response.
+                - **Avg BS**: Average batch size of the serving engine over time.
+                - **Max BS**: Maximum batch size configuration of the serving engine.
+
+                **TPOT (Time Per Output Token)** is the time between each token generated by LLMs as part of their response.
+                An average TPOT of 0.20 seconds roughly corresponds to a person reading at 240 words per minute and assuming one word is 1.3 tokens on average.
+                You can tweak the TPOT slider to adjust the target average TPOT for the models.
+
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Parameters (Billions)**: Number of parameters in the model. This is the size of the model.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per response (Joules)**: Energy consumed for each LLM response in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+
+        return text
+
 
 
 class LLMCodeTableManager(LLMTableManager):
@@ -242,21 +270,58 @@ class LLMCodeTableManager(LLMTableManager):
     def get_tab_name(self) -> str:
         return "LLM Code"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>How much energy do GenAI models consume?</h2>
 
             <h3>LLM code generation</h3>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various LLMs specialized for coding in terms of how much time and energy they consume for inference.
+            Large language models (LLMs) are also capable of generating code.
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for the energy consumption of LLMs specifically trained for code generation.
             </p>
 
             <p style="font-size: 16px">
-            An average Time Per Output Token (TPOT) of 0.20 seconds roughly corresponds to a person reading at 240 words per minute and 1.3 tokens per word.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
+
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Params (B)**: Number of parameters in the model.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **TP**: Tensor parallelism degree.
+                - **PP**: Pipeline parallelism degree. (TP * PP is the total number of GPUs used.)
+                - **Energy/req (J)**: Energy consumed per request in Joules.
+                - **Avg TPOT (s)**: Average time per output token in seconds.
+                - **Token tput (toks/s)**: Average number of tokens generated by the engine per second.
+                - **Avg Output Tokens**: Average number of output tokens in the LLM's response.
+                - **Avg BS**: Average batch size of the serving engine over time.
+                - **Max BS**: Maximum batch size configuration of the serving engine.
+
+                **TPOT (Time Per Output Token)** is the time between each token generated by LLMs as part of their response.
+                An average TPOT of 0.20 seconds roughly corresponds to a person reading at 240 words per minute and assuming one word is 1.3 tokens on average.
+                You can tweak the TPOT slider to adjust the target average TPOT for the models.
+
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Parameters (Billions)**: Number of parameters in the model. This is the size of the model.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per response (Joules)**: Energy consumed for each LLM response in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+
+        return text
 
 
 class VLMChatTableManager(LLMTableManager):
@@ -265,21 +330,58 @@ class VLMChatTableManager(LLMTableManager):
     def get_tab_name(self) -> str:
         return "VLM Visual Chat"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>How much energy do GenAI models consume?</h2>
 
             <h3>VLM visual chatbot response generation</h3>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various Vision Language Models (VLMs) in terms of how much time and energy they consume for inference.
+            Vision language models (VLMs) are large language models that can understand images along with text and generate human-like responses to chat prompts with images.
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for VLM chat energy consumption.
             </p>
 
             <p style="font-size: 16px">
-            A Time Per Output Token (TPOT) of 0.2 seconds roughly corresponds to a person reading at 240 words per minute and 1.3 tokens per word.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
+
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Params (B)**: Number of parameters in the model.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **TP**: Tensor parallelism degree.
+                - **PP**: Pipeline parallelism degree. (TP * PP is the total number of GPUs used.)
+                - **Energy/req (J)**: Energy consumed per request in Joules.
+                - **Avg TPOT (s)**: Average time per output token in seconds.
+                - **Token tput (toks/s)**: Average number of tokens generated by the engine per second.
+                - **Avg Output Tokens**: Average number of output tokens in the LLM's response.
+                - **Avg BS**: Average batch size of the serving engine over time.
+                - **Max BS**: Maximum batch size configuration of the serving engine.
+
+                **TPOT (Time Per Output Token)** is the time between each token generated by LLMs as part of their response.
+                An average TPOT of 0.20 seconds roughly corresponds to a person reading at 240 words per minute and assuming one word is 1.3 tokens on average.
+                You can tweak the TPOT slider to adjust the target average TPOT for the models.
+
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Parameters (Billions)**: Number of parameters in the model. This is the size of the model.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per response (Joules)**: Energy consumed for each LLM response in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+
+        return text
 
 
 class DiffusionTableManager(TableManager):
@@ -301,8 +403,10 @@ class DiffusionTableManager(TableManager):
 
         if "to video" in task_name.lower():
             self.energy_col = "Energy/video (J)"
+            self.energy_col_readable = "Energy per video (Joules)"
         elif "to image" in task_name.lower():
             self.energy_col = "Energy/image (J)"
+            self.energy_col_readable = "Energy per image (Joules)"
         else:
             raise ValueError(f"Unknown task name: {task_name=}")
 
@@ -348,10 +452,10 @@ class DiffusionTableManager(TableManager):
         # Order rows
         res_df = res_df.sort_values(by=["Model", *self.schema.keys(), self.energy_col])
 
-        self.cur_df = self.full_df = res_df.round(2)
+        self.full_df = res_df.round(2)
 
         # We need to set the default view separately when `gr.State` is forked.
-        self.set_filter_get_df()
+        self.set_filter_get_df(detail_mode=False)
 
     def get_benchmark_checkboxes(self) -> dict[str, list[str]]:
         return self.schema
@@ -359,7 +463,7 @@ class DiffusionTableManager(TableManager):
     def get_all_models(self) -> list[str]:
         return self.full_df["Model"].apply(self._unwrap_model_name).unique().tolist()
 
-    def set_filter_get_df(self, *filters) -> pd.DataFrame:
+    def set_filter_get_df(self, detail_mode: bool, *filters) -> pd.DataFrame:
         """Set the current set of filters and return the filtered DataFrame.
 
         Filters can either be completely empty, or be a concatenated list of
@@ -375,15 +479,15 @@ class DiffusionTableManager(TableManager):
         # Checkboxes
         for setup, choice in zip(self.schema, filters):
             index = index & self.full_df[setup].isin(choice)
-        self.cur_df = self.full_df.loc[index]
+        cur_df = self.full_df.loc[index]
 
         # Sliders (We just have Batch latency for now.)
         # For each `Model`, we want to first filter out rows whose `Batch latency (s)` is greater than the slider value.
         # Finally, only just leave the row whose `Energy/image (J)` or `Energy/video (J)` is the smallest.
         batch_latency = filters[-1]
-        self.cur_df = (
-            self.cur_df
-                .groupby("Model")[self.cur_df.columns]
+        cur_df = (
+            cur_df
+                .groupby("Model")[cur_df.columns]
                 .apply(
                     lambda x: x[x["Batch latency (s)"] <= batch_latency],
                     include_groups=True,
@@ -394,7 +498,19 @@ class DiffusionTableManager(TableManager):
                 .head(1)
         )
 
-        return self.cur_df
+        if not detail_mode:
+            core_columns = ["Model", "Denoising params", "GPU", "Denoising steps", "Resolution", "Frames", self.energy_col]
+            readable_name_mapping = {
+                "Denoising params": "Denoising parameters (Billions)",
+                "GPU": "GPU model",
+                self.energy_col: self.energy_col_readable,
+            }
+            for column in cur_df.columns:
+                if column not in core_columns:
+                    cur_df = cur_df.drop(column, axis=1)
+            cur_df = cur_df.rename(columns=readable_name_mapping)
+
+        return cur_df
 
 
 class DiffusionT2ITableManager(DiffusionTableManager):
@@ -403,36 +519,49 @@ class DiffusionT2ITableManager(DiffusionTableManager):
     def get_tab_name(self) -> str:
         return "Diffusion Text to image"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>Diffusion text-to-image generation</h2></br>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various open source LLMs in terms of how much time and energy they consume for inference.
+            Diffusion models generate images that align with input text prompts.
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for the energy consumption of Diffusion text-to-image.
             </p>
 
             <p style="font-size: 16px">
-            The time and energy consumption of Diffusion models are affected by not only the size of the model, but also the number of denoising steps and the resolution of the generated images.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
 
-    def get_detail_text(self) -> tuple[str, str]:
-        text = """
-            Columns
-            - **Model**: The name of the model.
-            - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
-            - **Total params**: Total number of parameters in the model, including encoders and decoders.
-            - **GPU**: Name of the GPU model used for benchmarking.
-            - **Energy/image (J)**: Energy consumed per generated image in Joules.
-            - **Batch latency (s)**: Time taken to generate a batch of images in seconds.
-            - **Batch size**: Number of prompts/images in a batch.
-            - **Denoising steps**: Number of denoising steps used for the diffusion model.
-            - **Resolution**: Resolution of the generated image.
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
+                - **Total params**: Total number of parameters in the model, including encoders and decoders.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **Energy/image (J)**: Energy consumed per generated image in Joules.
+                - **Batch latency (s)**: Time taken to generate a batch of images in seconds.
+                - **Batch size**: Number of prompts/images in a batch.
+                - **Denoising steps**: Number of denoising steps used for the diffusion model.
+                - **Resolution**: Resolution of the generated image.
 
-            For more detailed information, please take a look at the **About** tab.
-            """
-        return "markdown", text
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising parameters (Billions)**: Number of parameters in the diffusion model's (core) denoising module. This part of the model is run repetitively to generate gradually refine the image.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per image (Joules)**: Energy consumed for each generated image in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+        return text
 
     def get_benchmark_sliders(self) -> dict[str, tuple[float, float, float, float]]:
         return {"Batch latency (s)": (0.0, 60.0, 1.0, 10.0)}
@@ -444,37 +573,50 @@ class DiffusionT2VTableManager(DiffusionTableManager):
     def get_tab_name(self) -> str:
         return "Diffusion Text to video"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>Diffusion text-to-video generation</h2></br>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various open source LLMs in terms of how much time and energy they consume for inference.
+            Diffusion models generate videos that align with input text prompts.
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for the energy consumption of Diffusion text-to-video.
             </p>
 
             <p style="font-size: 16px">
-            The time and energy consumption of Diffusion models are affected by not only the size of the model, but also the number of denoising steps, the resolution of the generated video, and the total number of frames in the video.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
 
-    def get_detail_text(self) -> tuple[str, str]:
-        text = """
-            Columns
-            - **Model**: The name of the model.
-            - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
-            - **Total params**: Total number of parameters in the model, including encoders and decoders.
-            - **GPU**: Name of the GPU model used for benchmarking.
-            - **Energy/video (J)**: Energy consumed per generated video in Joules.
-            - **Batch latency (s)**: Time taken to generate a batch of videos in seconds.
-            - **Batch size**: Number of prompts/videos in a batch.
-            - **Denoising steps**: Number of denoising steps used for the diffusion model.
-            - **Frames**: Number of frames in the generated video.
-            - **Resolution**: Resolution of the generated video.
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
+                - **Total params**: Total number of parameters in the model, including encoders and decoders.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **Energy/video (J)**: Energy consumed per generated video in Joules.
+                - **Batch latency (s)**: Time taken to generate a batch of videos in seconds.
+                - **Batch size**: Number of prompts/videos in a batch.
+                - **Denoising steps**: Number of denoising steps used for the diffusion model.
+                - **Frames**: Number of frames in the generated video.
+                - **Resolution**: Resolution of the generated video.
 
-            For more detailed information, please take a look at the **About** tab.
-            """
-        return "markdown", text
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising parameters (Billions)**: Number of parameters in the diffusion model's (core) denoising module. This part of the model is run repetitively to generate gradually refine the video.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per video (Joules)**: Energy consumed for each generated image in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+        return text
 
     def get_benchmark_sliders(self) -> dict[str, tuple[float, float, float, float]]:
         return {"Batch latency (s)": (0.0, 60.0, 1.0, 10.0)}
@@ -486,37 +628,50 @@ class DiffusionI2VTableManager(DiffusionTableManager):
     def get_tab_name(self) -> str:
         return "Diffusion Image to video"
 
-    def get_intro_text(self) -> tuple[str, str]:
+    def get_intro_text(self) -> str:
         text = """
             <h2>Diffusion image-to-video generation</h2></br>
 
             <p style="font-size: 16px">
-            We used <a href="https://ml.energy/zeus">Zeus</a> to benchmark various open source LLMs in terms of how much time and energy they consume for inference.
+            Diffusion models generate videos given an input image (and sometimes alongside with text).
+            Using <a href="https://ml.energy/zeus">Zeus</a> for energy measurement, we created a leaderboard for the energy consumption of Diffusion image-to-video.
             </p>
 
             <p style="font-size: 16px">
-            The time and energy consumption of Diffusion models are affected by not only the size of the model, but also the number of denoising steps, the resolution of the generated video, and the total number of frames in the video.
+            More models will be added over time. Stay tuned!
             </p>
             """
-        return "html", text
+        return text
 
-    def get_detail_text(self) -> tuple[str, str]:
-        text = """
-            Columns
-            - **Model**: The name of the model.
-            - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
-            - **Total params**: Total number of parameters in the model, including encoders and decoders.
-            - **GPU**: Name of the GPU model used for benchmarking.
-            - **Energy/video (J)**: Energy consumed per generated video in Joules.
-            - **Batch latency (s)**: Time taken to generate a batch of videos in seconds.
-            - **Batch size**: Number of prompts/videos in a batch.
-            - **Denoising steps**: Number of denoising steps used for the diffusion model.
-            - **Frames**: Number of frames in the generated video.
-            - **Resolution**: Resolution of the generated video.
+    def get_detail_text(self, detail_mode: bool) -> str:
+        if detail_mode:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising params**: Number of parameters in the denosing module (e.g., UNet, Transformer).
+                - **Total params**: Total number of parameters in the model, including encoders and decoders.
+                - **GPU**: Name of the GPU model used for benchmarking.
+                - **Energy/video (J)**: Energy consumed per generated video in Joules.
+                - **Batch latency (s)**: Time taken to generate a batch of videos in seconds.
+                - **Batch size**: Number of prompts/videos in a batch.
+                - **Denoising steps**: Number of denoising steps used for the diffusion model.
+                - **Frames**: Number of frames in the generated video.
+                - **Resolution**: Resolution of the generated video.
 
-            For more detailed information, please take a look at the **About** tab.
-            """
-        return "markdown", text
+                For more detailed information, please take a look at the **About** tab.
+                """
+        else:
+            text = """
+                Columns
+                - **Model**: The name of the model.
+                - **Denoising parameters (Billions)**: Number of parameters in the diffusion model's (core) denoising module. This part of the model is run repetitively to generate gradually refine the video.
+                - **GPU model**: Name of the GPU model used for benchmarking.
+                - **Energy per video (Joules)**: Energy consumed for each generated image in Joules.
+
+                Checking "Show more technical details" above the table will reveal more detailed columns.
+                Also, for more detailed information, please take a look at the **About** tab.
+                """
+        return text
 
     def get_benchmark_sliders(self) -> dict[str, tuple[float, float, float, float]]:
         return {"Batch latency (s)": (0.0, 120.0, 1.0, 45.0)}
@@ -563,7 +718,7 @@ class LegacyTableManager:
         self.full_df = df
 
         # Default view of the table is to only show the first options.
-        self.set_filter_get_df()
+        self.set_filter_get_df(detail_mode=False)
 
     def _read_tables(self, data_dir: str) -> pd.DataFrame:
         """Read tables."""
@@ -622,7 +777,7 @@ class LegacyTableManager:
             gr.Dropdown.update(choices=["None", *columns]),
         ]
 
-    def set_filter_get_df(self, *filters) -> pd.DataFrame:
+    def set_filter_get_df(self, detail_mode: bool, *filters) -> pd.DataFrame:
         """Set the current set of filters and return the filtered DataFrame."""
         # If the filter is empty, we default to the first choice for each key.
         if not filters:
@@ -639,7 +794,7 @@ class LegacyTableManager:
         """Return the leaderboard's introduction text in HTML."""
         return """
             <div align="center">
-              <h2 style="color: #23d175">This is the legacy ML.ENERGY LLM leaderboard. This will be removed by the end of the year.</h2>
+              <h2 style="color: #23d175">This is the legacy ML.ENERGY LLM leaderboard. This will be removed at the end of this year.</h2>
             </div>
 
             <h3>How much energy do modern Large Language Models (LLMs) consume for inference?</h3>
@@ -795,6 +950,12 @@ table th:first-child {
 #citation-header > div > span {
     font-size: 16px !important;
 }
+
+/* Align everything in tables to the right. */
+/* Not the best solution, but at least makes the numbers align. */
+.tab-leaderboard span {
+    text-align: right;
+}
 """
 
 # The app will not start without a controller address set.
@@ -866,8 +1027,8 @@ def consumed_more_energy_message(energy_a, energy_b):
 # Colosseum event handlers
 def on_load():
     """Intialize the dataframe, shuffle the model preference dropdown choices."""
-    dataframe = global_ltbm.set_filter_get_df()
-    dataframes = [global_tbm.set_filter_get_df() for global_tbm in global_tbms]
+    dataframe = global_ltbm.set_filter_get_df(detail_mode=False)
+    dataframes = [global_tbm.set_filter_get_df(detail_mode=False) for global_tbm in global_tbms]
     return dataframe, *dataframes
 
 
@@ -980,6 +1141,14 @@ def play_again():
     ]
 
 
+def toggle_detail_mode_slider_visibility(detail_mode: bool, *sliders):
+    return [detail_mode] + [gr.update(visible=detail_mode)] * len(sliders)
+
+
+def toggle_detail_mode_sync_tabs(detail_mode: bool, *checkboxes):
+    return [gr.Checkbox.update(value=detail_mode)] * len(checkboxes) + [gr.Markdown.update(tbm.get_detail_text(detail_mode)) for tbm in global_tbms]
+
+
 focus_prompt_input_js = """
 function() {
     for (let textarea of document.getElementsByTagName("textarea")) {
@@ -994,6 +1163,7 @@ function() {
 with gr.Blocks(css=custom_css) as block:
     tbm = gr.State(global_ltbm)  # type: ignore
     local_tbms: list[TableManager] = [gr.State(global_tbm) for global_tbm in global_tbms]  # type: ignore
+    detail_mode = gr.State(False)  # type: ignore
 
     with gr.Box():
         gr.HTML(
@@ -1144,19 +1314,16 @@ with gr.Blocks(css=custom_css) as block:
 
         # Tab: Leaderboards.
         dataframes = []
+        all_detail_mode_checkboxes = []
+        all_sliders = []
+        all_detail_text_components = []
         for global_tbm, local_tbm in zip(global_tbms, local_tbms):
             with gr.Tab(global_tbm.get_tab_name()):
                 # Box: Introduction text.
                 with gr.Box():
-                    intro_text_type, intro_text = global_tbm.get_intro_text()
-                    if intro_text_type not in ["markdown", "html"]:
-                        raise ValueError(f"Invalid text type '{intro_text_type}' from {local_tbm}")
-                    if intro_text_type == "markdown":
-                        gr.Markdown(intro_text)
-                    else:
-                        gr.HTML(intro_text)
+                    gr.Markdown(global_tbm.get_intro_text())
 
-                # Block: Checkboxes and sliders to select benchmarking parameters.
+                # Block: Checkboxes and sliders to select benchmarking parameters. A detail mode checkbox.
                 with gr.Row():
                     checkboxes: list[gr.CheckboxGroup] = []
                     for key, choices in global_tbm.get_benchmark_checkboxes().items():
@@ -1165,7 +1332,12 @@ with gr.Blocks(css=custom_css) as block:
 
                     sliders: list[gr.Slider] = []
                     for key, (min_val, max_val, step, default) in global_tbm.get_benchmark_sliders().items():
-                        sliders.append(gr.Slider(minimum=min_val, maximum=max_val, value=default, step=step, label=key))
+                        sliders.append(gr.Slider(minimum=min_val, maximum=max_val, value=default, step=step, label=key, visible=detail_mode.value))
+                    all_sliders.extend(sliders)
+
+                with gr.Row():
+                    detail_mode_checkbox = gr.Checkbox(label="Show more technical details", value=False)
+                    all_detail_mode_checkboxes.append(detail_mode_checkbox)
 
                 # Block: Leaderboard table.
                 with gr.Row():
@@ -1173,6 +1345,7 @@ with gr.Blocks(css=custom_css) as block:
                         type="pandas",
                         elem_classes=["tab-leaderboard"],
                         interactive=False,
+                        max_rows=1000,
                     )
                     dataframes.append(dataframe)
 
@@ -1181,23 +1354,18 @@ with gr.Blocks(css=custom_css) as block:
                         None, None, None, _js=dataframe_update_js, queue=False
                     )
                     # Table automatically updates when users check or uncheck any checkbox or move any slider.
-                    for element in [*checkboxes, *sliders]:
+                    for element in [detail_mode_checkbox, *checkboxes, *sliders]:
                         element.change(
                             global_tbm.__class__.set_filter_get_df,
-                            inputs=[local_tbm, *checkboxes, *sliders],
+                            inputs=[local_tbm, detail_mode, *checkboxes, *sliders],
                             outputs=dataframe,
                             queue=False,
                         )
 
                 # Block: More details about the leaderboard.
                 with gr.Box():
-                    detail_text_type, detail_text = global_tbm.get_detail_text()
-                    if detail_text_type not in ["markdown", "html"]:
-                        raise ValueError(f"Invalid text type '{detail_text_type}' from {local_tbm}")
-                    if detail_text_type == "markdown":
-                        gr.Markdown(detail_text)
-                    else:
-                        gr.HTML(detail_text)
+                    detail_text = global_tbm.get_detail_text(detail_mode=False)
+                    all_detail_text_components.append(gr.Markdown(detail_text))
 
                 # Block: Leaderboard date.
                 with gr.Row():
@@ -1208,7 +1376,7 @@ with gr.Blocks(css=custom_css) as block:
         # Tab: Legacy leaderboard.
         with gr.Tab("LLM Leaderboard (legacy)"):
             with gr.Box():
-                gr.HTML(global_ltbm.get_intro_text())
+                gr.Markdown(global_ltbm.get_intro_text())
 
             # Block: Checkboxes to select benchmarking parameters.
             with gr.Row():
@@ -1246,6 +1414,21 @@ with gr.Blocks(css=custom_css) as block:
         # Tab: About page.
         with gr.Tab("About"):
             gr.Markdown(open("docs/about.md").read())
+
+        # Detail mode toggling.
+        for detail_mode_checkbox in all_detail_mode_checkboxes:
+            detail_mode_checkbox.change(
+                toggle_detail_mode_slider_visibility,
+                inputs=[detail_mode_checkbox, *all_sliders],
+                outputs=[detail_mode, *all_sliders],
+                queue=False,
+            )
+            detail_mode_checkbox.change(
+                toggle_detail_mode_sync_tabs,
+                inputs=[detail_mode_checkbox, *all_detail_mode_checkboxes],
+                outputs=[*all_detail_mode_checkboxes, *all_detail_text_components],
+                queue=False,
+            )
 
     # Citation
     with gr.Accordion("📚  Citation", open=False, elem_id="citation-header"):

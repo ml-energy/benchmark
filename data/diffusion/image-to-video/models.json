@@ -15,7 +15,7 @@
   },
   "stabilityai/stable-video-diffusion-img2vid-xt": {
     "url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt",
-    "nickname": "Stable Video Diffusion xt",
+    "nickname": "Stable Video Diffusion XT",
     "total_params": 2.3,
     "denoising_params": 1.5,
     "resolution": "1024x576"

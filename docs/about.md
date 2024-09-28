@@ -65,6 +65,12 @@ Meet us at the [**ML.ENERGY Initiative**](https://ml.energy) homepage!
 
 ---
 
+## Acknowledgements
+
+> Any opinions, findings, and conclusions of our works are those of the author(s) and do not necessarily represent the official policy of any of these funding organizations.
+
+We thank Mozilla for funding us via the [2024 Mozilla Technology Fund](https://foundation.mozilla.org/en/blog/open-source-AI-for-environmental-justice).
+
 ## License
 
 This leaderboard is a research preview intended for non-commercial use only.

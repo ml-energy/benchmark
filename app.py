@@ -26,7 +26,7 @@ import pandas as pd
 
 from spitfight.colosseum.client import ControllerClient
 
-COLOSSEUM_UP = True
+COLOSSEUM_UP = False
 COLOSSEUM_DOWN_MESSAGE = f"<br/><h2 style='text-align: center'>The Colosseum is currently down for maintenance.</h2>"
 COLOSSUMM_YOUTUBE_DEMO_EMBED_HTML = '<div style="width: 100%; min-width: 400px;"><div style="position: relative; width: 100%; overflow: hidden; padding-top: 56.25%"><p><iframe width="560" height="315" style="margin: auto; position: absolute; top: 0; left: 0; right: 0; width: 100%; height: 100%; border: none;" src="https://www.youtube.com/embed/tvNM_gLffFs?si=rW1-10pt5BffJEGH" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe><p></div></div>'
 
@@ -1200,13 +1200,112 @@ with gr.Blocks(css=custom_css) as block:
         )
 
     with gr.Tabs():
+        # Tab: Leaderboards.
+        dataframes = []
+        all_detail_mode_checkboxes = []
+        all_sliders = []
+        all_detail_text_components = []
+        for global_tbm, local_tbm in zip(global_tbms, local_tbms):
+            with gr.Tab(global_tbm.get_tab_name()):
+                # Box: Introduction text.
+                with gr.Box():
+                    gr.Markdown(global_tbm.get_intro_text())
+
+                # Block: Checkboxes and sliders to select benchmarking parameters. A detail mode checkbox.
+                with gr.Row():
+                    checkboxes: list[gr.CheckboxGroup] = []
+                    for key, choices in global_tbm.get_benchmark_checkboxes().items():
+                        # Check the first element by default.
+                        checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices[:1], label=key))
+
+                    sliders: list[gr.Slider] = []
+                    for key, (min_val, max_val, step, default) in global_tbm.get_benchmark_sliders().items():
+                        sliders.append(gr.Slider(minimum=min_val, maximum=max_val, value=default, step=step, label=key, visible=detail_mode.value))
+                    all_sliders.extend(sliders)
+
+                with gr.Row():
+                    detail_mode_checkbox = gr.Checkbox(label="Show more technical details", value=False)
+                    all_detail_mode_checkboxes.append(detail_mode_checkbox)
+
+                # Block: Leaderboard table.
+                with gr.Row():
+                    dataframe = gr.Dataframe(
+                        type="pandas",
+                        elem_classes=["tab-leaderboard"],
+                        interactive=False,
+                        max_rows=1000,
+                    )
+                    dataframes.append(dataframe)
+
+                    # Make sure the models have clickable links.
+                    dataframe.change(
+                        None, None, None, _js=dataframe_update_js, queue=False
+                    )
+                    # Table automatically updates when users check or uncheck any checkbox or move any slider.
+                    for element in [detail_mode_checkbox, *checkboxes, *sliders]:
+                        element.change(
+                            global_tbm.__class__.set_filter_get_df,
+                            inputs=[local_tbm, detail_mode, *checkboxes, *sliders],
+                            outputs=dataframe,
+                            queue=False,
+                        )
+
+                # Block: More details about the leaderboard.
+                with gr.Box():
+                    detail_text = global_tbm.get_detail_text(detail_mode=False)
+                    all_detail_text_components.append(gr.Markdown(detail_text))
+
+                # Block: Leaderboard date.
+                with gr.Row():
+                    gr.HTML(
+                        f"<h3 style='color: gray'>Last updated: {current_date}</h3>"
+                    )
+
+        # Tab: Legacy leaderboard.
+        with gr.Tab("LLM Leaderboard (legacy)"):
+            with gr.Box():
+                gr.Markdown(global_ltbm.get_intro_text())
+
+            # Block: Checkboxes to select benchmarking parameters.
+            with gr.Row():
+                with gr.Box():
+                    gr.Markdown("### Benchmark results to show")
+                    checkboxes: list[gr.CheckboxGroup] = []
+                    for key, choices in global_ltbm.schema.items():
+                        # Specifying `value` makes everything checked by default.
+                        checkboxes.append(
+                            gr.CheckboxGroup(
+                                choices=choices, value=choices[:1], label=key
+                            )
+                        )
+
+            # Block: Leaderboard table.
+            with gr.Row():
+                dataframe = gr.Dataframe(
+                    type="pandas", elem_classes=["tab-leaderboard"], interactive=False
+                )
+            # Make sure the models have clickable links.
+            dataframe.change(None, None, None, _js=dataframe_update_js, queue=False)
+            # Table automatically updates when users check or uncheck any checkbox.
+            for checkbox in checkboxes:
+                checkbox.change(
+                    LegacyTableManager.set_filter_get_df,
+                    inputs=[tbm, *checkboxes],
+                    outputs=dataframe,
+                    queue=False,
+                )
+
+            # Block: Leaderboard date.
+            with gr.Row():
+                gr.HTML(f"<h3 style='color: gray'>Last updated: {current_date}</h3>")
+
         # Tab: Colosseum.
         with gr.Tab("Colosseum ⚔️️"):
             if COLOSSEUM_UP:
                 gr.Markdown(open("docs/colosseum_top.md").read())
             else:
                 gr.HTML(COLOSSEUM_DOWN_MESSAGE)
-                gr.HTML("<h3 style='text-align: center'>The energy leaderboard is still available.</h3><br/>")
+                gr.HTML("<h3 style='text-align: center'>The energy leaderboards are still available.</h3><br/>")
                 gr.HTML(COLOSSUMM_YOUTUBE_DEMO_EMBED_HTML)
 
             with gr.Group():
@@ -1340,105 +1439,6 @@ with gr.Blocks(css=custom_css) as block:
                     queue=False,
                 )
                 .then(None, _js=focus_prompt_input_js, queue=False))
-
-        # Tab: Leaderboards.
-        dataframes = []
-        all_detail_mode_checkboxes = []
-        all_sliders = []
-        all_detail_text_components = []
-        for global_tbm, local_tbm in zip(global_tbms, local_tbms):
-            with gr.Tab(global_tbm.get_tab_name()):
-                # Box: Introduction text.
-                with gr.Box():
-                    gr.Markdown(global_tbm.get_intro_text())
-
-                # Block: Checkboxes and sliders to select benchmarking parameters. A detail mode checkbox.
-                with gr.Row():
-                    checkboxes: list[gr.CheckboxGroup] = []
-                    for key, choices in global_tbm.get_benchmark_checkboxes().items():
-                        # Check the first element by default.
-                        checkboxes.append(gr.CheckboxGroup(choices=choices, value=choices[:1], label=key))
-
-                    sliders: list[gr.Slider] = []
-                    for key, (min_val, max_val, step, default) in global_tbm.get_benchmark_sliders().items():
-                        sliders.append(gr.Slider(minimum=min_val, maximum=max_val, value=default, step=step, label=key, visible=detail_mode.value))
-                    all_sliders.extend(sliders)
-
-                with gr.Row():
-                    detail_mode_checkbox = gr.Checkbox(label="Show more technical details", value=False)
-                    all_detail_mode_checkboxes.append(detail_mode_checkbox)
-
-                # Block: Leaderboard table.
-                with gr.Row():
-                    dataframe = gr.Dataframe(
-                        type="pandas",
-                        elem_classes=["tab-leaderboard"],
-                        interactive=False,
-                        max_rows=1000,
-                    )
-                    dataframes.append(dataframe)
-
-                    # Make sure the models have clickable links.
-                    dataframe.change(
-                        None, None, None, _js=dataframe_update_js, queue=False
-                    )
-                    # Table automatically updates when users check or uncheck any checkbox or move any slider.
-                    for element in [detail_mode_checkbox, *checkboxes, *sliders]:
-                        element.change(
-                            global_tbm.__class__.set_filter_get_df,
-                            inputs=[local_tbm, detail_mode, *checkboxes, *sliders],
-                            outputs=dataframe,
-                            queue=False,
-                        )
-
-                # Block: More details about the leaderboard.
-                with gr.Box():
-                    detail_text = global_tbm.get_detail_text(detail_mode=False)
-                    all_detail_text_components.append(gr.Markdown(detail_text))
-
-                # Block: Leaderboard date.
-                with gr.Row():
-                    gr.HTML(
-                        f"<h3 style='color: gray'>Last updated: {current_date}</h3>"
-                    )
-
-        # Tab: Legacy leaderboard.
-        with gr.Tab("LLM Leaderboard (legacy)"):
-            with gr.Box():
-                gr.Markdown(global_ltbm.get_intro_text())
-
-            # Block: Checkboxes to select benchmarking parameters.
-            with gr.Row():
-                with gr.Box():
-                    gr.Markdown("### Benchmark results to show")
-                    checkboxes: list[gr.CheckboxGroup] = []
-                    for key, choices in global_ltbm.schema.items():
-                        # Specifying `value` makes everything checked by default.
-                        checkboxes.append(
-                            gr.CheckboxGroup(
-                                choices=choices, value=choices[:1], label=key
-                            )
-                        )
-
-            # Block: Leaderboard table.
-            with gr.Row():
-                dataframe = gr.Dataframe(
-                    type="pandas", elem_classes=["tab-leaderboard"], interactive=False
-                )
-            # Make sure the models have clickable links.
-            dataframe.change(None, None, None, _js=dataframe_update_js, queue=False)
-            # Table automatically updates when users check or uncheck any checkbox.
-            for checkbox in checkboxes:
-                checkbox.change(
-                    LegacyTableManager.set_filter_get_df,
-                    inputs=[tbm, *checkboxes],
-                    outputs=dataframe,
-                    queue=False,
-                )
-
-            # Block: Leaderboard date.
-            with gr.Row():
-                gr.HTML(f"<h3 style='color: gray'>Last updated: {current_date}</h3>")
 
         # Tab: About page.
         with gr.Tab("About"):

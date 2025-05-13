@@ -20,6 +20,8 @@ How much energy do GenAI models like LLMs and Diffusion models consume?
 This README focuses on explaining how to run the benchmark yourself.
 The actual leaderboard is here: https://ml.energy/leaderboard.
 
+Read our paper [here](https://arxiv.org/abs/2505.06371)!
+
 ## Repository Organization
 
 ```

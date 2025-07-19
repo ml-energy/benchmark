@@ -1,9 +1,0 @@
-{
-  "Model": "ali-vilab/i2vgen-xl",
-  "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/video (J)": 16496.045437499997,
-  "Batch latency (s)": 89.03019031882286,
-  "Batch size": 2,
-  "Denoising steps": 25,
-  "Frames": 16
-}

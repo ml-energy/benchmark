@@ -1,2 +1,0 @@
-gpu: ["A100", "A40", "V100"]
-task: ["chat", "chat-concise", "instruct", "instruct-concise"]

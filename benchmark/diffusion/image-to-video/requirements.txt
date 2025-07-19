@@ -1,7 +1,0 @@
-torch
-diffusers==0.29.2
-accelerate
-transformers
-pillow
-nvidia-ml-py
-zeus-ml

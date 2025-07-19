@@ -1,1 +1,0 @@
-spitfight[app] @ git+https://github.com/ml-energy/leaderboard@master

@@ -1,9 +1,0 @@
-{
-  "Model": "stabilityai/stable-video-diffusion-img2vid",
-  "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/video (J)": 7623.074500000104,
-  "Batch latency (s)": 12.191031396389008,
-  "Batch size": 1,
-  "Denoising steps": 25,
-  "Frames": 14
-}

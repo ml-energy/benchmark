@@ -1,5 +1,0 @@
-requests
-aiohttp
-numpy
-tqdm
-zeus-ml

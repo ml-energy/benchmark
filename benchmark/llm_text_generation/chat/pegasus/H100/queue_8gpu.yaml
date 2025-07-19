@@ -1,5 +1,0 @@
-- command:
-    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --gpu-ids 0 1 2 3 4 5 6 7 --backends vllm --server-images mlenergy/vllm:v0.5.4-openai --request-rate inf --power-limits 700 --max-num-seqs 1536 1280 1024 768 512 320 256 192 128 64 32 --data-dup-factor 4"
-  model:
-    - mistralai/Mistral-Large-Instruct-2407
-    - mistralai/Mixtral-8x22B-Instruct-v0.1

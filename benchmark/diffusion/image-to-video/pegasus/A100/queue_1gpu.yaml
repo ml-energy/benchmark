@@ -1,6 +1,0 @@
-- command:
-    - "python scripts/benchmark_one_model.py {{ model }} --result-root results/joule --dataset-path sharegpt4video/sharegpt4video_100.json --gpu-ids {{ gpu }} --batch-sizes 4 3 2 1 --power-limits 400 --num-inference-steps 1 2 4 8 16 25 30 40 50"
-  model:
-    - '--model ali-vilab/i2vgen-xl --num-frames 16 --add-text-prompt --width 1280 --height 720'
-    - '--model stabilityai/stable-video-diffusion-img2vid --num-frames 14 --width 1024 --height 576'
-    - '--model stabilityai/stable-video-diffusion-img2vid-xt --num-frames 25 --width 1024 --height 576'

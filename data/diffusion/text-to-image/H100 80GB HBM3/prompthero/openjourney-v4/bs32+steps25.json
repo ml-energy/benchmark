@@ -1,8 +1,0 @@
-{
-  "Model": "prompthero/openjourney-v4",
-  "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/image (J)": 130.1285124999995,
-  "Batch latency (s)": 6.225514149665832,
-  "Batch size": 32,
-  "Denoising steps": 25
-}

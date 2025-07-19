@@ -1,9 +1,0 @@
-{
-  "Model": "ali-vilab/text-to-video-ms-1.7b",
-  "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/video (J)": 956.181299999915,
-  "Batch latency (s)": 1.9992478847503663,
-  "Batch size": 1,
-  "Denoising steps": 25,
-  "Frames": 16
-}

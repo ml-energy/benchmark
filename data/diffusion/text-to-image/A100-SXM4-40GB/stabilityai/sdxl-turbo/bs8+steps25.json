@@ -1,8 +1,0 @@
-{
-  "Model": "stabilityai/sdxl-turbo",
-  "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/image (J)": 239.71523749999469,
-  "Batch latency (s)": 4.928032088279724,
-  "Batch size": 8,
-  "Denoising steps": 25
-}

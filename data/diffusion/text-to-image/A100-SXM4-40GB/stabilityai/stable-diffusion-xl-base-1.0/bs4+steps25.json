@@ -1,8 +1,0 @@
-{
-  "Model": "stabilityai/stable-diffusion-xl-base-1.0",
-  "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/image (J)": 1028.9778500000016,
-  "Batch latency (s)": 10.595553398132324,
-  "Batch size": 4,
-  "Denoising steps": 25
-}

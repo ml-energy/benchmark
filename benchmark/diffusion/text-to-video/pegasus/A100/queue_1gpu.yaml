@@ -1,5 +1,0 @@
-- command:
-    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --dataset-path sharegpt4video/sharegpt4video_100.json --gpu-ids {{ gpu }} --batch-sizes 32 16 8 4 2 1 --power-limits 400 --num-inference-steps 1 2 4 8 16 25 30 40 50 --num-frames 16"
-  model:
-    - ali-vilab/text-to-video-ms-1.7b
-    - guoyww/animatediff-motion-adapter-v1-5-3

@@ -1,4 +1,0 @@
-- command:
-    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --gpu-ids {{ gpu }} --backends vllm --server-images mlenergy/vllm:v0.5.4-openai --request-rates inf --power-limits 400 --max-num-seqs 768 512 320 256 192 128 64 32 16 --data-dup-factor 2"
-  model:
-    - facebook/chameleon-30b

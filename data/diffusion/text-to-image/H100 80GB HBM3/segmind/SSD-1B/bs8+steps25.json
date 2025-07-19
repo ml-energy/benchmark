@@ -1,8 +1,0 @@
-{
-  "Model": "segmind/SSD-1B",
-  "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/image (J)": 522.7006874999963,
-  "Batch latency (s)": 6.223434543609619,
-  "Batch size": 8,
-  "Denoising steps": 25
-}

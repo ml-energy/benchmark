@@ -1,4 +1,0 @@
-{
-  "torch_dtype": "torch.bfloat16",
-  "variant": "bf16"
-}

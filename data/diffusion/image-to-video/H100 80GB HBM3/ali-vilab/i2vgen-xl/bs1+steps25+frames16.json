@@ -1,9 +1,0 @@
-{
-  "Model": "ali-vilab/i2vgen-xl",
-  "GPU": "NVIDIA H100 80GB HBM3",
-  "Energy/video (J)": 14867.419125000015,
-  "Batch latency (s)": 23.717748790979385,
-  "Batch size": 1,
-  "Denoising steps": 25,
-  "Frames": 16
-}

@@ -1,9 +1,0 @@
-{
-  "Model": "ali-vilab/text-to-video-ms-1.7b",
-  "GPU": "NVIDIA A100-SXM4-40GB",
-  "Energy/video (J)": 1039.8423750000075,
-  "Batch latency (s)": 10.828980302810669,
-  "Batch size": 4,
-  "Denoising steps": 25,
-  "Frames": 16
-}

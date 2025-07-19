@@ -1,8 +1,0 @@
-- command:
-    - "python scripts/benchmark_one_model.py --model {{ model }} --result-root results/joule --gpu-ids {{ gpu }} --backends vllm --server-images mlenergy/vllm:v0.5.4-openai --request-rates inf --power-limits 700 --max-num-seqs 768 512 320 256 192 128 64 32 16 --data-dup-factor 2"
-  model:
-    - llava-hf/llava-1.5-7b-hf
-    - llava-hf/llava-1.5-13b-hf
-    - llava-hf/llama3-llava-next-8b-hf
-    - facebook/chameleon-7b
-    - microsoft/Phi-3-vision-128k-instruct

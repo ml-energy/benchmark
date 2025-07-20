@@ -6,17 +6,14 @@ generation.
 This file is based on https://github.com/vllm-project/vllm/blob/main/benchmarks/benchmark_dataset.py
 """
 
-from abc import ABC, abstractmethod
 import base64
 import io
-from io import BytesIO
-import json
 import json
 import logging
 import os
-from pathlib import Path
-import pathlib
 import random
+from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from PIL import Image
@@ -49,6 +46,11 @@ class SampleRequest(BaseModel):
 
     Args:
         prompt: The input text prompt for the model.
+        completion: The expected output text from the model.
+        prompt_len: The length of the prompt in tokens.
+        expected_output_len: The expected length of the output in tokens.
+        multi_modal_data: A list of dictionaries containing multimodal content.
+        multi_modal_data_ids: A list of paths or identifiers for each multimodal data.
     """
 
     prompt: str | Any
@@ -56,9 +58,7 @@ class SampleRequest(BaseModel):
     prompt_len: int
     expected_output_len: int
     multi_modal_data: list[dict[str, Any]]
-    """ A list of multimodal content dictionaries. """
     multi_modal_data_ids: list[str]
-    """ A list of paths or identifiers for each multimodal data. """
 
 
 # -----------------------------------------------------------------------------
@@ -224,7 +224,7 @@ def process_image(image: Any) -> dict[str, Any]:
         ValueError: If the input is not a supported type.
     """
     if isinstance(image, dict) and "bytes" in image:
-        image = Image.open(BytesIO(image["bytes"]))
+        image = Image.open(io.BytesIO(image["bytes"]))
     if isinstance(image, Image.Image):
         image = image.convert("RGB")
         with io.BytesIO() as image_data:
@@ -485,7 +485,7 @@ class AudioSkillsDataset(HuggingFaceDataset):
     def _get_audio_bytes(self, filename: str) -> bytes | None:
         """Return the audio bytes from the dataset item."""
         for path in self.FSD_50K_PATHS:
-            full_path = pathlib.Path(path) / filename
+            full_path = Path(path) / filename
             if full_path.exists():
                 with open(full_path, "rb") as f:
                     return f.read()
@@ -524,7 +524,7 @@ class AudioSkillsDataset(HuggingFaceDataset):
                 with open(data_filename, "wb") as f:
                     f.write(mm_contect_bytes)
             conversations = item["conversations"]  # type: ignore
-            prompt, completion = conversations[0]["value"], conversations[1]["value"]
+            prompt, completion = conversations[0]["value"], conversations[1]["value"]  # type: ignore
             prompt_len = len(tokenizer(prompt).input_ids)
             expected_output_len = len(tokenizer(completion).input_ids)
             sampled_requests.append(

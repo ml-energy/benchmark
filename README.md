@@ -2,9 +2,12 @@
 
 ## Instructions
 
-- [ ] Data preparation
+- Data preparation
+
+TODO(Jeff): MLLM dataset preparation instructions.
 
 ```bash
+# This assumes the existence of extracted video/audio datasets.
 python -m mlenergy.llm.workloads
 ```
 

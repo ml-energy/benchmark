@@ -352,10 +352,10 @@ if __name__ == "__main__":
 
     work = ImageChat(
         base_dir=Path("run/mllm/image_chat") / model_id,
-        num_requests=30,
+        num_requests=100,
         num_images=2,
         model_id=model_id,
-        max_num_seqs=512,
+        max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
     logger.info(
@@ -364,11 +364,11 @@ if __name__ == "__main__":
 
     work = VideoChat(
         base_dir=Path("run/mllm/video_chat") / model_id,
-        num_requests=30,
+        num_requests=100,
         num_videos=1,
         model_id=model_id,
         video_data_dir="/turbo/llava_video_178k",
-        max_num_seqs=512,
+        max_num_seqs=32,
     )
 
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -378,11 +378,11 @@ if __name__ == "__main__":
 
     work = AudioChat(
         base_dir=Path("run/mllm/audio_chat") / model_id,
-        num_requests=40,
+        num_requests=100,
         num_audios=1,
         model_id=model_id,
         audio_data_dir="/turbo/FSD50K.dev_audio",
-        max_num_seqs=512,
+        max_num_seqs=32,
     )
 
     audio_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)

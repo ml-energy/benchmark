@@ -75,7 +75,7 @@ class Args(BaseModel, Generic[WorkloadT]):
             of output tokens specified in the request.
         set_max_tokens: Whether to set the maximum number of output tokens in the
             requests. If set to `True`, the maximum number of output tokens will
-            be set to `expected_output_len` in `SampleRequest`.
+            be capped to `SampleRequest.expected_output_len`.
         top_p: Top-p sampling parameter.
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
@@ -217,13 +217,14 @@ async def async_request_openai_completions(
             "prompt": request_func_input.prompt,
             "temperature": 0.0,
             "repetition_penalty": 1.0,
-            "max_tokens": request_func_input.output_len,
             "logprobs": request_func_input.logprobs,
             "stream": True,
             "stream_options": {
                 "include_usage": True,
             },
         }
+        if request_func_input.output_len is not None:
+            payload["max_tokens"] = request_func_input.output_len
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
         if request_func_input.extra_body:
@@ -326,12 +327,13 @@ async def async_request_openai_chat_completions(
                 {"role": "user", "content": content},
             ],
             "temperature": 0.0,
-            "max_completion_tokens": request_func_input.output_len,
             "stream": True,
             "stream_options": {
                 "include_usage": True,
             },
         }
+        if request_func_input.output_len is not None:
+            payload["max_completion_tokens"] = request_func_input.output_len
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
         if request_func_input.extra_body:

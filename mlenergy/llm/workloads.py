@@ -8,10 +8,10 @@ from __future__ import annotations
 import logging
 from functools import cached_property
 from abc import abstractmethod
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, Self
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from transformers import AutoTokenizer
 
 from mlenergy.constants import DEFAULT_SEED
@@ -49,12 +49,34 @@ class WorkloadConfig(BaseModel):
     A workload configuration defines one specific case or datapoint for benchmarking.
     It should instantiate appropriate datasets lazily and provide methods to sample
     and save requests.
+
+    Attributes:
+        base_dir: Base directory where all workload files are stored.
+            It should be unique for each workload configuration.
+        seed: Random seed for reproducibility.
+        model_id: Model identifier for the model to be used in the benchmark.
+        num_requests: Number of requests to sample for the benchmark.
+        max_num_seqs: Maximum number of seuqences config to start vLLM with.
+        max_num_batched_tokens: Maximum number of batched tokens config to start
+            vLLM with. TODO: Investigate its impact on the benchmark.
     """
 
+    # Input parameters
     base_dir: Path
     seed: int = DEFAULT_SEED
     model_id: str
     num_requests: int
+
+    # Systems parameters
+    max_num_seqs: int
+    # max_num_batched_tokens: int
+
+    @model_validator(mode="after")
+    def _validate_workoad(self) -> Self:
+        """Validate the sanity of the workload."""
+        if self.num_requests < 2 * self.max_num_seqs:
+            raise ValueError("There should be at least 2 * max_num_seqs requests.")
+        return self
 
     def to_path(
         self,
@@ -166,6 +188,8 @@ class ImageChat(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.num_images) + "image",
             str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -203,6 +227,8 @@ class VideoChat(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.num_videos) + "video",
             str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -240,6 +266,8 @@ class AudioChat(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.num_audios) + "audio",
             str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -286,6 +314,8 @@ class OmniChat(WorkloadConfig):
             str(self.num_videos) + "video",
             str(self.num_audio) + "audio",
             str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -325,6 +355,7 @@ if __name__ == "__main__":
         num_requests=30,
         num_images=2,
         model_id=model_id,
+        max_num_seqs=512,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
     logger.info(
@@ -337,6 +368,7 @@ if __name__ == "__main__":
         num_videos=1,
         model_id=model_id,
         video_data_dir="/turbo/llava_video_178k",
+        max_num_seqs=512,
     )
 
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -350,6 +382,7 @@ if __name__ == "__main__":
         num_audios=1,
         model_id=model_id,
         audio_data_dir="/turbo/FSD50K.dev_audio",
+        max_num_seqs=512,
     )
 
     audio_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -365,6 +398,7 @@ if __name__ == "__main__":
     #     num_audio=2,
     #     model_id=model_id,
     #     video_data_dir="/turbo/llava_video_178k",
+    # max_num_seqs=512,
     # )
     # omni_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
     # print(f"Loaded {len(omni_requests)} requests from {work.to_path(of='requests')}")

@@ -70,6 +70,14 @@ class Args(BaseModel, Generic[WorkloadT]):
             in more bursty requests. A higher burstiness value (burstiness > 1)
             results in a more uniform arrival of requests.
         ignore_eos: Whether to ignore the end-of-sequence token in the requests.
+            This will lead to all requests generating tokens until they reach
+            their maximum output token parameter in the request.
+        max_output_tokens: Maximum number of output tokens to set for each request.
+            If set to `"dataset"`, `SampleRequest.expected_output_len` is used.
+            If set to an integer, all requests are capped to that number. Finally,
+            if set to `None`, output length is not capped at all, and some requests
+            might generate forever.
+        ignore_eos: Whether to ignore the end-of-sequence token in the requests.
             Setting this will generate tokens until it reaches the maximum number
             of output tokens specified in the request.
         set_max_tokens: Whether to set the maximum number of output tokens in the
@@ -79,9 +87,6 @@ class Args(BaseModel, Generic[WorkloadT]):
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
         temperature: Temperature sampling parameter. Greedy decoding if set to 0.0.
-        max_num_seqs: Maximum number of seuqences config to start vLLM with.
-        max_num_batched_tokens: Maximum number of batched tokens config to start
-            vLLM with. TODO: Investigate its impact on the benchmark.
         percentile_metrics: Comma-separated list of selected metrics to report
             percentiles. This argument specifies the metrics to report percentiles.
             Allowed metric names are "ttft", "tpot", "itl", and "e2el". E2EL means
@@ -101,7 +106,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     request_rate: float = float("inf")
     burstiness: float = 1.0
     ignore_eos: bool = False
-    set_max_tokens: bool = False
+    max_output_tokens: int | Literal["dataset"] | None = 4096
     top_p: float | None = 0.95
     top_k: int | None = None
     min_p: float | None = None
@@ -109,8 +114,6 @@ class Args(BaseModel, Generic[WorkloadT]):
 
     # Server configuration
     server_image: str = "vllm/vllm-openai:v0.10.0"
-    max_num_seqs: int
-    max_num_batched_tokens: int | None = None
 
     # Results configuration
     percentile_metrics: str = "ttft,tpot,itl,e2el"
@@ -173,8 +176,35 @@ class RequestFuncOutput:
     error: str = ""
 
 
+class CounterWaiter:
+    """A class that lets you wait for a counter to reach a certain value."""
+
+    def __init__(self) -> None:
+        """Initialize the CounterWaiter with a target value."""
+        self.current_value = 0
+        self.events: dict[int, asyncio.Event] = {}
+
+    def increment(self) -> None:
+        """Increment the current value and notify if the target is reached."""
+        self.current_value += 1
+        for target_value, event in list(self.events.items()):
+            if self.current_value >= target_value:
+                event.set()
+                self.events.pop(target_value)
+
+    async def wait(self, target_value: int) -> None:
+        """Wait until the current value reaches the target value."""
+        if target_value <= self.current_value:
+            return
+        if target_value not in self.events:
+            self.events[target_value] = asyncio.Event()
+        event = self.events[target_value]
+        await event.wait()
+
+
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
+    counter: CounterWaiter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     """The async request function for the OpenAI Completions API.
@@ -258,6 +288,7 @@ async def async_request_openai_completions(
                                 if not first_chunk_received:
                                     first_chunk_received = True
                                     ttft = time.perf_counter() - st
+                                    counter.increment()
                                     output.ttft = ttft
 
                                 # Decoding phase
@@ -293,6 +324,7 @@ async def async_request_openai_completions(
 
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
+    counter: CounterWaiter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
@@ -361,6 +393,7 @@ async def async_request_openai_chat_completions(
                                 # First token
                                 if ttft == 0.0:
                                     ttft = timestamp - st
+                                    counter.increment()
                                     output.ttft = ttft
 
                                 # Decoding phase
@@ -584,7 +617,7 @@ async def benchmark(
     selected_percentile_metrics: list[str],
     selected_percentiles: list[float],
     ignore_eos: bool,
-    set_max_tokens: bool,
+    max_output_tokens: int | Literal["dataset"] | None,
     max_concurrency: int | None,
     extra_body: dict | None,
 ):
@@ -594,10 +627,9 @@ async def benchmark(
         raise ValueError(f"Unknown endpoint_type: {endpoint_type}")
 
     logger.info("Starting initial single prompt test run...")
-    test_prompt, test_prompt_len, test_output_len, test_mm_content = (
+    test_prompt, test_prompt_len, test_mm_content = (
         input_requests[0].prompt,
         input_requests[0].prompt_len,
-        input_requests[0].expected_output_len,
         input_requests[0].multimodal_contents,
     )
 
@@ -607,13 +639,15 @@ async def benchmark(
         prompt=test_prompt,
         api_url=api_url,
         prompt_len=test_prompt_len,
-        output_len=test_output_len if set_max_tokens else None,
+        output_len=20,
         multimodal_contents=test_mm_content,
         ignore_eos=ignore_eos,
         extra_body=extra_body,
     )
 
-    test_output = await request_func(request_func_input=test_input)
+    test_output = await request_func(
+        request_func_input=test_input, counter=CounterWaiter()
+    )
     if not test_output.success:
         raise ValueError(
             "Initial test run failed - Please make sure benchmark arguments "
@@ -622,45 +656,58 @@ async def benchmark(
     else:
         logger.info("Initial test run completed. Starting main benchmark run...")
 
-    distribution = "Poisson process" if burstiness == 1.0 else "Gamma distribution"
-
     logger.info("Traffic request rate: %f req/s", request_rate)
 
-    logger.info("Burstiness factor: %f (%s)", burstiness, distribution)
+    if request_rate == float("inf"):
+        logger.info(
+            "Request rate is set to infinity, all requests will be sent at once."
+        )
+    else:
+        distribution = "Poisson process" if burstiness == 1.0 else "Gamma distribution"
+        logger.info("Burstiness factor: %f (%s)", burstiness, distribution)
+
     if max_concurrency is not None:
         logger.info("Maximum request concurrency: %d", max_concurrency)
 
     pbar = tqdm(total=len(input_requests))
 
     semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+    counter_waiter = CounterWaiter()
 
     async def limited_request_func(request_func_input, pbar):
         if semaphore is None:
-            return await request_func(request_func_input=request_func_input, pbar=pbar)
+            return await request_func(
+                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
+            )
         async with semaphore:
-            return await request_func(request_func_input=request_func_input, pbar=pbar)
+            return await request_func(
+                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
+            )
 
     tasks: list[asyncio.Task] = []
     benchmark_start_time = time.perf_counter()
     zeus_monitor.begin_window("entire_benchmark", sync_execution=False)
-    zeus_monitor.begin_window("steady_state", sync_execution=False)
 
     async for request in get_request(input_requests, request_rate, burstiness):
-        prompt, prompt_len, output_len, mm_content = (
-            request.prompt,
-            request.prompt_len,
-            request.expected_output_len,
-            request.multimodal_contents,
-        )
-        req_model_id = model_id
+        # None -> No cap
+        # int -> Use the specified static maximum output length
+        # "dataset" -> Use the expected output length from the dataset
+        if max_output_tokens is None:
+            output_len = None
+        elif isinstance(max_output_tokens, int):
+            output_len = max_output_tokens
+        elif max_output_tokens == "dataset":
+            output_len = request.expected_output_len
+        else:
+            raise ValueError(f"Unexpected max_output_tokens value: {max_output_tokens}")
 
         request_func_input = RequestFuncInput(
-            model=req_model_id,
-            prompt=prompt,
+            model=model_id,
+            prompt=request.prompt,
             api_url=api_url,
-            prompt_len=prompt_len,
-            output_len=output_len if set_max_tokens else None,
-            multimodal_contents=mm_content,
+            prompt_len=request.prompt_len,
+            output_len=output_len,
+            multimodal_contents=request.multimodal_contents,
             ignore_eos=ignore_eos,
             extra_body=extra_body,
         )
@@ -671,22 +718,22 @@ async def benchmark(
         )
 
     # Steady state energy measurement
-    # TODO: Switch to queue length estimation
-    running_requests = len(tasks)
-    assert running_requests == workload.num_requests
-    steady_state_mes = None
-    for coro in asyncio.as_completed(tasks):
-        _ = await coro
-        running_requests -= 1
-        if running_requests < max_num_seqs:
-            # Now, the server's batch size is always less than max_num_seqs.
-            # This is the end of the steady state.
-            steady_state_mes = zeus_monitor.end_window(
-                "steady_state", sync_execution=False
-            )
-            break
-    assert steady_state_mes is not None, "End of steady state not reached."
+    # Let's say the server's maximum batch size is B and we send a total of N requests.
+    # After B requests send back their first output tokens, we can expect the server to
+    # have ramped up to its steady state after the initial prefill burst. Then, when
+    # N - B requests have sent back their first output tokens, it means that the current
+    # queue length is B, and soon when one more request is completed, the server will
+    # exit the steady state and enter the ramp down phase. Thus, for our steady state
+    # measurement, we slice the time range between the moment B requests have sent back
+    # their first token and the moment N - B requests have sent back their first token.
+    await counter_waiter.wait(max_num_seqs)
+    zeus_monitor.begin_window("steady_state", sync_execution=False)
+    logger.info("Steady state has begun.")
+    await counter_waiter.wait(workload.num_requests - max_num_seqs)
+    steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
+    logger.info("Steady state finished.")
 
+    # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
 
     if pbar is not None:
@@ -798,7 +845,6 @@ def spawn_vllm_and_ensure_healthy(
     hf_home: str,
     gpu_ids: list[int],
     max_num_seqs: int,
-    max_num_batched_tokens: int | None,
     log_level: str,
     server_log_filepath: Path,
 ) -> str:
@@ -933,8 +979,7 @@ def main(args: Args) -> None:
         hf_token=hf_token,
         hf_home=hf_home,
         gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
-        max_num_seqs=args.max_num_seqs,
-        max_num_batched_tokens=args.max_num_batched_tokens,
+        max_num_seqs=args.workload.max_num_seqs,
         log_level="INFO",
         server_log_filepath=args.workload.to_path(of="server_log"),
     )
@@ -942,7 +987,7 @@ def main(args: Args) -> None:
     benchmark_result = asyncio.run(
         benchmark(
             zeus_monitor=zeus_monitor,
-            max_num_seqs=args.max_num_seqs,
+            max_num_seqs=args.workload.max_num_seqs,
             workload=args.workload,
             endpoint_type=args.endpoint_type,
             api_url=api_url,
@@ -953,7 +998,7 @@ def main(args: Args) -> None:
             selected_percentile_metrics=args.percentile_metrics.split(","),
             selected_percentiles=[float(p) for p in args.metric_percentiles.split(",")],
             ignore_eos=args.ignore_eos,
-            set_max_tokens=args.set_max_tokens,
+            max_output_tokens=args.max_output_tokens,
             max_concurrency=args.max_concurrency,
             extra_body=sampling_params,
         )

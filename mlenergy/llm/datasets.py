@@ -233,7 +233,13 @@ class VisionArenaDataset:
 class LLaVAVideoDataset:
     """LLaVA Video Dataset."""
 
-    def __init__(self, dataset_path: str, dataset_split: str, random_seed: int, video_data_dir: str) -> None:
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_split: str,
+        random_seed: int,
+        video_data_dir: str,
+    ) -> None:
         """Initialize the LLaVA Video dataset."""
         self.dataset_path = dataset_path
         self.dataset_split = dataset_split
@@ -246,9 +252,16 @@ class LLaVAVideoDataset:
         streams = []
 
         for subset in get_dataset_config_names(self.dataset_path):
-            if self.dataset_split in get_dataset_split_names(self.dataset_path, config_name=subset):
+            if self.dataset_split in get_dataset_split_names(
+                self.dataset_path, config_name=subset
+            ):
                 streams.append(
-                    load_dataset(self.dataset_path, name=subset, split=self.dataset_split, streaming=True)
+                    load_dataset(
+                        self.dataset_path,
+                        name=subset,
+                        split=self.dataset_split,
+                        streaming=True,
+                    )
                 )
             else:
                 logger.info("Skipping %s (no '%s' split)", subset, self.dataset_split)
@@ -289,7 +302,9 @@ class LLaVAVideoDataset:
 
             extracted_path = self.video_data_dir / mm_data_id
             if not extracted_path.exists():
-                logger.warning("Video file path %s does not exist. Skipping item.", extracted_path)
+                logger.warning(
+                    "Video file path %s does not exist. Skipping item.", extracted_path
+                )
                 continue
 
             mm_content = process_video_bytes(extracted_path.read_bytes())
@@ -330,7 +345,13 @@ class LLaVAVideoDataset:
 class AudioSkillsDataset:
     """Audio Skills Dataset."""
 
-    def __init__(self, dataset_path: str, dataset_split: str, random_seed: int, audio_data_dir: str) -> None:
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_split: str,
+        random_seed: int,
+        audio_data_dir: str,
+    ) -> None:
         """Initialize the Audio Skills dataset."""
         self.dataset_path = dataset_path
         self.dataset_split = dataset_split
@@ -371,7 +392,9 @@ class AudioSkillsDataset:
 
             # mm_content_bytes = self._get_audio_bytes(item["sound"])
             if not extracted_path.exists():
-                logger.warning("Audio file path %s does not exist. Skipping item.", extracted_path)
+                logger.warning(
+                    "Audio file path %s does not exist. Skipping item.", extracted_path
+                )
                 continue
 
             mm_content = process_audio_bytes(extracted_path.read_bytes())

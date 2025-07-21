@@ -6,16 +6,15 @@ A workload configuration defines one specific case or datapoint for benchmarking
 from __future__ import annotations
 
 import logging
-import os
 from abc import abstractmethod
 from typing import Literal
 from pathlib import Path
 
-from pydantic import BaseModel, SerializeAsAny
+from pydantic import BaseModel
 from transformers import AutoTokenizer
 
-from benchmark.constants import DEFAULT_SEED
-from benchmark.llm.datasets import (
+from mlenergy.constants import DEFAULT_SEED
+from mlenergy.llm.datasets import (
     SampleRequest,
     VisionArenaDataset,
     LLaVAVideoDataset,
@@ -32,15 +31,14 @@ class RequestsFile(BaseModel):
     Attributes:
         requests: A list of SampleRequest objects.
         workload: A serialized representation of the workload configuration
-            that generated these requests. `SerializeAsAny` is used to allow
-            subclasses of `WorkloadConfig` to be serialized as is. Note that
-            deserialization will not restore the original class type; `workload`
-            will be just a `WorkloadConfig` after deserialization.
+            that generated these requests.
 
     """
 
     requests: list[SampleRequest]
-    workload: ImageChatWorkload | VideoChatWorkload | AudioChatWorkload | OmniWorkloadConfig
+    workload: (
+        ImageChatWorkload | VideoChatWorkload | AudioChatWorkload | OmniChatWorkload
+    )
 
 
 class WorkloadConfig(BaseModel):
@@ -54,8 +52,18 @@ class WorkloadConfig(BaseModel):
     base_dir: Path
     seed: int = DEFAULT_SEED
 
-    def to_path(self, of: Literal["requests", "results", "timeline", "multimodal_dump"]) -> Path:
-        """Generate a file path based on file type and workload parameters."""
+    def to_path(
+        self, of: Literal["requests", "results", "timeline", "multimodal_dump"]
+    ) -> Path:
+        """Generate a file path based on file type and workload parameters.
+
+        Types of paths
+        - requests: Path to the file where sampled requests are saved.
+        - results: Path to the file where results of the benchmark are saved.
+        - timeline: Path to the file where metrics over time are saved.
+        - multimodal_dump: Path to the directory where multimodal data (e.g., images
+            videos, audios) are dumped (when `dump_multimodal_data` is True).
+        """
         dir = self.base_dir / "+".join(self.to_filename_parts())
 
         match of:
@@ -101,7 +109,8 @@ class WorkloadConfig(BaseModel):
         path = self.to_path(of="requests")
         logger.info("Saving requests to %s", path)
 
-        dumped = RequestsFile(requests=requests, workload=self).model_dump_json(indent=2)
+        file = RequestsFile(requests=requests, workload=self)  # type: ignore
+        dumped = file.model_dump_json(indent=2)
         path.write_text(dumped)
 
     @abstractmethod
@@ -140,7 +149,7 @@ class ImageChatWorkload(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         """Generate a list of parts that will be used to create a unique filename."""
         return [
-            "imagechat",
+            "image_chat",
             str(self.num_requests) + "req",
             str(self.num_images) + "image",
             str(self.seed) + "seed",
@@ -158,7 +167,9 @@ class ImageChatWorkload(WorkloadConfig):
             tokenizer,
             num_requests=self.num_requests,
             num_images=self.num_images,
-            dump_multimodal_dir=self.to_path(of="multimodal_dump") if dump_multimodal_data else None,
+            dump_multimodal_dir=(
+                self.to_path(of="multimodal_dump") if dump_multimodal_data else None
+            ),
         )
         return requests
 
@@ -177,7 +188,7 @@ class VideoChatWorkload(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         """Generate a list of parts that will be used to create a unique filename."""
         return [
-            "videochat",
+            "video_chat",
             self.dataset_split,
             str(self.num_requests) + "req",
             str(self.num_videos) + "video",
@@ -197,7 +208,9 @@ class VideoChatWorkload(WorkloadConfig):
             tokenizer,
             num_requests=self.num_requests,
             num_videos=self.num_videos,
-            dump_multimodal_dir=self.to_path(of="multimodal_dump") if dump_multimodal_data else None,
+            dump_multimodal_dir=self.to_path(of="multimodal_dump")
+            if dump_multimodal_data
+            else None,
         )
         return requests
 
@@ -216,7 +229,7 @@ class AudioChatWorkload(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         """Generate a list of parts that will be used to create a unique filename."""
         return [
-            "audiochat",
+            "audio_chat",
             str(self.num_requests) + "req",
             str(self.num_audios) + "audio",
             str(self.seed) + "seed",
@@ -240,12 +253,14 @@ class AudioChatWorkload(WorkloadConfig):
             tokenizer,
             num_requests=self.num_requests,
             num_audio=self.num_audios,
-            dump_multimodal_dir=self.to_path(of="multimodal_dump") if dump_multimodal_data else None,
+            dump_multimodal_dir=(
+                self.to_path(of="multimodal_dump") if dump_multimodal_data else None
+            ),
         )
         return requests
 
 
-class OmniWorkloadConfig(WorkloadConfig):
+class OmniChatWorkload(WorkloadConfig):
     """Workload configuration for a multi-modal dataset allows any combination of image, video, and audio data in requests."""
 
     num_requests: int
@@ -262,7 +277,7 @@ class OmniWorkloadConfig(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         """Generate a list of parts that will be used to create a unique filename."""
         return [
-            "omni",
+            "omni_chat",
             str(self.num_requests) + "req",
             str(self.num_images) + "image",
             str(self.num_videos) + "video",
@@ -285,7 +300,9 @@ class OmniWorkloadConfig(WorkloadConfig):
             num_images=self.num_images,
             num_videos=self.num_videos,
             num_audio=self.num_audio,
-            dump_multimodal_dir=self.to_path(of="multimodal_dump") if dump_multimodal_data else None,
+            dump_multimodal_dir=(
+                self.to_path(of="multimodal_dump") if dump_multimodal_data else None
+            ),
         )
         return requests
 
@@ -298,7 +315,7 @@ if __name__ == "__main__":
     )
 
     dump_multimodal_data = True
-            
+
     model_id = "Qwen/Qwen2.5-Omni-7B"
 
     work = ImageChatWorkload(
@@ -308,7 +325,9 @@ if __name__ == "__main__":
         model_id=model_id,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info("Loaded %d requests from %s", len(requests), work.to_path(of="requests"))
+    logger.info(
+        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
+    )
 
     work = VideoChatWorkload(
         base_dir=Path("run/mllm/video_chat") / model_id,
@@ -319,7 +338,9 @@ if __name__ == "__main__":
     )
 
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info("Loaded %d requests from %s", len(requests), work.to_path(of="requests"))
+    logger.info(
+        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
+    )
 
     work = AudioChatWorkload(
         base_dir=Path("run/mllm/audio_chat") / model_id,
@@ -330,9 +351,11 @@ if __name__ == "__main__":
     )
 
     audio_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info("Loaded %d requests from %s", len(audio_requests), work.to_path(of="requests"))
+    logger.info(
+        "Loaded %d requests from %s", len(audio_requests), work.to_path(of="requests")
+    )
 
-    # work = OmniWorkloadConfig(
+    # work = OmniChatWorkload(
     #     base_dir=Path("run/mllm/omni") / model_id,
     #     num_requests=10,
     #     num_images=1,

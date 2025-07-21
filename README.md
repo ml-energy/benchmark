@@ -1,1 +1,1 @@
-# The ML.ENERGY Benchmark and Leaderboard
+# The ML.ENERGY Benchmark

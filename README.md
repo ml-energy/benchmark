@@ -2,16 +2,33 @@
 
 ## Instructions
 
+- System setup
+
+```bash
+# Increase the number of max open files
+ulimit -n 10000
+```
+
+- Python setup
+
+```bash
+# Install the project in a new uv-managed virtual environment
+uv sync
+
+# Activate the virtual environment
+source .venv/bin/activate
+```
+
 - Data preparation
 
-TODO(Jeff): MLLM dataset preparation instructions.
+**TODO(Jeff)**: Add instructions for downloading and extracting video/audio datasets manually.
 
 ```bash
 # This assumes the existence of extracted video/audio datasets.
 python -m mlenergy.llm.workloads
 ```
 
-- [ ] Running the benchmark
+- Running the benchmark
 
 ```bash
 # HF_TOKEN, HF_HOME, and CUDA_VISIBLE_DEVICES are required.

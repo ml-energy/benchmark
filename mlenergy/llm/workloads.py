@@ -40,9 +40,7 @@ class RequestsFile(BaseModel):
     """
 
     requests: list[SampleRequest]
-    workload: (
-        ImageChat | VideoChat | AudioChat | OmniChat
-    )
+    workload: ImageChat | VideoChat | AudioChat | OmniChat
 
 
 class WorkloadConfig(BaseModel):
@@ -59,7 +57,10 @@ class WorkloadConfig(BaseModel):
     num_requests: int
 
     def to_path(
-        self, of: Literal["requests", "results", "driver_log", "server_log", "multimodal_dump"]
+        self,
+        of: Literal[
+            "requests", "results", "driver_log", "server_log", "multimodal_dump"
+        ],
     ) -> Path:
         """Generate a file path based on file type and workload parameters.
 

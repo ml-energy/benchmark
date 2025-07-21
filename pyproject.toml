@@ -17,6 +17,7 @@ dependencies = [
     "datasets>=4.0.0",
     "pillow>=11.3.0",
     "pydantic>=2.11.7",
+    "requests>=2.32.4",
     "transformers>=4.53.2",
     "tyro>=0.9.26",
     "zeus>=0.12.0",

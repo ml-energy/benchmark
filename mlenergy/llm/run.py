@@ -5,6 +5,7 @@ Inspired by https://github.com/vllm-project/vllm/blob/8188196a1c/vllm/benchmarks
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 import gc
 import io
@@ -19,12 +20,13 @@ import os
 import subprocess
 from contextlib import redirect_stdout
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar
 from pathlib import Path
 
 import tyro
+import requests
 import numpy as np
 import aiohttp
 from pydantic import BaseModel
@@ -34,7 +36,13 @@ from zeus.show_env import show_env
 from zeus.monitor import ZeusMonitor
 
 from mlenergy.llm.datasets import SampleRequest
-from mlenergy.llm.workloads import WorkloadConfig, ImageChat, VideoChat, AudioChat, OmniChat
+from mlenergy.llm.workloads import (
+    WorkloadConfig,
+    ImageChat,
+    VideoChat,
+    AudioChat,
+    OmniChat,
+)
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
@@ -42,6 +50,7 @@ logger = logging.getLogger("mlenergy.llm.run")
 
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)
+
 
 class Args(BaseModel, Generic[WorkloadT]):
     """Data model for benchmark arguments.
@@ -103,6 +112,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     temperature: float | None = 0.8
 
     # Server configuration
+    server_image: str = "vllm/vllm-openai:v0.10.0"
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
 
@@ -144,6 +154,7 @@ class BenchmarkMetrics:
 @dataclass
 class RequestFuncInput:
     """The input for the request function."""
+
     prompt: str
     api_url: str
     prompt_len: int
@@ -160,6 +171,7 @@ class RequestFuncInput:
 @dataclass
 class RequestFuncOutput:
     """The output of the request function including metrics."""
+
     generated_text: str = ""
     success: bool = False
     latency: float = 0.0
@@ -185,9 +197,9 @@ async def async_request_openai_completions(
         The output of the request function.
     """
     api_url = request_func_input.api_url
-    assert api_url.endswith(
-        ("completions", "profile")
-    ), "OpenAI Completions API URL must end with 'completions' or 'profile'."
+    assert api_url.endswith(("completions", "profile")), (
+        "OpenAI Completions API URL must end with 'completions' or 'profile'."
+    )
 
     if request_func_input.multimodal_contents:
         raise ValueError(
@@ -195,11 +207,13 @@ async def async_request_openai_completions(
             "Use OpenAI Chat Completions API instead."
         )
 
-    async with aiohttp.ClientSession(trust_env=True,
-                                     timeout=AIOHTTP_TIMEOUT) as session:
+    async with aiohttp.ClientSession(
+        trust_env=True, timeout=AIOHTTP_TIMEOUT
+    ) as session:
         payload = {
-            "model": request_func_input.model_name \
-                if request_func_input.model_name else request_func_input.model,
+            "model": request_func_input.model_name
+            if request_func_input.model_name
+            else request_func_input.model,
             "prompt": request_func_input.prompt,
             "temperature": 0.0,
             "repetition_penalty": 1.0,
@@ -223,8 +237,9 @@ async def async_request_openai_completions(
         st = time.perf_counter()
         most_recent_timestamp = st
         try:
-            async with session.post(url=api_url, json=payload,
-                                    headers=headers) as response:
+            async with session.post(
+                url=api_url, json=payload, headers=headers
+            ) as response:
                 if response.status == 200:
                     first_chunk_received = False
                     async for chunk_bytes in response.content:
@@ -259,21 +274,20 @@ async def async_request_openai_completions(
 
                                 # Decoding phase
                                 else:
-                                    output.itl.append(timestamp -
-                                                      most_recent_timestamp)
+                                    output.itl.append(timestamp - most_recent_timestamp)
 
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
                             elif usage := data.get("usage"):
-                                output.output_tokens = usage.get(
-                                    "completion_tokens")
+                                output.output_tokens = usage.get("completion_tokens")
                     if first_chunk_received:
                         output.success = True
                     else:
                         output.success = False
                         output.error = (
                             "Never received a valid chunk to calculate TTFT."
-                            "This response will be marked as failed!")
+                            "This response will be marked as failed!"
+                        )
                     output.generated_text = generated_text
                     output.latency = most_recent_timestamp - st
                 else:
@@ -295,29 +309,25 @@ async def async_request_openai_chat_completions(
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
     assert api_url.endswith(("chat/completions", "profile")), (
-        "OpenAI Chat Completions API URL must end with 'chat/completions'.")
+        "OpenAI Chat Completions API URL must end with 'chat/completions'."
+    )
 
-    async with aiohttp.ClientSession(trust_env=True,
-                                     timeout=AIOHTTP_TIMEOUT) as session:
+    async with aiohttp.ClientSession(
+        trust_env=True, timeout=AIOHTTP_TIMEOUT
+    ) as session:
         content = [{"type": "text", "text": request_func_input.prompt}]
         if request_func_input.multimodal_contents:
             content.extend(request_func_input.multimodal_contents)
         payload = {
-            "model":
-            request_func_input.model_name
-            if request_func_input.model_name else request_func_input.model,
+            "model": request_func_input.model_name
+            if request_func_input.model_name
+            else request_func_input.model,
             "messages": [
-                {
-                    "role": "user",
-                    "content": content
-                },
+                {"role": "user", "content": content},
             ],
-            "temperature":
-            0.0,
-            "max_completion_tokens":
-            request_func_input.output_len,
-            "stream":
-            True,
+            "temperature": 0.0,
+            "max_completion_tokens": request_func_input.output_len,
+            "stream": True,
             "stream_options": {
                 "include_usage": True,
             },
@@ -338,8 +348,9 @@ async def async_request_openai_chat_completions(
         st = time.perf_counter()
         most_recent_timestamp = st
         try:
-            async with session.post(url=api_url, json=payload,
-                                    headers=headers) as response:
+            async with session.post(
+                url=api_url, json=payload, headers=headers
+            ) as response:
                 if response.status == 200:
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
@@ -367,13 +378,11 @@ async def async_request_openai_chat_completions(
 
                                 # Decoding phase
                                 else:
-                                    output.itl.append(timestamp -
-                                                      most_recent_timestamp)
+                                    output.itl.append(timestamp - most_recent_timestamp)
 
                                 generated_text += content or ""
                             elif usage := data.get("usage"):
-                                output.output_tokens = usage.get(
-                                    "completion_tokens")
+                                output.output_tokens = usage.get("completion_tokens")
 
                             most_recent_timestamp = timestamp
 
@@ -546,25 +555,29 @@ def calculate_metrics(
         std_ttft_ms=(np.std(ttfts or 0) * 1000).item(),
         median_ttft_ms=(np.median(ttfts or 0) * 1000).item(),
         percentiles_ttft_ms=[
-            (p, (np.percentile(ttfts or 0, p) * 1000).item()) for p in selected_percentiles
+            (p, (np.percentile(ttfts or 0, p) * 1000).item())
+            for p in selected_percentiles
         ],
         mean_tpot_ms=(np.mean(tpots or 0) * 1000).item(),
         std_tpot_ms=(np.std(tpots or 0) * 1000).item(),
         median_tpot_ms=(np.median(tpots or 0) * 1000).item(),
         percentiles_tpot_ms=[
-            (p, (np.percentile(tpots or 0, p) * 1000).item()) for p in selected_percentiles
+            (p, (np.percentile(tpots or 0, p) * 1000).item())
+            for p in selected_percentiles
         ],
         mean_itl_ms=(np.mean(itls or 0) * 1000).item(),
         std_itl_ms=(np.std(itls or 0) * 1000).item(),
         median_itl_ms=(np.median(itls or 0) * 1000).item(),
         percentiles_itl_ms=[
-            (p, (np.percentile(itls or 0, p) * 1000).item()) for p in selected_percentiles
+            (p, (np.percentile(itls or 0, p) * 1000).item())
+            for p in selected_percentiles
         ],
         mean_e2el_ms=(np.mean(e2els or 0) * 1000).item(),
         std_e2el_ms=(np.std(e2els or 0) * 1000).item(),
         median_e2el_ms=(np.median(e2els or 0) * 1000).item(),
         percentiles_e2el_ms=[
-            (p, (np.percentile(e2els or 0, p) * 1000).item()) for p in selected_percentiles
+            (p, (np.percentile(e2els or 0, p) * 1000).item())
+            for p in selected_percentiles
         ],
     )
 
@@ -573,6 +586,7 @@ def calculate_metrics(
 
 async def benchmark(
     zeus_monitor: ZeusMonitor,
+    max_num_seqs: int,
     workload: WorkloadConfig,
     endpoint_type: str,
     api_url: str,
@@ -641,7 +655,6 @@ async def benchmark(
 
     distribution = "Poisson process" if burstiness == 1.0 else "Gamma distribution"
 
-
     logger.info("Traffic request rate: %f req/s", request_rate)
 
     logger.info("Burstiness factor: %f (%s)", burstiness, distribution)
@@ -691,8 +704,18 @@ async def benchmark(
     # Steady state energy measurement
     running_requests = len(tasks)
     assert running_requests == workload.num_requests
+    steady_state_mes = None
     for coro in asyncio.as_completed(tasks):
+        _ = await coro
         running_requests -= 1
+        if running_requests < max_num_seqs:
+            # Now, the server's batch size is always less than max_num_seqs.
+            # This is the end of the steady state.
+            steady_state_mes = zeus_monitor.end_window(
+                "steady_state", sync_execution=False
+            )
+            break
+    assert steady_state_mes is not None, "End of steady state not reached."
 
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
 
@@ -712,6 +735,7 @@ async def benchmark(
     if pbar is not None:
         pbar.close()
 
+    entire_mes = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
     benchmark_duration = time.perf_counter() - benchmark_start_time
 
     metrics, actual_output_lens = calculate_metrics(
@@ -722,19 +746,30 @@ async def benchmark(
         selected_percentiles=selected_percentiles,
     )
 
+    steady_state_time = steady_state_mes.time
+    steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+
     logger.info("[Benchmark results]")
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
+    logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
+    logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
     logger.info("%-40s: %.2f", "Benchmark duration (s)", benchmark_duration)
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
-    logger.info("%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput)
-    logger.info("%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput)
+    logger.info(
+        "%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput
+    )
+    logger.info(
+        "%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput
+    )
 
     result = {
         "duration": benchmark_duration,
         "completed": metrics.completed,
+        "steady_state_duration": steady_state_time,
+        "steady_state_energy": steady_state_energy,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
         "request_throughput": metrics.request_throughput,
@@ -746,6 +781,8 @@ async def benchmark(
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],
+        "steady_state_measurement": asdict(steady_state_mes),
+        "entire_benchmark_measurement": asdict(entire_mes),
     }
 
     def process_one_metric(
@@ -760,8 +797,16 @@ async def benchmark(
         if metric_attribute_name not in selected_percentile_metrics:
             return
         logger.info("{s:{c}^{n}}".format(s=metric_header, n=50, c="-"))
-        logger.info("%-40s: %-10.2f", f"Mean {metric_name} (ms)", getattr(metrics, f"mean_{metric_attribute_name}_ms"))
-        logger.info("%-40s: %-10.2f", f"Median {metric_name} (ms)", getattr(metrics, f"median_{metric_attribute_name}_ms"))
+        logger.info(
+            "%-40s: %-10.2f",
+            f"Mean {metric_name} (ms)",
+            getattr(metrics, f"mean_{metric_attribute_name}_ms"),
+        )
+        logger.info(
+            "%-40s: %-10.2f",
+            f"Median {metric_name} (ms)",
+            getattr(metrics, f"median_{metric_attribute_name}_ms"),
+        )
         result[f"mean_{metric_attribute_name}_ms"] = getattr(
             metrics, f"mean_{metric_attribute_name}_ms"
         )
@@ -789,14 +834,14 @@ async def benchmark(
 def spawn_vllm_and_ensure_healthy(
     server_image: str,
     port: int,
-    model: str,
+    model_id: str,
     hf_token: str,
     hf_home: str,
     gpu_ids: list[int],
     max_num_seqs: int,
     max_num_batched_tokens: int | None,
     log_level: str,
-    server_log_filepath: str,
+    server_log_filepath: Path,
 ) -> str:
     """Spawn vLLM server and ensure it is healthy.
 
@@ -821,7 +866,7 @@ def spawn_vllm_and_ensure_healthy(
         "-v", f"{hf_home}:/root/.cache/huggingface",
         server_image,
         "--port", str(port),
-        "--model", model,
+        "--model", model_id,
         "--tensor-parallel-size", str(len(gpu_ids)),
         "--gpu-memory-utilization", "0.95",
         "--trust-remote-code",
@@ -831,8 +876,34 @@ def spawn_vllm_and_ensure_healthy(
     # fmt: on
 
     logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
+    logger.info("vLLM container name: %s", container_name)
+    logger.info("vLLM logs will be written to %s", server_log_filepath)
     server_log_file = open(server_log_filepath, "w")
     subprocess.Popen(server_cmd, stdout=server_log_file, stderr=server_log_file)
+
+    def kill_server():
+        """Kill the vLLM server."""
+        logger.info("Killing vLLM server container %s", container_name)
+        subprocess.run(["docker", "kill", container_name])
+        time.sleep(5)
+        subprocess.run(["docker", "rm", container_name])
+        logger.info("vLLM server container %s killed and removed", container_name)
+
+    atexit.register(kill_server)
+
+    # Wait until the /health endpoint returns 200 OK
+    health_url = f"http://127.0.0.1:{port}/health"
+    logger.info("Waiting for vLLM server to become healthy at %s", health_url)
+    while True:
+        try:
+            response = requests.get(health_url, timeout=5)
+            if response.status_code == 200:
+                logger.info("vLLM server is healthy.")
+                break
+        except requests.RequestException as e:
+            logger.warning("Waiting for vLLM server to become healthy: %s", e)
+        time.sleep(1)
+
     return container_name
 
 
@@ -851,7 +922,10 @@ def main(args: Args) -> None:
         )
         return
 
+    # Necessary envs
     cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
+    hf_token = os.environ["HF_TOKEN"]
+    hf_home = os.environ["HF_HOME"]
 
     buffer = io.StringIO()
     with redirect_stdout(buffer):
@@ -891,12 +965,22 @@ def main(args: Args) -> None:
     gc.freeze()
 
     spawn_vllm_and_ensure_healthy(
-
+        server_image=args.server_image,
+        port=port,
+        model_id=model_id,
+        hf_token=hf_token,
+        hf_home=hf_home,
+        gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
+        max_num_seqs=args.max_num_seqs,
+        max_num_batched_tokens=args.max_num_batched_tokens,
+        log_level="INFO",
+        server_log_filepath=args.workload.to_path(of="server_log"),
     )
 
     benchmark_result = asyncio.run(
         benchmark(
             zeus_monitor=zeus_monitor,
+            max_num_seqs=args.max_num_seqs,
             workload=args.workload,
             endpoint_type=args.endpoint_type,
             api_url=api_url,

@@ -58,7 +58,6 @@ class Args(BaseModel, Generic[WorkloadT]):
     Attributes:
         workload: Workload configuration for the benchmark.
         endpoint_type: Type of API endpoint.
-        endpoint: API endpoint path.
         max_concurrency: Maximum number of concurrent requests. When used together
             with `request_rate`, this may reduce the actual request rate if the
             server is not processing requests fast enough to keep up.
@@ -93,14 +92,11 @@ class Args(BaseModel, Generic[WorkloadT]):
             99-th percentiles. Use `--percentile-metrics` to select metrics.
         overwrite_results: Whether to overwrite the existing results file. If this
             is not set, the script will immediately exit if the results file exists.
-        profile: Whether to enable the torch profiler. vLLM should be launched with
-            `VLLM_TORCH_PROFILER_DIR` to enable the profiler.
     """
 
     # Workload configuration
     workload: WorkloadT
     endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
-    endpoint: str = "/v1/completions"
     max_concurrency: int | None = None
     request_rate: float = float("inf")
     burstiness: float = 1.0
@@ -120,9 +116,6 @@ class Args(BaseModel, Generic[WorkloadT]):
     percentile_metrics: str = "ttft,tpot,itl,e2el"
     metric_percentiles: str = "50,90,95,99"
     overwrite_results: bool = False
-
-    # Miscellaneous
-    profile: bool = False
 
 
 @dataclass
@@ -160,12 +153,9 @@ class RequestFuncInput:
     prompt_len: int
     output_len: int | None
     model: str
-    model_name: str | None = None
-    logprobs: int | None = None
     extra_body: dict | None = None
     multimodal_contents: list[dict] | None = None
     ignore_eos: bool = False
-    language: str | None = None
 
 
 @dataclass
@@ -211,13 +201,10 @@ async def async_request_openai_completions(
         trust_env=True, timeout=AIOHTTP_TIMEOUT
     ) as session:
         payload = {
-            "model": request_func_input.model_name
-            if request_func_input.model_name
-            else request_func_input.model,
+            "model": request_func_input.model,
             "prompt": request_func_input.prompt,
             "temperature": 0.0,
             "repetition_penalty": 1.0,
-            "logprobs": request_func_input.logprobs,
             "stream": True,
             "stream_options": {
                 "include_usage": True,
@@ -320,9 +307,7 @@ async def async_request_openai_chat_completions(
         if request_func_input.multimodal_contents:
             content.extend(request_func_input.multimodal_contents)
         payload = {
-            "model": request_func_input.model_name
-            if request_func_input.model_name
-            else request_func_input.model,
+            "model": request_func_input.model,
             "messages": [
                 {"role": "user", "content": content},
             ],
@@ -592,12 +577,10 @@ async def benchmark(
     workload: WorkloadConfig,
     endpoint_type: str,
     api_url: str,
-    base_url: str,
     model_id: str,
     input_requests: list[SampleRequest],
     request_rate: float,
     burstiness: float,
-    profile: bool,
     selected_percentile_metrics: list[str],
     selected_percentiles: list[float],
     ignore_eos: bool,
@@ -618,7 +601,7 @@ async def benchmark(
         input_requests[0].multimodal_contents,
     )
 
-    assert test_mm_content is None or isinstance(test_mm_content, dict)
+    assert test_mm_content is None or isinstance(test_mm_content, list)
     test_input = RequestFuncInput(
         model=model_id,
         prompt=test_prompt,
@@ -638,22 +621,6 @@ async def benchmark(
         )
     else:
         logger.info("Initial test run completed. Starting main benchmark run...")
-
-    if profile:
-        logger.info("Starting profiler...")
-        profile_input = RequestFuncInput(
-            model=model_id,
-            prompt=test_prompt,
-            api_url=base_url + "/start_profile",
-            prompt_len=test_prompt_len,
-            output_len=test_output_len if set_max_tokens else None,
-            multimodal_contents=test_mm_content,
-            ignore_eos=ignore_eos,
-            extra_body=extra_body,
-        )
-        profile_output = await request_func(request_func_input=profile_input)
-        if profile_output.success:
-            logger.info("Profiler started")
 
     distribution = "Poisson process" if burstiness == 1.0 else "Gamma distribution"
 
@@ -704,6 +671,7 @@ async def benchmark(
         )
 
     # Steady state energy measurement
+    # TODO: Switch to queue length estimation
     running_requests = len(tasks)
     assert running_requests == workload.num_requests
     steady_state_mes = None
@@ -721,19 +689,6 @@ async def benchmark(
 
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
 
-    if profile:
-        logger.info("Stopping profiler...")
-        profile_input = RequestFuncInput(
-            model=model_id,
-            prompt=test_prompt,
-            api_url=base_url + "/stop_profile",
-            prompt_len=test_prompt_len,
-            output_len=test_output_len if set_max_tokens else None,
-        )
-        profile_output = await request_func(request_func_input=profile_input)
-        if profile_output.success:
-            logger.info("Profiler stopped")
-
     if pbar is not None:
         pbar.close()
 
@@ -750,13 +705,15 @@ async def benchmark(
 
     steady_state_time = steady_state_mes.time
     steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+    entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
 
     logger.info("[Benchmark results]")
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
+    logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
+    logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
-    logger.info("%-40s: %.2f", "Benchmark duration (s)", benchmark_duration)
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
@@ -941,8 +898,11 @@ def main(args: Args) -> None:
     np.random.seed(args.workload.seed)
 
     port = 8000 + int(cuda_visible_devices.split(",")[0])
-    api_url = f"http://127.0.0.1:{port}{args.endpoint}"
-    base_url = f"http://127.0.0.1:{port}"
+    endpoint = {
+        "openai": "/v1/completions",
+        "openai-chat": "/v1/chat/completions",
+    }[args.endpoint_type]
+    api_url = f"http://127.0.0.1:{port}{endpoint}"
 
     # Load the dataset.
     input_requests = args.workload.load_requests()
@@ -986,12 +946,10 @@ def main(args: Args) -> None:
             workload=args.workload,
             endpoint_type=args.endpoint_type,
             api_url=api_url,
-            base_url=base_url,
             model_id=model_id,
             input_requests=input_requests,
             request_rate=args.request_rate,
             burstiness=args.burstiness,
-            profile=args.profile,
             selected_percentile_metrics=args.percentile_metrics.split(","),
             selected_percentiles=[float(p) for p in args.metric_percentiles.split(",")],
             ignore_eos=args.ignore_eos,
@@ -1024,6 +982,13 @@ def main(args: Args) -> None:
     # Save to results file
     with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2)
+
+    # Something failed. Treat the whole run as a failure.
+    if benchmark_result["completed"] < args.workload.num_requests:
+        raise RuntimeError(
+            f"Only {benchmark_result['completed']} out of {args.workload.num_requests} requests completed successfully. "
+            "Raising RuntimeError to indicate failure."
+        )
 
 
 if __name__ == "__main__":

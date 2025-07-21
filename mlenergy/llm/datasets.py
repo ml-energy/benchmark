@@ -13,7 +13,7 @@ import io
 import logging
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from PIL import Image
 from datasets import (
@@ -23,7 +23,9 @@ from datasets import (
     load_dataset,
 )
 from pydantic import BaseModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+if TYPE_CHECKING:
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
 

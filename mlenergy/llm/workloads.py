@@ -6,8 +6,9 @@ A workload configuration defines one specific case or datapoint for benchmarking
 from __future__ import annotations
 
 import logging
+from functools import cached_property
 from abc import abstractmethod
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -21,6 +22,9 @@ from mlenergy.llm.datasets import (
     AudioSkillsDataset,
     OmniDataset,
 )
+
+if TYPE_CHECKING:
+    from transformers.tokenization_utils import PreTrainedTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ class RequestsFile(BaseModel):
 
     requests: list[SampleRequest]
     workload: (
-        ImageChatWorkload | VideoChatWorkload | AudioChatWorkload | OmniChatWorkload
+        ImageChat | VideoChat | AudioChat | OmniChat
     )
 
 
@@ -51,16 +55,19 @@ class WorkloadConfig(BaseModel):
 
     base_dir: Path
     seed: int = DEFAULT_SEED
+    model_id: str
+    num_requests: int
 
     def to_path(
-        self, of: Literal["requests", "results", "timeline", "multimodal_dump"]
+        self, of: Literal["requests", "results", "driver_log", "server_log", "multimodal_dump"]
     ) -> Path:
         """Generate a file path based on file type and workload parameters.
 
         Types of paths
         - requests: Path to the file where sampled requests are saved.
         - results: Path to the file where results of the benchmark are saved.
-        - timeline: Path to the file where metrics over time are saved.
+        - driver_log: Path to the file where logging outputs from the driver/client are saved.
+        - server_log: Path to the file where logging outputs from the vLLM server are saved.
         - multimodal_dump: Path to the directory where multimodal data (e.g., images
             videos, audios) are dumped (when `dump_multimodal_data` is True).
         """
@@ -71,8 +78,10 @@ class WorkloadConfig(BaseModel):
                 append = "requests.json"
             case "results":
                 append = "results.json"
-            case "timeline":
-                append = "timeline.csv"
+            case "driver_log":
+                append = "driver_log.txt"
+            case "server_log":
+                append = "server_log.txt"
             case "multimodal_dump":
                 append = "multimodal_dump"
             case _:
@@ -84,6 +93,11 @@ class WorkloadConfig(BaseModel):
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+    @cached_property
+    def tokenizer(self) -> PreTrainedTokenizer:
+        """Get the tokenizer for the model specified in the configuration."""
+        return AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
 
     def load_requests(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
         """Load the requests from the file specified by the configuration.
@@ -136,13 +150,11 @@ class WorkloadConfig(BaseModel):
         """
 
 
-class ImageChatWorkload(WorkloadConfig):
+class ImageChat(WorkloadConfig):
     """Workload configuration for image chat requests."""
 
-    num_requests: int
     num_images: int
 
-    model_id: str
     dataset_path: str = "lmarena-ai/VisionArena-Chat"
     dataset_split: str = "train"
 
@@ -162,9 +174,8 @@ class ImageChatWorkload(WorkloadConfig):
             dataset_split=self.dataset_split,
             random_seed=self.seed,
         )
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
         requests = dataset.sample(
-            tokenizer,
+            tokenizer=self.tokenizer,
             num_requests=self.num_requests,
             num_images=self.num_images,
             dump_multimodal_dir=(
@@ -174,13 +185,11 @@ class ImageChatWorkload(WorkloadConfig):
         return requests
 
 
-class VideoChatWorkload(WorkloadConfig):
+class VideoChat(WorkloadConfig):
     """Workload configuration for video chat requests."""
 
-    num_requests: int
     num_videos: int
 
-    model_id: str
     dataset_path: str = "lmms-lab/LLaVA-Video-178K"
     dataset_split: str = "caption"
     video_data_dir: str  # Uncompressed video data directory
@@ -203,9 +212,8 @@ class VideoChatWorkload(WorkloadConfig):
             random_seed=self.seed,
             video_data_dir=self.video_data_dir,
         )
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
         requests = dataset.sample(
-            tokenizer,
+            tokenizer=self.tokenizer,
             num_requests=self.num_requests,
             num_videos=self.num_videos,
             dump_multimodal_dir=self.to_path(of="multimodal_dump")
@@ -215,13 +223,11 @@ class VideoChatWorkload(WorkloadConfig):
         return requests
 
 
-class AudioChatWorkload(WorkloadConfig):
+class AudioChat(WorkloadConfig):
     """Workload configuration for audio chat requests."""
 
-    num_requests: int
     num_audios: int
 
-    model_id: str
     dataset_path: str = "nvidia/AudioSkills"
     dataset_split: str = "fsd50k"
     audio_data_dir: str  # Uncompressed audio data directory
@@ -248,9 +254,8 @@ class AudioChatWorkload(WorkloadConfig):
             random_seed=self.seed,
             audio_data_dir=self.audio_data_dir,
         )
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
         requests = dataset.sample(
-            tokenizer,
+            tokenizer=self.tokenizer,
             num_requests=self.num_requests,
             num_audio=self.num_audios,
             dump_multimodal_dir=(
@@ -260,15 +265,12 @@ class AudioChatWorkload(WorkloadConfig):
         return requests
 
 
-class OmniChatWorkload(WorkloadConfig):
+class OmniChat(WorkloadConfig):
     """Workload configuration for a multi-modal dataset allows any combination of image, video, and audio data in requests."""
 
-    num_requests: int
     num_images: int
     num_videos: int
     num_audio: int
-
-    model_id: str
 
     video_dataset: str = "lmms-lab/LLaVA-Video-178K"
     video_split: str = "caption"
@@ -293,9 +295,8 @@ class OmniChatWorkload(WorkloadConfig):
             random_seed=self.seed,
             video_data_dir=self.video_data_dir,
         )
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
         requests = dataset.sample(
-            tokenizer,
+            tokenizer=self.tokenizer,
             num_requests=self.num_requests,
             num_images=self.num_images,
             num_videos=self.num_videos,
@@ -318,7 +319,7 @@ if __name__ == "__main__":
 
     model_id = "Qwen/Qwen2.5-Omni-7B"
 
-    work = ImageChatWorkload(
+    work = ImageChat(
         base_dir=Path("run/mllm/image_chat") / model_id,
         num_requests=30,
         num_images=2,
@@ -329,7 +330,7 @@ if __name__ == "__main__":
         "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
     )
 
-    work = VideoChatWorkload(
+    work = VideoChat(
         base_dir=Path("run/mllm/video_chat") / model_id,
         num_requests=30,
         num_videos=1,
@@ -342,7 +343,7 @@ if __name__ == "__main__":
         "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
     )
 
-    work = AudioChatWorkload(
+    work = AudioChat(
         base_dir=Path("run/mllm/audio_chat") / model_id,
         num_requests=40,
         num_audios=1,

@@ -2,13 +2,6 @@
 
 ## Instructions
 
-- System setup
-
-```bash
-# Increase the number of max open files
-ulimit -n 10000
-```
-
 - Python setup (using `uv`)
 
 ```bash

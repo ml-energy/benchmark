@@ -1072,6 +1072,7 @@ def main(args: Args) -> None:
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
     logger.info("Waiting for vLLM server to become healthy at %s", health_url)
+    server_log_filepath = args.workload.to_path(of="server_log")
     while True:
         try:
             response = requests.get(health_url, timeout=5)
@@ -1081,6 +1082,9 @@ def main(args: Args) -> None:
         except requests.RequestException as e:
             logger.warning("Waiting for vLLM server to become healthy: %s", e)
         time.sleep(1)
+        with open(server_log_filepath, "r") as f:
+            lines = f.readlines()
+            logger.info("Server log tail::\n%s", "".join(lines[-5:]))
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()

@@ -828,7 +828,7 @@ async def benchmark(
     )
     logger.info(
         "%-40s: %.2f",
-        "Estimated energy (J) per generation",
+        "Energy (J) per generation",
         energy_per_generation,
     )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)

@@ -42,6 +42,8 @@ from mlenergy.llm.workloads import (
     VideoChat,
     AudioChat,
     OmniChat,
+    LMArenaChat,
+    GPQA,
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
@@ -77,12 +79,6 @@ class Args(BaseModel, Generic[WorkloadT]):
             If set to an integer, all requests are capped to that number. Finally,
             if set to `None`, output length is not capped at all, and some requests
             might generate forever.
-        ignore_eos: Whether to ignore the end-of-sequence token in the requests.
-            Setting this will generate tokens until it reaches the maximum number
-            of output tokens specified in the request.
-        set_max_tokens: Whether to set the maximum number of output tokens in the
-            requests. If set to `True`, the maximum number of output tokens will
-            be capped to `SampleRequest.expected_output_len`.
         top_p: Top-p sampling parameter.
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
@@ -1037,7 +1033,9 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    args = tyro.cli(Args[ImageChat | VideoChat | AudioChat | OmniChat])
+    args = tyro.cli(
+        Args[ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA]
+    )
 
     # Set up the logger so that it logs to both console and file
     logging.basicConfig(

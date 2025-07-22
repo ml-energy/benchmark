@@ -21,6 +21,8 @@ from mlenergy.llm.datasets import (
     LLaVAVideoDataset,
     AudioSkillsDataset,
     OmniDataset,
+    LMArenaHumanPreferenceDataset,
+    GPQADataset,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +42,7 @@ class RequestsFile(BaseModel):
     """
 
     requests: list[SampleRequest]
-    workload: ImageChat | VideoChat | AudioChat | OmniChat
+    workload: ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA
 
 
 class WorkloadConfig(BaseModel):
@@ -337,6 +339,58 @@ class OmniChat(WorkloadConfig):
             ),
         )
         return requests
+
+
+class LMArenaChat(WorkloadConfig):
+    """Workload using the LMArena human preference dataset."""
+
+    dataset_path: str = "lmarena-ai/arena-human-preference-100k",
+    dataset_split: str = "train"
+
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "lmarena_chat",
+            str(self.num_requests) + "req",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+        ]
+
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        dataset = LMArenaHumanPreferenceDataset(
+            dataset_path=self.dataset_path,
+            dataset_split=self.dataset_split,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )
+
+
+class GPQA(WorkloadConfig):
+    """Workload for the GPQA dataset."""
+
+    dataset_path: str
+    dataset_split: str = "train"
+
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "gpqa",
+            str(self.num_requests) + "req",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+        ]
+
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        dataset = GPQADataset(
+            dataset_path=self.dataset_path,
+            dataset_split=self.dataset_split,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )
 
 
 if __name__ == "__main__":

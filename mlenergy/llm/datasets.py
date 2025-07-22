@@ -158,7 +158,7 @@ class VisionArenaDataset:
         self.dataset_path = dataset_path
         self.dataset_split = dataset_split
         self.random_seed = random_seed
-        self.data = None
+        self.data: Any = None
 
     def load_data(self):
         """Load data from HuggingFace datasets.
@@ -462,3 +462,134 @@ class OmniDataset:
         dump_multimodal_dir: Path | None = None,
     ) -> list[SampleRequest]:
         raise NotImplementedError()
+
+
+class LMArenaHumanPreferenceDataset:
+    """LMArena Human Preference dataset for text-only chat."""
+
+    def __init__(self, dataset_path: str, dataset_split: str, random_seed: int = 0) -> None:
+        """Initialize the LMArena Human Preference dataset."""
+        self.dataset_path = dataset_path
+        self.dataset_split = dataset_split
+        self.random_seed = random_seed
+        self.data = None
+
+    def load_data(self):
+        """Load data from HuggingFace datasets."""
+        data = load_dataset(
+            self.dataset_path,
+            split=self.dataset_split,
+            streaming=True,
+        )
+        return data.shuffle(seed=self.random_seed)
+
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+        output_len: int | None = None,
+    ) -> list[SampleRequest]:
+        if self.data is None:
+            self.data = self.load_data()
+
+        requests: list[SampleRequest] = []
+        for item in self.data:
+            if len(requests) >= num_requests:
+                break
+
+            assert isinstance(item, dict), (
+                "Each item in the dataset must be a dictionary."
+            )
+
+            conv = item["conversation_a"]
+            turn = item["turn"]
+
+            messages = list(conv)[:turn]
+            completion_msg = list(conv)[turn]
+
+            def _content(msg: Any) -> str:
+                if isinstance(msg, dict):
+                    return msg.get("content") or msg.get("value") or ""
+                return str(msg)
+
+            prompt = "\n".join(_content(m) for m in messages)
+            completion = _content(completion_msg)
+
+            prompt_len = len(tokenizer(prompt).input_ids)
+            comp_len = len(tokenizer(completion).input_ids)
+
+            requests.append(
+                SampleRequest(
+                    prompt=prompt,
+                    completion=completion,
+                    prompt_len=prompt_len,
+                    expected_output_len=comp_len if output_len is None else output_len,
+                    multimodal_contents=[],
+                )
+            )
+
+        maybe_oversample_requests(requests, num_requests, self.random_seed)
+        return requests
+
+
+class GPQADataset:
+    """GPQA extended dataset."""
+
+    def __init__(
+        self,
+        dataset_path: str = "Idavidrein/gpqa",
+        dataset_split: str = "train",
+        random_seed: int = 0,
+    ) -> None:
+        self.dataset_path = dataset_path
+        self.dataset_split = dataset_split
+        self.random_seed = random_seed
+        self.data: Any = None
+
+    def load_data(self):
+        data = load_dataset(
+            self.dataset_path,
+            split=self.dataset_split,
+            streaming=True,
+        )
+        return data.shuffle(seed=self.random_seed)
+
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+        output_len: int | None = None,
+    ) -> list[SampleRequest]:
+        if self.data is None:
+            self.data = self.load_data()
+
+        requests: list[SampleRequest] = []
+        for item in self.data:
+            if len(requests) >= num_requests:
+                break
+
+            assert isinstance(item, dict), (
+                "Each item in the dataset must be a dictionary."
+            )
+
+            prompt = (
+                f"{item['Question']}\nA) {item['Incorrect Answer 1']}\nB) {item['Incorrect Answer 2']}\n"
+                f"C) {item['Incorrect Answer 3']}\nD) {item['Correct Answer']}\nAnswer:"
+            )
+            completion = item["Correct Answer"]
+
+            prompt_len = len(tokenizer(prompt).input_ids)
+            comp_len = len(tokenizer(completion).input_ids)
+
+            requests.append(
+                SampleRequest(
+                    prompt=prompt,
+                    completion=completion,
+                    prompt_len=prompt_len,
+                    expected_output_len=comp_len if output_len is None else output_len,
+                    multimodal_contents=[],
+                )
+            )
+
+        maybe_oversample_requests(requests, num_requests, self.random_seed)
+        return requests

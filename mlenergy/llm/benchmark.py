@@ -42,6 +42,8 @@ from mlenergy.llm.workloads import (
     VideoChat,
     AudioChat,
     OmniChat,
+    LMArenaChat,
+    GPQA,
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
@@ -77,12 +79,6 @@ class Args(BaseModel, Generic[WorkloadT]):
             If set to an integer, all requests are capped to that number. Finally,
             if set to `None`, output length is not capped at all, and some requests
             might generate forever.
-        ignore_eos: Whether to ignore the end-of-sequence token in the requests.
-            Setting this will generate tokens until it reaches the maximum number
-            of output tokens specified in the request.
-        set_max_tokens: Whether to set the maximum number of output tokens in the
-            requests. If set to `True`, the maximum number of output tokens will
-            be capped to `SampleRequest.expected_output_len`.
         top_p: Top-p sampling parameter.
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
@@ -151,7 +147,7 @@ class BenchmarkMetrics:
 class RequestFuncInput:
     """The input for the request function."""
 
-    prompt: str
+    prompt: str | list[str]
     api_url: str
     prompt_len: int
     output_len: int | None
@@ -225,6 +221,12 @@ async def async_request_openai_completions(
         raise ValueError(
             "OpenAI Completions API does not support multimodal contents. "
             "Use OpenAI Chat Completions API instead."
+        )
+
+    if not isinstance(request_func_input.prompt, str):
+        raise ValueError(
+            "OpenAI Completions API only supports single string prompt, "
+            "not a list of strings."
         )
 
     async with aiohttp.ClientSession(
@@ -332,17 +334,26 @@ async def async_request_openai_chat_completions(
         "OpenAI Chat Completions API URL must end with 'chat/completions'."
     )
 
+    if isinstance(request_func_input.prompt, str):
+        content = [{"type": "text", "text": request_func_input.prompt}]
+        content.extend(request_func_input.multimodal_contents or [])
+        messages = [{"role": "user", "content": content}]
+    else:
+        content = [{"type": "text", "text": request_func_input.prompt[0]}]
+        content.extend(request_func_input.multimodal_contents or [])
+        messages = [{"role": "user", "content": content}]
+        for i, prompt in enumerate(request_func_input.prompt[1:]):
+            role = "user" if i % 2 == 1 else "assistant"
+            messages.append(
+                {"role": role, "content": [{"type": "text", "text": prompt}]}
+            )
+
     async with aiohttp.ClientSession(
         trust_env=True, timeout=AIOHTTP_TIMEOUT
     ) as session:
-        content = [{"type": "text", "text": request_func_input.prompt}]
-        if request_func_input.multimodal_contents:
-            content.extend(request_func_input.multimodal_contents)
         payload = {
             "model": request_func_input.model,
-            "messages": [
-                {"role": "user", "content": content},
-            ],
+            "messages": messages,
             "temperature": 0.0,
             "stream": True,
             "stream_options": {
@@ -636,7 +647,7 @@ async def benchmark(
     assert test_mm_content is None or isinstance(test_mm_content, list)
     test_input = RequestFuncInput(
         model=model_id,
-        prompt=test_prompt,
+        prompt=test_prompt if isinstance(test_prompt, str) else test_prompt[0],
         api_url=api_url,
         prompt_len=test_prompt_len,
         output_len=20,
@@ -837,7 +848,7 @@ async def benchmark(
     return result
 
 
-def spawn_vllm_and_ensure_healthy(
+def spawn_vllm(
     server_image: str,
     port: int,
     model_id: str,
@@ -848,7 +859,9 @@ def spawn_vllm_and_ensure_healthy(
     log_level: str,
     server_log_filepath: Path,
 ) -> str:
-    """Spawn vLLM server and ensure it is healthy.
+    """Spawn vLLM server.
+
+    This does not wait for the server to be ready.
 
     Retuens:
         The container name of the spawned vLLM server.
@@ -896,19 +909,6 @@ def spawn_vllm_and_ensure_healthy(
 
     atexit.register(kill_server)
 
-    # Wait until the /health endpoint returns 200 OK
-    health_url = f"http://127.0.0.1:{port}/health"
-    logger.info("Waiting for vLLM server to become healthy at %s", health_url)
-    while True:
-        try:
-            response = requests.get(health_url, timeout=5)
-            if response.status_code == 200:
-                logger.info("vLLM server is healthy.")
-                break
-        except requests.RequestException as e:
-            logger.warning("Waiting for vLLM server to become healthy: %s", e)
-        time.sleep(1)
-
     return container_name
 
 
@@ -932,13 +932,6 @@ def main(args: Args) -> None:
     hf_token = os.environ["HF_TOKEN"]
     hf_home = os.environ["HF_HOME"]
 
-    buffer = io.StringIO()
-    with redirect_stdout(buffer):
-        show_env()
-    logger.info("Zeus environment information:\n%s", buffer.getvalue())
-
-    zeus_monitor = ZeusMonitor()
-
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
@@ -950,7 +943,28 @@ def main(args: Args) -> None:
     }[args.endpoint_type]
     api_url = f"http://127.0.0.1:{port}{endpoint}"
 
-    # Load the dataset.
+    # Kick off server startup
+    logger.info("Spawning vLLM server...")
+    spawn_vllm(
+        server_image=args.server_image,
+        port=port,
+        model_id=model_id,
+        hf_token=hf_token,
+        hf_home=hf_home,
+        gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
+        max_num_seqs=args.workload.max_num_seqs,
+        log_level="INFO",
+        server_log_filepath=args.workload.to_path(of="server_log"),
+    )
+
+    # Zeus
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        show_env()
+    logger.info("Zeus environment information:\n%s", buffer.getvalue())
+    zeus_monitor = ZeusMonitor()
+
+    # Load the dataset. On its first time, it'll overlap nicely with vLLM startup.
     input_requests = args.workload.load_requests()
 
     # Collect the sampling parameters.
@@ -968,21 +982,22 @@ def main(args: Args) -> None:
     if "temperature" not in sampling_params:
         sampling_params["temperature"] = 0.0  # Default to greedy decoding.
 
+    # Wait until the /health endpoint returns 200 OK
+    health_url = f"http://127.0.0.1:{port}/health"
+    logger.info("Waiting for vLLM server to become healthy at %s", health_url)
+    while True:
+        try:
+            response = requests.get(health_url, timeout=5)
+            if response.status_code == 200:
+                logger.info("vLLM server is healthy.")
+                break
+        except requests.RequestException as e:
+            logger.warning("Waiting for vLLM server to become healthy: %s", e)
+        time.sleep(1)
+
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()
     gc.freeze()
-
-    spawn_vllm_and_ensure_healthy(
-        server_image=args.server_image,
-        port=port,
-        model_id=model_id,
-        hf_token=hf_token,
-        hf_home=hf_home,
-        gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
-        max_num_seqs=args.workload.max_num_seqs,
-        log_level="INFO",
-        server_log_filepath=args.workload.to_path(of="server_log"),
-    )
 
     benchmark_result = asyncio.run(
         benchmark(
@@ -1037,7 +1052,9 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    args = tyro.cli(Args[ImageChat | VideoChat | AudioChat | OmniChat])
+    args = tyro.cli(
+        Args[ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA]
+    )
 
     # Set up the logger so that it logs to both console and file
     logging.basicConfig(

@@ -34,7 +34,8 @@ class SampleRequest(BaseModel):
     """Represents a single inference request for benchmarking.
 
     Args:
-        prompt: The input text prompt for the model.
+        prompt: When it's a `str`, it's the input text prompt for the model.
+            When it's a `list[str]`, it's the history of a multi-turn conversation.
         completion: The expected output text from the model.
         prompt_len: The length of the prompt in tokens.
         expected_output_len: The expected length of the output in tokens.
@@ -42,7 +43,7 @@ class SampleRequest(BaseModel):
         multimodal_content_paths: A list of paths to the original multimodal data files (empty if not dumped).
     """
 
-    prompt: str | Any
+    prompt: str | list[str]
     completion: str
     prompt_len: int
     expected_output_len: int
@@ -158,7 +159,7 @@ class VisionArenaDataset:
         self.dataset_path = dataset_path
         self.dataset_split = dataset_split
         self.random_seed = random_seed
-        self.data = None
+        self.data: Any = None
 
     def load_data(self):
         """Load data from HuggingFace datasets.
@@ -176,7 +177,6 @@ class VisionArenaDataset:
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
-        output_len: int | None = None,
         num_images: int = 1,
         dump_multimodal_dir: Path | None = None,
     ) -> list[SampleRequest]:
@@ -219,9 +219,7 @@ class VisionArenaDataset:
                     prompt=prompt,
                     completion=model_response,
                     prompt_len=prompt_len,
-                    expected_output_len=expected_output_len
-                    if output_len is None
-                    else output_len,
+                    expected_output_len=expected_output_len,
                     multimodal_contents=[mm_content] * num_images,
                     multimodal_content_paths=image_paths,
                 )
@@ -275,7 +273,6 @@ class LLaVAVideoDataset:
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
-        output_len: int | None = None,
         num_videos: int = 1,
         dump_multimodal_dir: Path | None = None,
     ) -> list[SampleRequest]:
@@ -287,7 +284,6 @@ class LLaVAVideoDataset:
         filtered_data = self.data.filter(lambda x: len(x["conversations"]) >= 2)
 
         sampled_requests = []
-        dynamic_output = output_len is None
 
         for item in filtered_data:
             assert isinstance(item, dict), (
@@ -325,15 +321,13 @@ class LLaVAVideoDataset:
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)
             completion_len = len(completion_ids)
-            output_len = completion_len if dynamic_output else output_len
-            assert isinstance(output_len, int) and output_len > 0
 
             sampled_requests.append(
                 SampleRequest(
                     prompt=prompt,
                     completion=completion,
                     prompt_len=prompt_len,
-                    expected_output_len=output_len,
+                    expected_output_len=completion_len,
                     multimodal_contents=[mm_content] * num_videos,
                     multimodal_content_paths=video_paths,
                 )
@@ -370,7 +364,6 @@ class AudioSkillsDataset:
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
-        output_len: int | None = None,
         num_audio: int = 1,
         dump_multimodal_dir: Path | None = None,
     ) -> list[SampleRequest]:
@@ -419,9 +412,7 @@ class AudioSkillsDataset:
                     prompt=prompt,
                     completion=completion,
                     prompt_len=prompt_len,
-                    expected_output_len=expected_output_len
-                    if output_len is None
-                    else output_len,
+                    expected_output_len=expected_output_len,
                     multimodal_contents=[mm_content] * num_audio,
                     multimodal_content_paths=audio_paths,
                 )
@@ -455,10 +446,154 @@ class OmniDataset:
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
-        output_len: int | None = None,
         num_images: int = 1,
         num_videos: int = 1,
         num_audio: int = 1,
         dump_multimodal_dir: Path | None = None,
     ) -> list[SampleRequest]:
         raise NotImplementedError()
+
+
+class LMArenaHumanPreferenceDataset:
+    """LMArena Human Preference dataset for text-only chat."""
+
+    def __init__(
+        self, dataset_path: str, dataset_split: str, random_seed: int = 0
+    ) -> None:
+        """Initialize the LMArena Human Preference dataset."""
+        self.dataset_path = dataset_path
+        self.dataset_split = dataset_split
+        self.random_seed = random_seed
+        self.data = None
+
+    def load_data(self):
+        """Load data from HuggingFace datasets."""
+        data = load_dataset(
+            self.dataset_path,
+            split=self.dataset_split,
+            streaming=True,
+        )
+        return data.shuffle(seed=self.random_seed)
+
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+    ) -> list[SampleRequest]:
+        if self.data is None:
+            self.data = self.load_data()
+
+        requests: list[SampleRequest] = []
+
+        # One request can have more than one turns. So, one request will
+        # create `turn` many requests, where each turn is the concatenation
+        # of all historical user prompts and model responses.
+        for item in self.data:
+            assert isinstance(item, dict), (
+                "Each item in the dataset must be a dictionary."
+            )
+
+            num_turns = item["turn"]
+            conversation = item["conversation_a"]
+
+            for turns in range(num_turns):
+                if len(requests) >= num_requests:
+                    break
+
+                messages = []
+                prompt_len = 0
+                for message in conversation[: 2 * turns + 1]:
+                    content = message["content"]
+                    messages.append(content)
+                    prompt_len += len(tokenizer(content).input_ids)
+                completion = conversation[2 * turns + 1]["content"]
+                completion_len = len(tokenizer(completion).input_ids)
+
+                requests.append(
+                    SampleRequest(
+                        prompt=messages,
+                        completion=completion,
+                        prompt_len=prompt_len,
+                        expected_output_len=completion_len,
+                        multimodal_contents=[],
+                    )
+                )
+
+        maybe_oversample_requests(requests, num_requests, self.random_seed)
+
+        return requests
+
+
+class GPQADataset:
+    """GPQA dataset."""
+
+    def __init__(
+        self, dataset_path: str, dataset_subset: str, random_seed: int
+    ) -> None:
+        self.dataset_path = dataset_path
+        self.dataset_subset = dataset_subset
+        self.random_seed = random_seed
+        self.data: Any = None
+
+    def load_data(self):
+        data = load_dataset(
+            self.dataset_path,
+            self.dataset_subset,
+            split="train",
+            streaming=True,
+        )
+        return data.shuffle(seed=self.random_seed)
+
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+    ) -> list[SampleRequest]:
+        if self.data is None:
+            self.data = self.load_data()
+
+        random.seed(self.random_seed)
+
+        requests: list[SampleRequest] = []
+        for item in self.data:
+            if len(requests) >= num_requests:
+                break
+
+            assert isinstance(item, dict), (
+                "Each item in the dataset must be a dictionary."
+            )
+
+            # Shuffle choices
+            choices = [
+                item["Incorrect Answer 1"].strip(),
+                item["Incorrect Answer 2"].strip(),
+                item["Incorrect Answer 3"].strip(),
+                item["Correct Answer"].strip(),
+            ]
+            answer = choices[-1]
+            random.shuffle(choices)
+
+            question = item["Question"]
+            prompt = f"What is the correct answer to the following question: {question}\n\nChoices:"
+            for letter, choice in zip("ABCD", choices, strict=True):
+                prompt += f"\n({letter}) {choice}"
+
+            answer_letter = choices.index(answer)
+            completion = f"({answer_letter}) " + answer
+
+            prompt_len = len(tokenizer(prompt).input_ids)
+            comp_len = len(tokenizer(completion).input_ids)
+
+            requests.append(
+                SampleRequest(
+                    prompt=prompt,
+                    completion=completion,
+                    prompt_len=prompt_len,
+                    expected_output_len=comp_len,
+                    multimodal_contents=[],
+                )
+            )
+
+        maybe_oversample_requests(requests, num_requests, self.random_seed)
+
+        return requests

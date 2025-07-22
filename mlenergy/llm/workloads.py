@@ -21,6 +21,8 @@ from mlenergy.llm.datasets import (
     LLaVAVideoDataset,
     AudioSkillsDataset,
     OmniDataset,
+    LMArenaHumanPreferenceDataset,
+    GPQADataset,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +42,7 @@ class RequestsFile(BaseModel):
     """
 
     requests: list[SampleRequest]
-    workload: ImageChat | VideoChat | AudioChat | OmniChat
+    workload: ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA
 
 
 class WorkloadConfig(BaseModel):
@@ -339,66 +341,54 @@ class OmniChat(WorkloadConfig):
         return requests
 
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s[%(name)s:%(lineno)d] - %(message)s",
-        datefmt="%H:%M:%S",
-    )
+class LMArenaChat(WorkloadConfig):
+    """Workload using the LMArena human preference dataset."""
 
-    dump_multimodal_data = True
+    dataset_path: str = "lmarena-ai/arena-human-preference-100k"
+    dataset_split: str = "train"
 
-    model_id = "Qwen/Qwen2.5-Omni-7B"
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "lmarena_chat",
+            str(self.num_requests) + "req",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+        ]
 
-    work = ImageChat(
-        base_dir=Path("run/mllm/image_chat") / model_id,
-        num_requests=100,
-        num_images=2,
-        model_id=model_id,
-        max_num_seqs=32,
-    )
-    requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
-    )
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        dataset = LMArenaHumanPreferenceDataset(
+            dataset_path=self.dataset_path,
+            dataset_split=self.dataset_split,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )
 
-    work = VideoChat(
-        base_dir=Path("run/mllm/video_chat") / model_id,
-        num_requests=100,
-        num_videos=1,
-        model_id=model_id,
-        video_data_dir="/turbo/llava_video_178k",
-        max_num_seqs=32,
-    )
 
-    requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
-    )
+class GPQA(WorkloadConfig):
+    """Workload for the GPQA dataset."""
 
-    work = AudioChat(
-        base_dir=Path("run/mllm/audio_chat") / model_id,
-        num_requests=100,
-        num_audios=1,
-        model_id=model_id,
-        audio_data_dir="/turbo/FSD50K.dev_audio",
-        max_num_seqs=32,
-    )
+    dataset_path: str = "Idavidrein/gpqa"
+    dataset_subset: str = "gpqa_extended"
 
-    audio_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(audio_requests), work.to_path(of="requests")
-    )
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "gpqa",
+            str(self.num_requests) + "req",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+        ]
 
-    # work = OmniChatWorkload(
-    #     base_dir=Path("run/mllm/omni") / model_id,
-    #     num_requests=10,
-    #     num_images=1,
-    #     num_videos=1,
-    #     num_audio=2,
-    #     model_id=model_id,
-    #     video_data_dir="/turbo/llava_video_178k",
-    # max_num_seqs=512,
-    # )
-    # omni_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    # print(f"Loaded {len(omni_requests)} requests from {work.to_path(of='requests')}")
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        dataset = GPQADataset(
+            dataset_path=self.dataset_path,
+            dataset_subset=self.dataset_subset,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )

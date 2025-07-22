@@ -4,51 +4,50 @@ Inspired by https://github.com/vllm-project/vllm/blob/8188196a1c/vllm/benchmarks
 """
 
 from __future__ import annotations
-
-import atexit
 import asyncio
-import contextlib
-import gc
-import io
-import sys
-import traceback
-import json
-import logging
-import random
-import time
-import warnings
-import os
-import subprocess
-from contextlib import redirect_stdout
+import atexit
 from collections.abc import AsyncGenerator
+import contextlib
+from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+import gc
+import io
+import json
+import logging
+import os
 from pathlib import Path
+import random
+import resource
+import subprocess
+import sys
+import time
+import traceback
+from typing import Any, Generic, Literal, TypeVar
+import warnings
 
-import tyro
-import requests
-import numpy as np
 import aiohttp
+import numpy as np
 from pydantic import BaseModel
+import requests
 from tqdm.asyncio import tqdm
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from zeus.show_env import show_env
+import tyro
 from zeus.monitor import ZeusMonitor
+from zeus.show_env import show_env
 
 from mlenergy.llm.datasets import SampleRequest
 from mlenergy.llm.workloads import (
-    WorkloadConfig,
-    ImageChat,
-    VideoChat,
     AudioChat,
-    OmniChat,
-    LMArenaChat,
     GPQA,
+    ImageChat,
+    LMArenaChat,
+    OmniChat,
+    VideoChat,
+    WorkloadConfig,
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-VLLM_SPAWN_TIMEOUT = 10 * 60
 
 logger = logging.getLogger("mlenergy.llm.run")
 
@@ -802,14 +801,12 @@ async def benchmark(
         entire_benchmark_energy / token_counter.get_value()
     )
 
-    # here we use the steady state energy per token to estimate per generation energy
-    estimated_request_energies = [
+    # here we use the steady state energy per token to calculate per generation energy
+    request_energies = [
         steady_state_energy_per_token * output_len for output_len in actual_output_lens
     ]
-    estimated_energy_per_generation = (
-        sum(estimated_request_energies) / len(actual_output_lens)
-        if actual_output_lens
-        else 0.0
+    energy_per_generation = (
+        sum(request_energies) / len(actual_output_lens) if actual_output_lens else 0.0
     )
 
     logger.info("[Benchmark results]")
@@ -832,7 +829,7 @@ async def benchmark(
     logger.info(
         "%-40s: %.2f",
         "Estimated energy (J) per generation",
-        estimated_energy_per_generation,
+        energy_per_generation,
     )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
@@ -866,8 +863,8 @@ async def benchmark(
         "errors": [output.error for output in outputs],
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
-        "estimated_energy_per_generation": estimated_energy_per_generation,
-        "estimated_request_energies": estimated_request_energies,
+        "energy_per_generation": energy_per_generation,
+        "request_energies": request_energies,
     }
 
     def process_one_metric(
@@ -982,7 +979,6 @@ def spawn_vllm(
 
 def set_ulimit(target_soft_limit=10000):
     """Set the soft limit for the number of open files (ulimit -n)."""
-    import resource
 
     resource_type = resource.RLIMIT_NOFILE
     current_soft, current_hard = resource.getrlimit(resource_type)
@@ -1036,7 +1032,6 @@ def main(args: Args) -> None:
 
     # Kick off server startup
     logger.info("Spawning vLLM server...")
-    spawn_time_start = time.perf_counter()
     spawn_vllm(
         server_image=args.server_image,
         port=port,
@@ -1086,8 +1081,6 @@ def main(args: Args) -> None:
         except requests.RequestException as e:
             logger.warning("Waiting for vLLM server to become healthy: %s", e)
         time.sleep(1)
-        if time.perf_counter() - spawn_time_start > VLLM_SPAWN_TIMEOUT:
-            raise RuntimeError("vLLM server did not become healthy in time")
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()

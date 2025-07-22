@@ -15,6 +15,5 @@ pyrightconfig.json
 **/.ipynb_checkpoints
 build/
 
-# Data files
-*.log
-figures/
+/run
+/results

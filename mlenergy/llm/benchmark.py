@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import contextlib
 import gc
 import io
 import sys
@@ -47,6 +48,7 @@ from mlenergy.llm.workloads import (
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+VLLM_SPAWN_TIMEOUT = 10 * 60
 
 logger = logging.getLogger("mlenergy.llm.run")
 
@@ -198,9 +200,26 @@ class CounterWaiter:
         await event.wait()
 
 
+class Counter:
+    """A simple counter."""
+
+    def __init__(self) -> None:
+        """Initialize the Counter."""
+        self.current_value = 0
+
+    def increment(self) -> None:
+        """Increment the current value."""
+        self.current_value += 1
+
+    def get_value(self) -> int:
+        """Get the current value of the counter."""
+        return self.current_value
+
+
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
     counter: CounterWaiter,
+    token_counter: Counter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     """The async request function for the OpenAI Completions API.
@@ -297,6 +316,8 @@ async def async_request_openai_completions(
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
 
+                                token_counter.increment()
+
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
                             elif usage := data.get("usage"):
@@ -327,6 +348,7 @@ async def async_request_openai_completions(
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
     counter: CounterWaiter,
+    token_counter: Counter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
@@ -410,6 +432,8 @@ async def async_request_openai_chat_completions(
                                 # Decoding phase
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
+
+                                token_counter.increment()
 
                                 generated_text += content or ""
                             elif usage := data.get("usage"):
@@ -657,7 +681,9 @@ async def benchmark(
     )
 
     test_output = await request_func(
-        request_func_input=test_input, counter=CounterWaiter()
+        request_func_input=test_input,
+        token_counter=Counter(),
+        counter=CounterWaiter(),
     )
     if not test_output.success:
         raise ValueError(
@@ -682,17 +708,21 @@ async def benchmark(
 
     pbar = tqdm(total=len(input_requests))
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+    semaphore = (
+        asyncio.Semaphore(max_concurrency)
+        if max_concurrency
+        else contextlib.nullcontext()
+    )
     counter_waiter = CounterWaiter()
+    token_counter = Counter()
 
     async def limited_request_func(request_func_input, pbar):
-        if semaphore is None:
-            return await request_func(
-                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
-            )
         async with semaphore:
             return await request_func(
-                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
+                request_func_input=request_func_input,
+                token_counter=token_counter,
+                counter=counter_waiter,
+                pbar=pbar,
             )
 
     tasks: list[asyncio.Task] = []
@@ -738,11 +768,14 @@ async def benchmark(
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
     await counter_waiter.wait(max_num_seqs)
+    steady_state_token_begin = token_counter.get_value()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
     await counter_waiter.wait(workload.num_requests - max_num_seqs)
+    steady_state_token_end = token_counter.get_value()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
+    steady_state_tokens = steady_state_token_end - steady_state_token_begin
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
@@ -763,17 +796,49 @@ async def benchmark(
 
     steady_state_time = steady_state_mes.time
     steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+    steady_state_energy_per_token = steady_state_energy / steady_state_tokens
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
+    entire_benchmark_energy_per_token = (
+        entire_benchmark_energy / token_counter.get_value()
+    )
+
+    # here we use the steady state energy per token to estimate per generation energy
+    estimated_request_energies = [
+        steady_state_energy_per_token * output_len for output_len in actual_output_lens
+    ]
+    estimated_energy_per_generation = (
+        sum(estimated_request_energies) / len(actual_output_lens)
+        if actual_output_lens
+        else 0.0
+    )
 
     logger.info("[Benchmark results]")
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
+    logger.info(
+        "%-40s: %.2f",
+        "Benchmark total energy (J) per token",
+        entire_benchmark_energy_per_token,
+    )
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+    logger.info(
+        "%-40s: %.2f",
+        "Steady state energy (J) per token",
+        steady_state_energy_per_token,
+    )
+    logger.info(
+        "%-40s: %.2f",
+        "Estimated energy (J) per generation",
+        estimated_energy_per_generation,
+    )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
+    logger.info(
+        "%-40s: %d", "Total generated tokens counted", token_counter.get_value()
+    )
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
     logger.info(
         "%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput
@@ -787,6 +852,7 @@ async def benchmark(
         "completed": metrics.completed,
         "steady_state_duration": steady_state_time,
         "steady_state_energy": steady_state_energy,
+        "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
         "request_throughput": metrics.request_throughput,
@@ -800,6 +866,8 @@ async def benchmark(
         "errors": [output.error for output in outputs],
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
+        "estimated_energy_per_generation": estimated_energy_per_generation,
+        "estimated_request_energies": estimated_request_energies,
     }
 
     def process_one_metric(
@@ -912,10 +980,33 @@ def spawn_vllm(
     return container_name
 
 
+def set_ulimit(target_soft_limit=10000):
+    """Set the soft limit for the number of open files (ulimit -n)."""
+    import resource
+
+    resource_type = resource.RLIMIT_NOFILE
+    current_soft, current_hard = resource.getrlimit(resource_type)
+
+    if current_soft < target_soft_limit:
+        try:
+            resource.setrlimit(resource_type, (target_soft_limit, current_hard))
+        except ValueError as e:
+            logger.warning(
+                "Found ulimit of %s and failed to automatically increase "
+                "with error %s. This can cause fd limit errors like "
+                "`OSError: [Errno 24] Too many open files`. Consider "
+                "increasing with ulimit -n",
+                current_soft,
+                e,
+            )
+
+
 def main(args: Args) -> None:
     logger.info("%s", args)
 
     assert isinstance(args.workload, WorkloadConfig)
+
+    set_ulimit()
 
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
@@ -945,6 +1036,7 @@ def main(args: Args) -> None:
 
     # Kick off server startup
     logger.info("Spawning vLLM server...")
+    spawn_time_start = time.perf_counter()
     spawn_vllm(
         server_image=args.server_image,
         port=port,
@@ -994,6 +1086,8 @@ def main(args: Args) -> None:
         except requests.RequestException as e:
             logger.warning("Waiting for vLLM server to become healthy: %s", e)
         time.sleep(1)
+        if time.perf_counter() - spawn_time_start > VLLM_SPAWN_TIMEOUT:
+            raise RuntimeError("vLLM server did not become healthy in time")
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()

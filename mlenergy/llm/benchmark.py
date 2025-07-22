@@ -147,7 +147,7 @@ class BenchmarkMetrics:
 class RequestFuncInput:
     """The input for the request function."""
 
-    prompt: str
+    prompt: str | list[str]
     api_url: str
     prompt_len: int
     output_len: int | None
@@ -221,6 +221,12 @@ async def async_request_openai_completions(
         raise ValueError(
             "OpenAI Completions API does not support multimodal contents. "
             "Use OpenAI Chat Completions API instead."
+        )
+
+    if not isinstance(request_func_input.prompt, str):
+        raise ValueError(
+            "OpenAI Completions API only supports single string prompt, "
+            "not a list of strings."
         )
 
     async with aiohttp.ClientSession(
@@ -328,17 +334,26 @@ async def async_request_openai_chat_completions(
         "OpenAI Chat Completions API URL must end with 'chat/completions'."
     )
 
+    if isinstance(request_func_input.prompt, str):
+        content = [{"type": "text", "text": request_func_input.prompt}]
+        content.extend(request_func_input.multimodal_contents or [])
+        messages = [{"role": "user", "content": content}]
+    else:
+        content = [{"type": "text", "text": request_func_input.prompt[0]}]
+        content.extend(request_func_input.multimodal_contents or [])
+        messages = [{"role": "user", "content": content}]
+        for i, prompt in enumerate(request_func_input.prompt[1:]):
+            role = "user" if i % 2 == 1 else "assistant"
+            messages.append(
+                {"role": role, "content": [{"type": "text", "text": prompt}]}
+            )
+
     async with aiohttp.ClientSession(
         trust_env=True, timeout=AIOHTTP_TIMEOUT
     ) as session:
-        content = [{"type": "text", "text": request_func_input.prompt}]
-        if request_func_input.multimodal_contents:
-            content.extend(request_func_input.multimodal_contents)
         payload = {
             "model": request_func_input.model,
-            "messages": [
-                {"role": "user", "content": content},
-            ],
+            "messages": messages,
             "temperature": 0.0,
             "stream": True,
             "stream_options": {
@@ -632,7 +647,7 @@ async def benchmark(
     assert test_mm_content is None or isinstance(test_mm_content, list)
     test_input = RequestFuncInput(
         model=model_id,
-        prompt=test_prompt,
+        prompt=test_prompt if isinstance(test_prompt, str) else test_prompt[0],
         api_url=api_url,
         prompt_len=test_prompt_len,
         output_len=20,

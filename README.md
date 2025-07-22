@@ -9,7 +9,7 @@
 ulimit -n 10000
 ```
 
-- Python setup
+- Python setup (using `uv`)
 
 ```bash
 # Install the project in a new uv-managed virtual environment
@@ -25,7 +25,7 @@ source .venv/bin/activate
 
 ```bash
 # This assumes the existence of extracted video/audio datasets.
-python -m mlenergy.llm.workloads
+python tests/llm/workloads.py
 ```
 
 - Running the benchmark

@@ -344,7 +344,7 @@ class OmniChat(WorkloadConfig):
 class LMArenaChat(WorkloadConfig):
     """Workload using the LMArena human preference dataset."""
 
-    dataset_path: str = "lmarena-ai/arena-human-preference-100k",
+    dataset_path: str = "lmarena-ai/arena-human-preference-100k"
     dataset_split: str = "train"
 
     def to_filename_parts(self) -> list[str]:
@@ -353,6 +353,7 @@ class LMArenaChat(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
+            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -370,8 +371,8 @@ class LMArenaChat(WorkloadConfig):
 class GPQA(WorkloadConfig):
     """Workload for the GPQA dataset."""
 
-    dataset_path: str
-    dataset_split: str = "train"
+    dataset_path: str = "Idavidrein/gpqa"
+    dataset_subset: str = "gpqa_extended"
 
     def to_filename_parts(self) -> list[str]:
         return [
@@ -384,75 +385,10 @@ class GPQA(WorkloadConfig):
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
         dataset = GPQADataset(
             dataset_path=self.dataset_path,
-            dataset_split=self.dataset_split,
+            dataset_subset=self.dataset_subset,
             random_seed=self.seed,
         )
         return dataset.sample(
             tokenizer=self.tokenizer,
             num_requests=self.num_requests,
         )
-
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s[%(name)s:%(lineno)d] - %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    dump_multimodal_data = True
-
-    model_id = "Qwen/Qwen2.5-Omni-7B"
-
-    work = ImageChat(
-        base_dir=Path("run/mllm/image_chat") / model_id,
-        num_requests=100,
-        num_images=2,
-        model_id=model_id,
-        max_num_seqs=32,
-    )
-    requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
-    )
-
-    work = VideoChat(
-        base_dir=Path("run/mllm/video_chat") / model_id,
-        num_requests=100,
-        num_videos=1,
-        model_id=model_id,
-        video_data_dir="/turbo/llava_video_178k",
-        max_num_seqs=32,
-    )
-
-    requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(requests), work.to_path(of="requests")
-    )
-
-    work = AudioChat(
-        base_dir=Path("run/mllm/audio_chat") / model_id,
-        num_requests=100,
-        num_audios=1,
-        model_id=model_id,
-        audio_data_dir="/turbo/FSD50K.dev_audio",
-        max_num_seqs=32,
-    )
-
-    audio_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    logger.info(
-        "Loaded %d requests from %s", len(audio_requests), work.to_path(of="requests")
-    )
-
-    # work = OmniChatWorkload(
-    #     base_dir=Path("run/mllm/omni") / model_id,
-    #     num_requests=10,
-    #     num_images=1,
-    #     num_videos=1,
-    #     num_audio=2,
-    #     model_id=model_id,
-    #     video_data_dir="/turbo/llava_video_178k",
-    # max_num_seqs=512,
-    # )
-    # omni_requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
-    # print(f"Loaded {len(omni_requests)} requests from {work.to_path(of='requests')}")

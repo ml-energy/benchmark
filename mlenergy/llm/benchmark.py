@@ -848,7 +848,7 @@ async def benchmark(
     return result
 
 
-def spawn_vllm_and_ensure_healthy(
+def spawn_vllm(
     server_image: str,
     port: int,
     model_id: str,
@@ -859,7 +859,9 @@ def spawn_vllm_and_ensure_healthy(
     log_level: str,
     server_log_filepath: Path,
 ) -> str:
-    """Spawn vLLM server and ensure it is healthy.
+    """Spawn vLLM server.
+
+    This does not wait for the server to be ready.
 
     Retuens:
         The container name of the spawned vLLM server.
@@ -907,19 +909,6 @@ def spawn_vllm_and_ensure_healthy(
 
     atexit.register(kill_server)
 
-    # Wait until the /health endpoint returns 200 OK
-    health_url = f"http://127.0.0.1:{port}/health"
-    logger.info("Waiting for vLLM server to become healthy at %s", health_url)
-    while True:
-        try:
-            response = requests.get(health_url, timeout=5)
-            if response.status_code == 200:
-                logger.info("vLLM server is healthy.")
-                break
-        except requests.RequestException as e:
-            logger.warning("Waiting for vLLM server to become healthy: %s", e)
-        time.sleep(1)
-
     return container_name
 
 
@@ -943,13 +932,6 @@ def main(args: Args) -> None:
     hf_token = os.environ["HF_TOKEN"]
     hf_home = os.environ["HF_HOME"]
 
-    buffer = io.StringIO()
-    with redirect_stdout(buffer):
-        show_env()
-    logger.info("Zeus environment information:\n%s", buffer.getvalue())
-
-    zeus_monitor = ZeusMonitor()
-
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
@@ -961,7 +943,28 @@ def main(args: Args) -> None:
     }[args.endpoint_type]
     api_url = f"http://127.0.0.1:{port}{endpoint}"
 
-    # Load the dataset.
+    # Kick off server startup
+    logger.info("Spawning vLLM server...")
+    spawn_vllm(
+        server_image=args.server_image,
+        port=port,
+        model_id=model_id,
+        hf_token=hf_token,
+        hf_home=hf_home,
+        gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
+        max_num_seqs=args.workload.max_num_seqs,
+        log_level="INFO",
+        server_log_filepath=args.workload.to_path(of="server_log"),
+    )
+
+    # Zeus
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        show_env()
+    logger.info("Zeus environment information:\n%s", buffer.getvalue())
+    zeus_monitor = ZeusMonitor()
+
+    # Load the dataset. On its first time, it'll overlap nicely with vLLM startup.
     input_requests = args.workload.load_requests()
 
     # Collect the sampling parameters.
@@ -979,21 +982,22 @@ def main(args: Args) -> None:
     if "temperature" not in sampling_params:
         sampling_params["temperature"] = 0.0  # Default to greedy decoding.
 
+    # Wait until the /health endpoint returns 200 OK
+    health_url = f"http://127.0.0.1:{port}/health"
+    logger.info("Waiting for vLLM server to become healthy at %s", health_url)
+    while True:
+        try:
+            response = requests.get(health_url, timeout=5)
+            if response.status_code == 200:
+                logger.info("vLLM server is healthy.")
+                break
+        except requests.RequestException as e:
+            logger.warning("Waiting for vLLM server to become healthy: %s", e)
+        time.sleep(1)
+
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()
     gc.freeze()
-
-    spawn_vllm_and_ensure_healthy(
-        server_image=args.server_image,
-        port=port,
-        model_id=model_id,
-        hf_token=hf_token,
-        hf_home=hf_home,
-        gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
-        max_num_seqs=args.workload.max_num_seqs,
-        log_level="INFO",
-        server_log_filepath=args.workload.to_path(of="server_log"),
-    )
 
     benchmark_result = asyncio.run(
         benchmark(

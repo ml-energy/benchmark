@@ -4,46 +4,47 @@ Inspired by https://github.com/vllm-project/vllm/blob/8188196a1c/vllm/benchmarks
 """
 
 from __future__ import annotations
-
-import atexit
 import asyncio
-import gc
-import io
-import sys
-import traceback
-import json
-import logging
-import random
-import time
-import warnings
-import os
-import subprocess
-from contextlib import redirect_stdout
+import atexit
 from collections.abc import AsyncGenerator
+import contextlib
+from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+import gc
+import io
+import json
+import logging
+import os
 from pathlib import Path
+import random
+import resource
+import subprocess
+import sys
+import time
+import traceback
+from typing import Any, Generic, Literal, TypeVar
+import warnings
 
-import tyro
-import requests
-import numpy as np
 import aiohttp
+import numpy as np
 from pydantic import BaseModel
+import requests
 from tqdm.asyncio import tqdm
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from zeus.show_env import show_env
+import tyro
 from zeus.monitor import ZeusMonitor
+from zeus.show_env import show_env
 
 from mlenergy.llm.datasets import SampleRequest
 from mlenergy.llm.workloads import (
-    WorkloadConfig,
-    ImageChat,
-    VideoChat,
     AudioChat,
-    OmniChat,
-    LMArenaChat,
     GPQA,
+    ImageChat,
+    LMArenaChat,
+    OmniChat,
+    VideoChat,
+    WorkloadConfig,
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
@@ -198,9 +199,27 @@ class CounterWaiter:
         await event.wait()
 
 
+class Counter:
+    """A simple counter."""
+
+    def __init__(self) -> None:
+        """Initialize the Counter."""
+        self.current_value = 0
+
+    def increment(self, val: int = 1) -> None:
+        """Increment the current value."""
+        assert val > 0, "Increment value must be positive."
+        self.current_value += val
+
+    def get_value(self) -> int:
+        """Get the current value of the counter."""
+        return self.current_value
+
+
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
     counter: CounterWaiter,
+    token_counter: Counter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     """The async request function for the OpenAI Completions API.
@@ -240,6 +259,7 @@ async def async_request_openai_completions(
             "stream": True,
             "stream_options": {
                 "include_usage": True,
+                "continuous_usage_stats": True,
             },
         }
         if request_func_input.output_len is not None:
@@ -262,6 +282,7 @@ async def async_request_openai_completions(
             ) as response:
                 if response.status == 200:
                     first_chunk_received = False
+                    current_completion_tokens = 0
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
                         if not chunk_bytes:
@@ -299,6 +320,24 @@ async def async_request_openai_completions(
 
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
+                                if usage := data.get("usage"):
+                                    if completion_tokens := usage.get(
+                                        "completion_tokens"
+                                    ):
+                                        if (
+                                            completion_tokens
+                                            != current_completion_tokens
+                                        ):
+                                            inc = (
+                                                completion_tokens
+                                                - current_completion_tokens
+                                            )
+                                            token_counter.increment(inc)
+                                            current_completion_tokens = (
+                                                completion_tokens
+                                            )
+                                            for _ in range(inc - 1):
+                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
                     if first_chunk_received:
@@ -327,6 +366,7 @@ async def async_request_openai_completions(
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
     counter: CounterWaiter,
+    token_counter: Counter,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
@@ -358,6 +398,7 @@ async def async_request_openai_chat_completions(
             "stream": True,
             "stream_options": {
                 "include_usage": True,
+                "continuous_usage_stats": True,
             },
         }
         if request_func_input.output_len is not None:
@@ -382,6 +423,7 @@ async def async_request_openai_chat_completions(
                 url=api_url, json=payload, headers=headers
             ) as response:
                 if response.status == 200:
+                    current_completion_tokens = 0
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
                         if not chunk_bytes:
@@ -412,6 +454,24 @@ async def async_request_openai_chat_completions(
                                     output.itl.append(timestamp - most_recent_timestamp)
 
                                 generated_text += content or ""
+                                if usage := data.get("usage"):
+                                    if completion_tokens := usage.get(
+                                        "completion_tokens"
+                                    ):
+                                        if (
+                                            completion_tokens
+                                            != current_completion_tokens
+                                        ):
+                                            inc = (
+                                                completion_tokens
+                                                - current_completion_tokens
+                                            )
+                                            token_counter.increment(inc)
+                                            current_completion_tokens = (
+                                                completion_tokens
+                                            )
+                                            for _ in range(inc - 1):
+                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
 
@@ -657,7 +717,9 @@ async def benchmark(
     )
 
     test_output = await request_func(
-        request_func_input=test_input, counter=CounterWaiter()
+        request_func_input=test_input,
+        token_counter=Counter(),
+        counter=CounterWaiter(),
     )
     if not test_output.success:
         raise ValueError(
@@ -682,17 +744,21 @@ async def benchmark(
 
     pbar = tqdm(total=len(input_requests))
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+    semaphore = (
+        asyncio.Semaphore(max_concurrency)
+        if max_concurrency
+        else contextlib.nullcontext()
+    )
     counter_waiter = CounterWaiter()
+    token_counter = Counter()
 
     async def limited_request_func(request_func_input, pbar):
-        if semaphore is None:
-            return await request_func(
-                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
-            )
         async with semaphore:
             return await request_func(
-                request_func_input=request_func_input, counter=counter_waiter, pbar=pbar
+                request_func_input=request_func_input,
+                token_counter=token_counter,
+                counter=counter_waiter,
+                pbar=pbar,
             )
 
     tasks: list[asyncio.Task] = []
@@ -738,11 +804,14 @@ async def benchmark(
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
     await counter_waiter.wait(max_num_seqs)
+    steady_state_token_begin = token_counter.get_value()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
     await counter_waiter.wait(workload.num_requests - max_num_seqs)
+    steady_state_token_end = token_counter.get_value()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
+    steady_state_tokens = steady_state_token_end - steady_state_token_begin
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
@@ -763,17 +832,47 @@ async def benchmark(
 
     steady_state_time = steady_state_mes.time
     steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+    steady_state_energy_per_token = steady_state_energy / steady_state_tokens
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
+    entire_benchmark_energy_per_token = (
+        entire_benchmark_energy / token_counter.get_value()
+    )
+
+    # here we use the steady state energy per token to calculate per generation energy
+    request_energies = [
+        steady_state_energy_per_token * output_len for output_len in actual_output_lens
+    ]
+    energy_per_generation = (
+        sum(request_energies) / len(actual_output_lens) if actual_output_lens else 0.0
+    )
 
     logger.info("[Benchmark results]")
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
+    logger.info(
+        "%-40s: %.2f",
+        "Benchmark total energy (J) per token",
+        entire_benchmark_energy_per_token,
+    )
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+    logger.info(
+        "%-40s: %.2f",
+        "Steady state energy (J) per token",
+        steady_state_energy_per_token,
+    )
+    logger.info(
+        "%-40s: %.2f",
+        "Energy (J) per generation",
+        energy_per_generation,
+    )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
+    logger.info(
+        "%-40s: %d", "Total generated tokens counted", token_counter.get_value()
+    )
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
     logger.info(
         "%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput
@@ -787,6 +886,7 @@ async def benchmark(
         "completed": metrics.completed,
         "steady_state_duration": steady_state_time,
         "steady_state_energy": steady_state_energy,
+        "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
         "request_throughput": metrics.request_throughput,
@@ -800,6 +900,8 @@ async def benchmark(
         "errors": [output.error for output in outputs],
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
+        "energy_per_generation": energy_per_generation,
+        "request_energies": request_energies,
     }
 
     def process_one_metric(
@@ -858,6 +960,7 @@ def spawn_vllm(
     max_num_seqs: int,
     log_level: str,
     server_log_filepath: Path,
+    vllm_cache_dir: str | None = None,
 ) -> str:
     """Spawn vLLM server.
 
@@ -882,6 +985,9 @@ def spawn_vllm(
         "-e", f"HF_TOKEN={hf_token}",
         "-e", f"LOG_LEVEL={log_level}",
         "-v", f"{hf_home}:/root/.cache/huggingface",
+        *(
+            ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
+        ),
         server_image,
         "--port", str(port),
         "--model", model_id,
@@ -912,10 +1018,32 @@ def spawn_vllm(
     return container_name
 
 
+def set_ulimit(target_soft_limit=10000):
+    """Set the soft limit for the number of open files (ulimit -n)."""
+
+    resource_type = resource.RLIMIT_NOFILE
+    current_soft, current_hard = resource.getrlimit(resource_type)
+
+    if current_soft < target_soft_limit:
+        try:
+            resource.setrlimit(resource_type, (target_soft_limit, current_hard))
+        except ValueError as e:
+            logger.warning(
+                "Found ulimit of %s and failed to automatically increase "
+                "with error %s. This can cause fd limit errors like "
+                "`OSError: [Errno 24] Too many open files`. Consider "
+                "increasing with ulimit -n",
+                current_soft,
+                e,
+            )
+
+
 def main(args: Args) -> None:
     logger.info("%s", args)
 
     assert isinstance(args.workload, WorkloadConfig)
+
+    set_ulimit()
 
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
@@ -931,6 +1059,8 @@ def main(args: Args) -> None:
     cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
     hf_token = os.environ["HF_TOKEN"]
     hf_home = os.environ["HF_HOME"]
+    # Optional envs
+    vllm_cache_dir = os.environ.get("VLLM_CACHE_DIR", None)
 
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
@@ -955,6 +1085,7 @@ def main(args: Args) -> None:
         max_num_seqs=args.workload.max_num_seqs,
         log_level="INFO",
         server_log_filepath=args.workload.to_path(of="server_log"),
+        vllm_cache_dir=vllm_cache_dir,
     )
 
     # Zeus
@@ -985,15 +1116,27 @@ def main(args: Args) -> None:
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
     logger.info("Waiting for vLLM server to become healthy at %s", health_url)
-    while True:
-        try:
-            response = requests.get(health_url, timeout=5)
-            if response.status_code == 200:
-                logger.info("vLLM server is healthy.")
-                break
-        except requests.RequestException as e:
-            logger.warning("Waiting for vLLM server to become healthy: %s", e)
-        time.sleep(1)
+    tail_handle = subprocess.Popen(
+        ["tail", "-f", args.workload.to_path(of="server_log")]
+    )
+    try:
+        while True:
+            try:
+                response = requests.get(health_url, timeout=5)
+                if response.status_code == 200:
+                    logger.info("vLLM server is healthy.")
+                    break
+            except requests.RequestException as e:
+                logger.warning("Waiting for vLLM server to become healthy: %s", e)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, cleaning up...")
+        tail_handle.terminate()
+        tail_handle.wait()
+        raise
+    finally:
+        tail_handle.terminate()
+        tail_handle.wait()
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()

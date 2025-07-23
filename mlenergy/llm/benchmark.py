@@ -321,11 +321,21 @@ async def async_request_openai_completions(
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
                                 if usage := data.get("usage"):
-                                    if completion_tokens := usage.get("completion_tokens"):
-                                        if completion_tokens != current_completion_tokens:
-                                            inc = completion_tokens - current_completion_tokens
+                                    if completion_tokens := usage.get(
+                                        "completion_tokens"
+                                    ):
+                                        if (
+                                            completion_tokens
+                                            != current_completion_tokens
+                                        ):
+                                            inc = (
+                                                completion_tokens
+                                                - current_completion_tokens
+                                            )
                                             token_counter.increment(inc)
-                                            current_completion_tokens = completion_tokens
+                                            current_completion_tokens = (
+                                                completion_tokens
+                                            )
                                             for _ in range(inc - 1):
                                                 output.itl.append(0)
                             elif usage := data.get("usage"):
@@ -445,11 +455,21 @@ async def async_request_openai_chat_completions(
 
                                 generated_text += content or ""
                                 if usage := data.get("usage"):
-                                    if completion_tokens := usage.get("completion_tokens"):
-                                        if completion_tokens != current_completion_tokens:
-                                            inc = completion_tokens - current_completion_tokens
+                                    if completion_tokens := usage.get(
+                                        "completion_tokens"
+                                    ):
+                                        if (
+                                            completion_tokens
+                                            != current_completion_tokens
+                                        ):
+                                            inc = (
+                                                completion_tokens
+                                                - current_completion_tokens
+                                            )
                                             token_counter.increment(inc)
-                                            current_completion_tokens = completion_tokens
+                                            current_completion_tokens = (
+                                                completion_tokens
+                                            )
                                             for _ in range(inc - 1):
                                                 output.itl.append(0)
                             elif usage := data.get("usage"):
@@ -1096,19 +1116,27 @@ def main(args: Args) -> None:
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
     logger.info("Waiting for vLLM server to become healthy at %s", health_url)
-    server_log_filepath = args.workload.to_path(of="server_log")
-    while True:
-        try:
-            response = requests.get(health_url, timeout=5)
-            if response.status_code == 200:
-                logger.info("vLLM server is healthy.")
-                break
-        except requests.RequestException as e:
-            logger.warning("Waiting for vLLM server to become healthy: %s", e)
-        time.sleep(1)
-        with open(server_log_filepath, "r") as f:
-            lines = f.readlines()
-            logger.info("Server log tail::\n%s", "".join(lines[-5:]))
+    tail_handle = subprocess.Popen(
+        ["tail", "-f", args.workload.to_path(of="server_log")]
+    )
+    try:
+        while True:
+            try:
+                response = requests.get(health_url, timeout=5)
+                if response.status_code == 200:
+                    logger.info("vLLM server is healthy.")
+                    break
+            except requests.RequestException as e:
+                logger.warning("Waiting for vLLM server to become healthy: %s", e)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, cleaning up...")
+        tail_handle.terminate()
+        tail_handle.wait()
+        raise
+    finally:
+        tail_handle.terminate()
+        tail_handle.wait()
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()

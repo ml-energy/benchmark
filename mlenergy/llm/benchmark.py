@@ -74,12 +74,12 @@ class Args(BaseModel, Generic[WorkloadT]):
             results in a more uniform arrival of requests.
         ignore_eos: Whether to ignore the end-of-sequence token in the requests.
             This will lead to all requests generating tokens until they reach
-            their maximum output token parameter in the request.
+            their maximum output token parameter in the request. Default is `False`.
         max_output_tokens: Maximum number of output tokens to set for each request.
             If set to `"dataset"`, `SampleRequest.expected_output_len` is used.
             If set to an integer, all requests are capped to that number. Finally,
             if set to `None`, output length is not capped at all, and some requests
-            might generate forever.
+            might generate forever. Default is `None`.
         top_p: Top-p sampling parameter.
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
@@ -103,7 +103,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     request_rate: float = float("inf")
     burstiness: float = 1.0
     ignore_eos: bool = False
-    max_output_tokens: int | Literal["dataset"] | None = 4096
+    max_output_tokens: int | Literal["dataset"] | None = None
     top_p: float | None = 0.95
     top_k: int | None = None
     min_p: float | None = None
@@ -173,53 +173,65 @@ class RequestFuncOutput:
     error: str = ""
 
 
-class CounterWaiter:
-    """A class that lets you wait for a counter to reach a certain value."""
+class RequestTracker:
+    """Tracks request states and generate tokens.
 
-    def __init__(self) -> None:
+    Start of steady state: When `max_num_seqs` requests have sent back their first
+    output tokens, we assume the server has ramped up to its steady state.
+
+    End of steady state: When `num_requests - max_num_seqs - 1` requests have
+    completely finished, we assume the server has begun ramping down from its steady
+    state. The `-1` is there to end the steady state measurement slightly early
+    to make sure we don't include the ramp down phase at all.
+    """
+
+    def __init__(self, max_num_seqs: int, num_requests: int) -> None:
         """Initialize the CounterWaiter with a target value."""
-        self.current_value = 0
-        self.events: dict[int, asyncio.Event] = {}
+        self.start_event = asyncio.Event()
+        self.end_event = asyncio.Event()
 
-    def increment(self) -> None:
-        """Increment the current value and notify if the target is reached."""
-        self.current_value += 1
-        for target_value, event in list(self.events.items()):
-            if self.current_value >= target_value:
-                event.set()
-                self.events.pop(target_value)
+        self.max_num_seqs = max_num_seqs
+        self.num_requests = num_requests
 
-    async def wait(self, target_value: int) -> None:
-        """Wait until the current value reaches the target value."""
-        if target_value <= self.current_value:
-            return
-        if target_value not in self.events:
-            self.events[target_value] = asyncio.Event()
-        event = self.events[target_value]
-        await event.wait()
+        self.num_generated_tokens = 0
+        self.num_started = 0
+        self.num_finished = 0
 
+    async def wait_start(self) -> None:
+        """Wait until the steady state starts."""
+        await self.start_event.wait()
 
-class Counter:
-    """A simple counter."""
+    async def wait_end(self) -> None:
+        """Wait until the steady state ends."""
+        await self.end_event.wait()
 
-    def __init__(self) -> None:
-        """Initialize the Counter."""
-        self.current_value = 0
+    def notify_request_started(self) -> None:
+        """Notify that a request has started.
 
-    def increment(self, val: int = 1) -> None:
-        """Increment the current value."""
-        assert val > 0, "Increment value must be positive."
-        self.current_value += val
+        This should be called when the first token of the request is received.
+        """
+        self.num_started += 1
+        if self.num_started >= self.max_num_seqs:
+            self.start_event.set()
 
-    def get_value(self) -> int:
-        """Get the current value of the counter."""
-        return self.current_value
+    def notify_tokens_generated(self, num_tokens: int) -> None:
+        """Notify that a token has been generated."""
+        self.num_generated_tokens += num_tokens
+
+    def notify_request_finished(self) -> None:
+        """Notify that a request has finished."""
+        self.num_finished += 1
+        if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
+            self.end_event.set()
+
+    def get_num_generated_tokens(self) -> int:
+        """Get the number of generated tokens."""
+        return self.num_generated_tokens
 
 
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
-    counter: CounterWaiter,
-    token_counter: Counter,
+    request_tracker: RequestTracker,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     """The async request function for the OpenAI Completions API.
@@ -311,7 +323,7 @@ async def async_request_openai_completions(
                                 if not first_chunk_received:
                                     first_chunk_received = True
                                     ttft = time.perf_counter() - st
-                                    counter.increment()
+                                    request_tracker.notify_request_started()
                                     output.ttft = ttft
 
                                 # Decoding phase
@@ -332,7 +344,7 @@ async def async_request_openai_completions(
                                                 completion_tokens
                                                 - current_completion_tokens
                                             )
-                                            token_counter.increment(inc)
+                                            request_tracker.notify_tokens_generated(inc)
                                             current_completion_tokens = (
                                                 completion_tokens
                                             )
@@ -357,6 +369,8 @@ async def async_request_openai_completions(
             output.success = False
             exc_info = sys.exc_info()
             output.error = "".join(traceback.format_exception(*exc_info))
+        finally:
+            request_tracker.notify_request_finished()
 
     if pbar:
         pbar.update(1)
@@ -365,8 +379,7 @@ async def async_request_openai_completions(
 
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
-    counter: CounterWaiter,
-    token_counter: Counter,
+    request_tracker: RequestTracker,
     pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
@@ -446,7 +459,7 @@ async def async_request_openai_chat_completions(
                                 # First token
                                 if ttft == 0.0:
                                     ttft = timestamp - st
-                                    counter.increment()
+                                    request_tracker.notify_request_started()
                                     output.ttft = ttft
 
                                 # Decoding phase
@@ -466,7 +479,7 @@ async def async_request_openai_chat_completions(
                                                 completion_tokens
                                                 - current_completion_tokens
                                             )
-                                            token_counter.increment(inc)
+                                            request_tracker.notify_tokens_generated(inc)
                                             current_completion_tokens = (
                                                 completion_tokens
                                             )
@@ -487,6 +500,8 @@ async def async_request_openai_chat_completions(
             output.success = False
             exc_info = sys.exc_info()
             output.error = "".join(traceback.format_exception(*exc_info))
+        finally:
+            request_tracker.notify_request_finished()
 
     if pbar:
         pbar.update(1)
@@ -718,8 +733,7 @@ async def benchmark(
 
     test_output = await request_func(
         request_func_input=test_input,
-        token_counter=Counter(),
-        counter=CounterWaiter(),
+        request_tracker=RequestTracker(8, 100),
     )
     if not test_output.success:
         raise ValueError(
@@ -749,15 +763,15 @@ async def benchmark(
         if max_concurrency
         else contextlib.nullcontext()
     )
-    counter_waiter = CounterWaiter()
-    token_counter = Counter()
+    request_tracker = RequestTracker(
+        max_num_seqs=max_num_seqs, num_requests=workload.num_requests
+    )
 
     async def limited_request_func(request_func_input, pbar):
         async with semaphore:
             return await request_func(
                 request_func_input=request_func_input,
-                token_counter=token_counter,
-                counter=counter_waiter,
+                request_tracker=request_tracker,
                 pbar=pbar,
             )
 
@@ -803,12 +817,12 @@ async def benchmark(
     # exit the steady state and enter the ramp down phase. Thus, for our steady state
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
-    await counter_waiter.wait(max_num_seqs)
-    steady_state_token_begin = token_counter.get_value()
+    await request_tracker.wait_start()
+    steady_state_token_begin = request_tracker.get_num_generated_tokens()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
-    await counter_waiter.wait(workload.num_requests - max_num_seqs)
-    steady_state_token_end = token_counter.get_value()
+    await request_tracker.wait_end()
+    steady_state_token_end = request_tracker.get_num_generated_tokens()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
     steady_state_tokens = steady_state_token_end - steady_state_token_begin
@@ -835,7 +849,7 @@ async def benchmark(
     steady_state_energy_per_token = steady_state_energy / steady_state_tokens
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
     entire_benchmark_energy_per_token = (
-        entire_benchmark_energy / token_counter.get_value()
+        entire_benchmark_energy / request_tracker.get_num_generated_tokens()
     )
 
     # here we use the steady state energy per token to calculate per generation energy
@@ -846,7 +860,7 @@ async def benchmark(
         sum(request_energies) / len(actual_output_lens) if actual_output_lens else 0.0
     )
 
-    logger.info("[Benchmark results]")
+    logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
@@ -869,9 +883,13 @@ async def benchmark(
         energy_per_generation,
     )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
-    logger.info("%-40s: %d", "Total generated tokens", metrics.total_output)
     logger.info(
-        "%-40s: %d", "Total generated tokens counted", token_counter.get_value()
+        "%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output
+    )
+    logger.info(
+        "%-40s: %d",
+        "Total generated tokens (counted)",
+        request_tracker.get_num_generated_tokens(),
     )
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
     logger.info(
@@ -915,7 +933,7 @@ async def benchmark(
         # This function prints and adds statistics of the specified metric.
         if metric_attribute_name not in selected_percentile_metrics:
             return
-        logger.info("{s:{c}^{n}}".format(s=metric_header, n=50, c="-"))
+        logger.info("{s:{c}^{n}}".format(s=metric_header, n=51, c="-"))
         logger.info(
             "%-40s: %-10.2f",
             f"Mean {metric_name} (ms)",
@@ -1129,11 +1147,6 @@ def main(args: Args) -> None:
             except requests.RequestException as e:
                 logger.warning("Waiting for vLLM server to become healthy: %s", e)
             time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, cleaning up...")
-        tail_handle.terminate()
-        tail_handle.wait()
-        raise
     finally:
         tail_handle.terminate()
         tail_handle.wait()

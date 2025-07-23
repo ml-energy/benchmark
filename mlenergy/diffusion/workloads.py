@@ -112,10 +112,17 @@ class DiffusionWorkloadConfig(BaseModel):
         ]
         return parts
 
-    def load_requests(self) -> DiffusionRequest:
+    def load_requests(self, warmup_iters, benchmark_iters) -> list[DiffusionRequest]:
         """Load the requests from the file specified by the configuration.
 
         If the file does not exist, it will call `sample` to sample new requests.
+        
+        Args:
+            warmup_iters: Number of warmup iterations
+            benchmark_iters: Number of benchmark iterations
+            
+        Returns:
+            List of DiffusionRequest objects, one for each iteration
         """
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         request_path = self.to_path(of="requests")
@@ -123,22 +130,31 @@ class DiffusionWorkloadConfig(BaseModel):
             logger.info(f"Loading cached requests from {request_path}")
             with open(request_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            request = DiffusionRequest(**data)
-            return request
+            # Handle both single request list of requests
+            if isinstance(data, list):
+                requests = [DiffusionRequest(**req_data) for req_data in data]
+            else:
+                requests = [DiffusionRequest(**data)]
+            return requests
         else:
             logger.info(f"Creating new requests for {self.model_id}")
-            request = self.sample()
+            requests = self.sample(warmup_iters + benchmark_iters)
             if local_rank == 0:
                 with open(request_path, 'w', encoding='utf-8') as f:
-                    json.dump(request.model_dump(), f, indent=2, ensure_ascii=False)
-                logger.info(f"Saved {request.batch_size} requests to {request_path}")
-            return request
+                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved {len(requests)} requests to {request_path}")
+            return requests
 
-    def sample(self) -> DiffusionRequest:
+    def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the dataset.
         
         This method should be implemented by subclasses to specify dataset-specific sampling logic.
-        Returns a single DiffusionRequest containing a batch of prompts.
+        
+        Args:
+            num_requests: Total number of DiffusionRequest objects to create
+            
+        Returns:
+            List of DiffusionRequest objects, each potentially with different prompts/seeds
         """
         raise NotImplementedError("Subclasses must implement the sample method")
 
@@ -146,7 +162,7 @@ class DiffusionWorkloadConfig(BaseModel):
 class TextToImage(DiffusionWorkloadConfig):
     """Text-to-image generation workload using open-image-preferences dataset."""
     
-    def sample(self) -> DiffusionRequest:
+    def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the open-image-preferences dataset."""
         logger.info("Loading open-image-preferences-v1 dataset...")
         ds = load_dataset("data-is-better-together/open-image-preferences-v1")
@@ -159,25 +175,40 @@ class TextToImage(DiffusionWorkloadConfig):
                 if prompt is not None and prompt.strip():
                     all_prompts.append(str(prompt).strip())
         
-        # Sample prompts
-        if self.batch_size > len(all_prompts):
-            logger.warning(f"Requested {self.batch_size} requests but only {len(all_prompts)} prompts available")
-            batch_size = len(all_prompts)
-        else:
-            batch_size = self.batch_size
-            
-        selected_prompts = random.sample(all_prompts, batch_size)
+        # Calculate total prompts needed
+        total_prompts_needed = num_requests * self.batch_size
         
-        request = DiffusionRequest(
-            batch_size=self.batch_size,
-            prompts=selected_prompts,
-            height=self.height,
-            width=self.width,
-            inference_steps=self.inference_steps,
-            seed=self.seed,
-        )
-        logger.info(f"Created T2I diffusion request with {len(selected_prompts)} prompts")
-        return request
+        # Sample prompts
+        if total_prompts_needed > len(all_prompts):
+            logger.warning(f"Requested {total_prompts_needed} total prompts but only {len(all_prompts)} prompts available")
+            # Use all available prompts and repeat if needed
+            selected_prompts = all_prompts * ((total_prompts_needed // len(all_prompts)) + 1)
+            selected_prompts = selected_prompts[:total_prompts_needed]
+        else:
+            selected_prompts = random.sample(all_prompts, total_prompts_needed)
+        
+        # Create multiple DiffusionRequest objects
+        requests = []
+        for i in range(num_requests):
+            start_idx = i * self.batch_size
+            end_idx = start_idx + self.batch_size
+            prompts_for_request = selected_prompts[start_idx:end_idx]
+            
+            # Use different seed for each request to ensure variety
+            request_seed = self.seed + i
+            
+            request = DiffusionRequest(
+                batch_size=self.batch_size,
+                prompts=prompts_for_request,
+                height=self.height,
+                width=self.width,
+                inference_steps=self.inference_steps,
+                seed=request_seed,
+            )
+            requests.append(request)
+        
+        logger.info(f"Created {len(requests)} T2I diffusion requests with {self.batch_size} prompts each")
+        return requests
 
 
 class TextToVideo(DiffusionWorkloadConfig):
@@ -205,7 +236,7 @@ if __name__ == "__main__":
         inference_steps=28,
     )
     
-    requests = workload.load_requests()
+    requests = workload.load_requests(warmup_iters=2, benchmark_iters=4)
     logger.info(f"Loaded {len(requests)} requests")
     for i, req in enumerate(requests[:3]):
-        logger.info(f"Request {i+1}: {req.prompt[:100]}...") 
+        logger.info(f"Request {i+1}: {req.prompts[0][:100] if req.prompts else 'No prompts'}...") 

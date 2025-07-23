@@ -127,6 +127,8 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
+    warmup_iters: int = 2
+    benchmark_iters: int = 4
 
     # Results configuration
     overwrite_results: bool = False
@@ -230,21 +232,20 @@ def setup_pipeline(
 
 def get_inference_kwargs(
     request: DiffusionRequest,
-    model_id: str,
     guidance_scale: float,
-    save_images: bool = True
+    args: DiffusionArgs,
 ) -> Any:
     inference_kwargs = {
         "prompt": request.prompts,
-        "height": request.height,
-        "width": request.width,
-        "num_inference_steps": request.inference_steps,
+        "height": args.workload.height,
+        "width": args.workload.width,
+        "num_inference_steps": args.workload.inference_steps,
         "guidance_scale": guidance_scale,
-        "output_type": "pil" if save_images else "latent",
-        "generator": torch.Generator(device="cuda").manual_seed(request.seed),
+        "output_type": "pil" if args.save_images else "latent",
+        "generator": torch.Generator(device="cuda").manual_seed(args.workload.seed),
     }
     
-    model_type = get_model_type_from_id(model_id)
+    model_type = get_model_type_from_id(args.workload.model_id)
     if model_type == "Flux":
         inference_kwargs["max_sequence_length"] = 256
     elif model_type in ["Pixart-alpha", "Pixart-sigma", "HunyuanDiT"]:
@@ -264,10 +265,10 @@ def save_generated_images(
     output: Any,
     request: Any,
     args: DiffusionArgs,
-    output_dir: Path
+    output_dir: Path,
+    iteration_idx: int = 0
 ):
     if args.save_images:
-        # output_dir.mkdir(parents=True, exist_ok=True)
         dp_group_index = get_data_parallel_rank()
         num_dp_groups = get_data_parallel_world_size()
         num_prompts = len(request.prompts)
@@ -277,31 +278,29 @@ def save_generated_images(
             for i, image in enumerate(output.images):
                 image_rank = dp_group_index * dp_batch_size + i
                 if image_rank < num_prompts:
-                     prompt_text = request.prompts[image_rank]
-                     prompt_snippet = prompt_text[:50]
-                     # Remove/replace special characters for safe filename
-                     safe_snippet = "".join(c for c in prompt_snippet if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                     safe_snippet = safe_snippet.replace(' ', '_')[:30]
-                     filename = f"i{image_rank:04d}_{safe_snippet}.png"
-                     image_path = output_dir / filename
-                     image.save(image_path)
-                     logger.info(f"Saved image {image_rank} to {image_path}")
+                    prompt_text = request.prompts[image_rank]
+                    # Extract a clean name from the prompt
+                    words = prompt_text.split()[:5]  # Take first 5 words
+                    safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
+                    safe_name = safe_name.replace(' ', '_').lower()
+                    filename = f"i{iteration_idx}-{image_rank}_{safe_name}.png"
+                    image_path = output_dir / filename
+                    image.save(image_path)
+                    logger.info(f"Saved image {image_rank} of {iteration_idx} to {image_path}")
 
 
 def save_results(
     args: DiffusionArgs,
-    request: Any,
-    output: Any,
     benchmark_duration: float,
-    energy_result: Any = None,
-    image_paths: list[str] = None,
+    total_energy_result: Any = None,
+    iter_energy_results: list[Any] = None,
     local_rank: int = 0
 ) -> None:
     if local_rank != 0:
         return
         
     # Calculate metrics
-    num_images = len(request.prompts)
+    num_images = args.workload.batch_size * args.benchmark_iters
     throughput = num_images / benchmark_duration if benchmark_duration > 0 else 0.0
     avg_time_per_image = benchmark_duration / num_images if num_images > 0 else 0.0
     
@@ -313,12 +312,13 @@ def save_results(
     result_json["date"] = current_dt
     result_json["model_id"] = args.workload.model_id
     result_json["batch_size"] = args.workload.batch_size
+    result_json["num_iterations"] = args.benchmark_iters
     
     # Generation parameters
-    result_json["height"] = request.height
-    result_json["width"] = request.width 
-    result_json["inference_steps"] = request.inference_steps
-    result_json["seed"] = request.seed
+    result_json["height"] = args.workload.height
+    result_json["width"] = args.workload.width 
+    result_json["inference_steps"] = args.workload.inference_steps
+    result_json["seed"] = args.workload.seed
     
     # Performance metrics  
     result_json["total_images"] = num_images
@@ -327,10 +327,13 @@ def save_results(
     result_json["avg_time_per_image"] = avg_time_per_image
     
     # Energy metrics
-    if energy_result:
-        result_json["total_energy"] = energy_result.total_energy
-        result_json["energy_per_image"] = energy_result.total_energy / num_images if num_images > 0 else 0.0
-        result_json["energy_measurement"] = asdict(energy_result)
+    if total_energy_result:
+        result_json["total_energy"] = total_energy_result.total_energy
+        result_json["energy_per_image"] = total_energy_result.total_energy / num_images if num_images > 0 else 0.0
+        result_json["energy_measurement"] = asdict(total_energy_result)
+    
+    for i, iter_energy_result in enumerate(iter_energy_results):
+        result_json[f"iter{i}_energy_measurement"] = asdict(iter_energy_result)
     
     # Configuration details
     result_json["configurations"] = {
@@ -354,9 +357,9 @@ def save_results(
     logger.info("%-40s: %.2f", "Images per Second", throughput)
     logger.info("%-40s: %.2f", "Seconds per Image", avg_time_per_image)
     
-    if energy_result:
-        logger.info("%-40s: %.2f", "Total Energy (J)", energy_result.total_energy)
-        logger.info("%-40s: %.2f", "Energy per Image (J)", energy_result.total_energy / num_images)
+    if total_energy_result:
+        logger.info("%-40s: %.2f", "Total Energy (J)", total_energy_result.total_energy)
+        logger.info("%-40s: %.2f", "Energy per Image (J)", total_energy_result.total_energy / num_images)
 
 
 def main(args: DiffusionArgs) -> None:
@@ -391,9 +394,8 @@ def main(args: DiffusionArgs) -> None:
     np.random.seed(args.workload.seed)
     torch.manual_seed(args.workload.seed)
 
-    # Load input data
-    request = args.workload.load_requests()
-    
+    requests = args.workload.load_requests(args.warmup_iters, args.benchmark_iters)
+
     # Setup xFuser arguments
     logger.info(f"Setting up xFuser args")
     xfuser_args = xFuserArgs(
@@ -404,7 +406,7 @@ def main(args: DiffusionArgs) -> None:
         width=args.workload.width,
         num_inference_steps=args.workload.inference_steps,
         seed=args.workload.seed,
-        prompt=request.prompts,
+        prompt=requests[0].prompts,
         use_torch_compile=args.workload.use_torch_compile,
     )
     engine_config, input_config = xfuser_args.create_config()
@@ -418,48 +420,57 @@ def main(args: DiffusionArgs) -> None:
     pipe, default_inference_steps = setup_pipeline(
         args.workload.model_id, engine_config, input_config, local_rank, args
     )
-    inference_kwargs = get_inference_kwargs(request, args.workload.model_id, input_config.guidance_scale, args.save_images)
 
     logger.info(f"Preparing xFuser pipeline")
     pipe.prepare_run(input_config, steps=input_config.num_inference_steps)
 
-    logger.info(f"Start running diffusion benchmark")
+    # Warmup iterations with different requests
+    logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")
+    output_dir = args.workload.to_path(of="image_outputs")
+    
+    for i in range(args.warmup_iters):
+        logger.info(f"Warmup iteration {i+1}/{args.warmup_iters}")
+        warmup_request = requests[i]
+        warmup_kwargs = get_inference_kwargs(warmup_request, input_config.guidance_scale, args)
+        warmup_output = pipe(**warmup_kwargs)
+        # save_generated_images(pipe, warmup_output, warmup_request, args, output_dir, i)
+
+    # Benchmark iterations with different requests
+    logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
+    iter_energy_results = []
     torch.cuda.synchronize()
     torch.distributed.barrier()
     benchmark_start_time = time.perf_counter()
-
-    if zeus_monitor:
-        zeus_monitor.begin_window("generation")
     
-    output = pipe(**inference_kwargs)
+    if zeus_monitor:
+        zeus_monitor.begin_window("entire_benchmark")
+    
+    for i in range(args.benchmark_iters):
+        request_idx = args.warmup_iters + i
+        benchmark_request = requests[request_idx]
+        benchmark_kwargs = get_inference_kwargs(benchmark_request, input_config.guidance_scale, args)
+        
+        logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
+        if zeus_monitor:
+            zeus_monitor.begin_window("iteration")
+        benchmark_output = pipe(**benchmark_kwargs)
+        if zeus_monitor:
+                iter_energy_results.append(zeus_monitor.end_window("iteration"))
+
+        save_generated_images(pipe, benchmark_output, benchmark_request, args, output_dir, i)
 
     torch.cuda.synchronize()
     torch.distributed.barrier()
 
+    total_energy_result = None
     if zeus_monitor:
-        energy_result = zeus_monitor.end_window("generation")
+        total_energy_result = zeus_monitor.end_window("entire_benchmark")
     
     benchmark_duration = time.perf_counter() - benchmark_start_time
     logger.info(f"End running diffusion benchmark, duration: {benchmark_duration:.2f}s")
 
-    # Save generated images
-    output_dir = args.workload.to_path(of="image_outputs")
-    save_generated_images(
-        pipe=pipe,
-        output=output,
-        request=request,
-        args=args,
-        output_dir=output_dir
-    )
-
     if local_rank == 0:
-        save_results(
-            args=args,
-            request=request,
-            output=output,
-            benchmark_duration=benchmark_duration,
-            energy_result=energy_result,
-        )
+        save_results(args, benchmark_duration, total_energy_result, iter_energy_results)
     
     get_runtime_state().destroy_distributed_env()
 

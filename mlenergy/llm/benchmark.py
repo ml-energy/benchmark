@@ -206,9 +206,10 @@ class Counter:
         """Initialize the Counter."""
         self.current_value = 0
 
-    def increment(self) -> None:
+    def increment(self, val: int = 1) -> None:
         """Increment the current value."""
-        self.current_value += 1
+        assert val > 0, "Increment value must be positive."
+        self.current_value += val
 
     def get_value(self) -> int:
         """Get the current value of the counter."""
@@ -258,6 +259,7 @@ async def async_request_openai_completions(
             "stream": True,
             "stream_options": {
                 "include_usage": True,
+                "continuous_usage_stats": True,
             },
         }
         if request_func_input.output_len is not None:
@@ -280,6 +282,7 @@ async def async_request_openai_completions(
             ) as response:
                 if response.status == 200:
                     first_chunk_received = False
+                    current_completion_tokens = 0
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
                         if not chunk_bytes:
@@ -315,10 +318,16 @@ async def async_request_openai_completions(
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
 
-                                token_counter.increment()
-
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
+                                if usage := data.get("usage"):
+                                    if completion_tokens := usage.get("completion_tokens"):
+                                        if completion_tokens != current_completion_tokens:
+                                            inc = completion_tokens - current_completion_tokens
+                                            token_counter.increment(inc)
+                                            current_completion_tokens = completion_tokens
+                                            for _ in range(inc - 1):
+                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
                     if first_chunk_received:
@@ -379,6 +388,7 @@ async def async_request_openai_chat_completions(
             "stream": True,
             "stream_options": {
                 "include_usage": True,
+                "continuous_usage_stats": True,
             },
         }
         if request_func_input.output_len is not None:
@@ -403,6 +413,7 @@ async def async_request_openai_chat_completions(
                 url=api_url, json=payload, headers=headers
             ) as response:
                 if response.status == 200:
+                    current_completion_tokens = 0
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
                         if not chunk_bytes:
@@ -432,9 +443,15 @@ async def async_request_openai_chat_completions(
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
 
-                                token_counter.increment()
-
                                 generated_text += content or ""
+                                if usage := data.get("usage"):
+                                    if completion_tokens := usage.get("completion_tokens"):
+                                        if completion_tokens != current_completion_tokens:
+                                            inc = completion_tokens - current_completion_tokens
+                                            token_counter.increment(inc)
+                                            current_completion_tokens = completion_tokens
+                                            for _ in range(inc - 1):
+                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
 
@@ -923,6 +940,7 @@ def spawn_vllm(
     max_num_seqs: int,
     log_level: str,
     server_log_filepath: Path,
+    vllm_cache_dir: str | None = None,
 ) -> str:
     """Spawn vLLM server.
 
@@ -947,6 +965,9 @@ def spawn_vllm(
         "-e", f"HF_TOKEN={hf_token}",
         "-e", f"LOG_LEVEL={log_level}",
         "-v", f"{hf_home}:/root/.cache/huggingface",
+        *(
+            ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
+        ),
         server_image,
         "--port", str(port),
         "--model", model_id,
@@ -1018,6 +1039,8 @@ def main(args: Args) -> None:
     cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
     hf_token = os.environ["HF_TOKEN"]
     hf_home = os.environ["HF_HOME"]
+    # Optional envs
+    vllm_cache_dir = os.environ.get("VLLM_CACHE_DIR", None)
 
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
@@ -1042,6 +1065,7 @@ def main(args: Args) -> None:
         max_num_seqs=args.workload.max_num_seqs,
         log_level="INFO",
         server_log_filepath=args.workload.to_path(of="server_log"),
+        vllm_cache_dir=vllm_cache_dir,
     )
 
     # Zeus

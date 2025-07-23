@@ -297,6 +297,8 @@ class LLaVAVideoDataset:
                 continue
 
             mm_data_id = item["video"]
+            if mm_data_id.endswith(".mkv"):
+                continue  # Skip MKV files
 
             extracted_path = self.video_data_dir / mm_data_id
             if not extracted_path.exists():

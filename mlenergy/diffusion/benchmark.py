@@ -251,11 +251,11 @@ def get_inference_kwargs(
     elif model_type in ["Pixart-alpha", "Pixart-sigma", "HunyuanDiT"]:
         inference_kwargs["use_resolution_binning"] = True
     
-    # Add video parameters if present
-    if hasattr(request, 'num_frames') and request.num_frames is not None:
-        inference_kwargs["num_frames"] = request.num_frames
-    if hasattr(request, 'fps') and request.fps is not None:
-        inference_kwargs["fps"] = request.fps
+    # Add video parameters
+    if hasattr(args.workload, 'num_frames'):
+        inference_kwargs["num_frames"] = args.workload.num_frames
+    if hasattr(args.workload, 'fps'):
+        inference_kwargs["fps"] = args.workload.fps
     
     return inference_kwargs
 

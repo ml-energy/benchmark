@@ -16,7 +16,7 @@ from typing import Any, Literal, Self
 from datasets import load_dataset
 from pydantic import BaseModel, model_validator
 
-from mlenergy.diffusion.dataset import DiffusionRequest
+from mlenergy.diffusion.dataset import DiffusionRequest, OpenPreferenceDataset
 from mlenergy.constants import DEFAULT_SEED
 
 logger = logging.getLogger(__name__)
@@ -164,50 +164,12 @@ class TextToImage(DiffusionWorkloadConfig):
     
     def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the open-image-preferences dataset."""
-        logger.info("Loading open-image-preferences-v1 dataset...")
-        ds = load_dataset("data-is-better-together/open-image-preferences-v1")
-        random.seed(self.seed)
-        dataset = ds["cleaned"]
-        all_prompts = []
-        for item in dataset:
-            if isinstance(item, dict) and 'prompt' in item:
-                prompt = item['prompt']
-                if prompt is not None and prompt.strip():
-                    all_prompts.append(str(prompt).strip())
-        
-        # Calculate total prompts needed
-        total_prompts_needed = num_requests * self.batch_size
-        
-        # Sample prompts
-        if total_prompts_needed > len(all_prompts):
-            logger.warning(f"Requested {total_prompts_needed} total prompts but only {len(all_prompts)} prompts available")
-            # Use all available prompts and repeat if needed
-            selected_prompts = all_prompts * ((total_prompts_needed // len(all_prompts)) + 1)
-            selected_prompts = selected_prompts[:total_prompts_needed]
-        else:
-            selected_prompts = random.sample(all_prompts, total_prompts_needed)
-        
-        # Create multiple DiffusionRequest objects
-        requests = []
-        for i in range(num_requests):
-            start_idx = i * self.batch_size
-            end_idx = start_idx + self.batch_size
-            prompts_for_request = selected_prompts[start_idx:end_idx]
-            
-            # Use different seed for each request to ensure variety
-            request_seed = self.seed + i
-            
-            request = DiffusionRequest(
-                batch_size=self.batch_size,
-                prompts=prompts_for_request,
-                height=self.height,
-                width=self.width,
-                inference_steps=self.inference_steps,
-                seed=request_seed,
-            )
-            requests.append(request)
-        
-        logger.info(f"Created {len(requests)} T2I diffusion requests with {self.batch_size} prompts each")
+        dataset = OpenPreferenceDataset(
+            dataset_path="data-is-better-together/open-image-preferences-v1",
+            dataset_split="cleaned",
+            random_seed=self.seed,
+        )
+        requests = dataset.sample(num_requests=num_requests, batch_size=self.batch_size)
         return requests
 
 

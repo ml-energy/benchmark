@@ -34,11 +34,9 @@ from zeus.show_env import show_env
 from xfuser import (
     xFuserArgs,
     xFuserFluxPipeline,
-    xFuserPixArtAlphaPipeline,
     xFuserPixArtSigmaPipeline,
     xFuserStableDiffusion3Pipeline,
     xFuserHunyuanDiTPipeline,
-    xFuserStableDiffusionXLPipeline,
     xFuserArgs
 )
 from xfuser.config import FlexibleArgumentParser
@@ -60,54 +58,32 @@ logger = logging.getLogger("mlenergy.diffusion.run")
 
 WorkloadT = TypeVar("WorkloadT", bound=DiffusionWorkloadConfig)
 
-# Model configurations - map model_id to pipeline and settings
-MODEL_CONFIGS = {
+# Pipeline configurations - map model_id to pipeline
+PIPELINE_CONFIGS = {
     "black-forest-labs/FLUX.1-dev": {
         "pipeline_class": xFuserFluxPipeline,
-        "inference_steps": 28,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
         "dtype": torch.bfloat16,
-        "supports_video": False
-    },
-    "stabilityai/stable-diffusion-xl-base-1.0": {
-        "pipeline_class": xFuserStableDiffusionXLPipeline,
-        "inference_steps": 30,
-        "needs_t5": False,
-        "dtype": torch.float16,
-        "supports_video": False
-    },
-    "PixArt-alpha/PixArt-XL-2-1024-MS": {
-        "pipeline_class": xFuserPixArtAlphaPipeline,
-        "inference_steps": 20,
-        "needs_t5": False,
-        "dtype": torch.float16,
-        "supports_video": False
     },
     "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
         "pipeline_class": xFuserPixArtSigmaPipeline,
-        "inference_steps": 20,
         "needs_t5": True,
         "t5_subfolder": "text_encoder",
-        "dtype": torch.float16,
-        "supports_video": False
+        "dtype": torch.bfloat16,
     },
     "stabilityai/stable-diffusion-3-medium-diffusers": {
         "pipeline_class": xFuserStableDiffusion3Pipeline,
-        "inference_steps": 20,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_3",
-        "dtype": torch.float16,
-        "supports_video": False
+        "dtype": torch.bfloat16,
     },
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "pipeline_class": xFuserHunyuanDiTPipeline,
-        "inference_steps": 50,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
-        "dtype": torch.float16,
-        "supports_video": False
-    }
+        "dtype": torch.bfloat16,
+    },
 }
 
 
@@ -160,22 +136,21 @@ def get_model_type_from_id(model_id: str) -> str:
 def setup_pipeline(
     model_id: str,
     engine_config: Any,
-    input_config: Any,
     local_rank: int,
     args: DiffusionArgs
 ) -> tuple[Any, int]:
     """Setup the appropriate pipeline based on model_id."""
-    if model_id not in MODEL_CONFIGS:
+    if model_id not in PIPELINE_CONFIGS:
         raise ValueError(f"Unsupported model_id: {model_id}")
     
-    config = MODEL_CONFIGS[model_id]
+    config = PIPELINE_CONFIGS[model_id]
 
     cache_args = {
         "use_teacache": False,
         "use_fbcache": False,
         "rel_l1_thresh": 0.12,
         "return_hidden_states_first": False,
-        "num_steps": input_config.num_inference_steps,
+        "num_steps": args.workload.inference_steps,
     }
     
     # Handle T5 encoder if needed
@@ -187,15 +162,7 @@ def setup_pipeline(
             torch_dtype=config["dtype"]
         )
 
-        model_type = get_model_type_from_id(model_id)
-        if model_type == "Flux":
-            text_encoder_kwargs["text_encoder_2"] = text_encoder
-        elif model_type == "Sd3":
-            text_encoder_kwargs["text_encoder_3"] = text_encoder
-        elif model_type == "HunyuanDiT":
-            text_encoder_kwargs["text_encoder_2"] = text_encoder
-        elif model_type == "Pixart-sigma":
-            text_encoder_kwargs["text_encoder"] = text_encoder
+        text_encoder_kwargs[config["t5_subfolder"]] = text_encoder
     
     # if args.use_fp8_t5_encoder:
     #     try:
@@ -227,7 +194,7 @@ def setup_pipeline(
     # else:
     pipe = pipe.to(f"cuda:{local_rank}")
 
-    return pipe, config["inference_steps"]
+    return pipe
 
 
 def get_inference_kwargs(
@@ -417,12 +384,10 @@ def main(args: DiffusionArgs) -> None:
 
     # Setup xFuser pipeline
     logger.info(f"Setting up xFuser pipeline")
-    pipe, default_inference_steps = setup_pipeline(
-        args.workload.model_id, engine_config, input_config, local_rank, args
-    )
+    pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
 
     logger.info(f"Preparing xFuser pipeline")
-    pipe.prepare_run(input_config, steps=input_config.num_inference_steps)
+    pipe.prepare_run(input_config, steps=args.workload.inference_steps)
 
     # Warmup iterations with different requests
     logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")

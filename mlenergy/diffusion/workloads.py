@@ -11,7 +11,7 @@ import logging
 import random
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, Optional
 
 from datasets import load_dataset
 from pydantic import BaseModel, model_validator
@@ -20,6 +20,54 @@ from mlenergy.diffusion.dataset import DiffusionRequest, OpenPreferenceDataset
 from mlenergy.constants import DEFAULT_SEED
 
 logger = logging.getLogger(__name__)
+
+
+# Model configurations - map model_id to pipeline and settings
+MODEL_CONFIGS = {
+    "black-forest-labs/FLUX.1-dev": {
+        "inference_steps": 28,
+        "height": 1024,
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
+    "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
+        "inference_steps": 20,
+        "height": 2048,
+        "width": 2048,
+        "num_frames": None,
+        "fps": None,
+    },
+    "stabilityai/stable-diffusion-3-medium-diffusers": {
+        "inference_steps": 20,
+        "height": 1024,
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
+    "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
+        "inference_steps": 50,
+        "height": 1024,
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
+}
+
+
+def get_model_defaults(model_id: str) -> dict[str, Any]:
+    """Get default configuration for a specific model."""
+    if model_id not in MODEL_CONFIGS:
+        raise ValueError(f"Unsupported model_id: {model_id}")
+
+    config = MODEL_CONFIGS[model_id]
+    return {
+        "height": config["height"],
+        "width": config["width"],
+        "inference_steps": config["inference_steps"],
+        "num_frames": config["num_frames"],
+        "fps": config["fps"],
+    }
 
 
 class DiffusionWorkloadConfig(BaseModel):
@@ -46,19 +94,30 @@ class DiffusionWorkloadConfig(BaseModel):
     model_id: str
     batch_size: int
     
-    # Generation parameters
-    height: int = 1024
-    width: int = 1024
-    inference_steps: int = 28
+    # Generation parameters - will use model-specific defaults if not specified
+    height: Optional[int] = None
+    width: Optional[int] = None
+    inference_steps: Optional[int] = None
 
     # Optimization parameters
     use_torch_compile: bool = False
 
     @model_validator(mode="after")
     def _validate_workload(self) -> Self:
-        """Validate the sanity of the workload."""
+        """Validate the sanity of the workload and apply model-specific defaults."""
         if self.batch_size <= 0:
             raise ValueError("Batch size must be positive.")
+        
+        # Apply model-specific defaults for parameters that weren't specified
+        defaults = get_model_defaults(self.model_id)
+
+        if self.height is None:
+            self.height = defaults.get("height", 1024)
+        if self.width is None:
+            self.width = defaults.get("width", 1024)
+        if self.inference_steps is None:
+            self.inference_steps = defaults.get("inference_steps", 28)
+
         return self
 
     def to_path(
@@ -176,9 +235,24 @@ class TextToImage(DiffusionWorkloadConfig):
 class TextToVideo(DiffusionWorkloadConfig):
     """Text-to-video generation workload using EvalCrafter dataset."""
     
-    # Video-specific parameters
-    num_frames: int = 16
-    fps: int = 8
+    # Video-specific parameters - will use model-specific defaults if not specified
+    num_frames: Optional[int] = None
+    fps: Optional[int] = None
+    
+    @model_validator(mode="after")
+    def _validate_video_workload(self) -> Self:
+        """Apply video-specific model defaults."""
+        # Call parent validator first
+        super()._validate_workload()
+        
+        defaults = get_model_defaults(self.model_id)
+        
+        if self.num_frames is None:
+            self.num_frames = defaults.get("num_frames", 16)
+        if self.fps is None:
+            self.fps = defaults.get("fps", 8)
+                
+        return self
 
 
 if __name__ == "__main__":

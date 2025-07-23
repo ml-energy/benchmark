@@ -8,6 +8,7 @@ RUN apt-get update -y \
         git \
         curl \
         wget \
+        build-essential \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

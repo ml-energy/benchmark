@@ -17,6 +17,7 @@ from transformers import AutoTokenizer
 from mlenergy.constants import DEFAULT_SEED
 from mlenergy.llm.datasets import (
     SampleRequest,
+    SourcegraphFIMDataset,
     VisionArenaDataset,
     LLaVAVideoDataset,
     AudioSkillsDataset,
@@ -368,11 +369,39 @@ class LMArenaChat(WorkloadConfig):
         )
 
 
+class SourcegraphFIM(WorkloadConfig):
+    """Workload for the Sourcegraph FIM dataset."""
+
+    dataset_path: str = "sourcegraph/context-aware-fim-code-completions"
+    dataset_split: str = "train"
+
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "sourcegraph_fim",
+            str(self.num_requests) + "req",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+        ]
+
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        """Sample requests."""
+        dataset = SourcegraphFIMDataset(
+            dataset_path=self.dataset_path,
+            dataset_split=self.dataset_split,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )
+
+
 class GPQA(WorkloadConfig):
     """Workload for the GPQA dataset."""
 
     dataset_path: str = "Idavidrein/gpqa"
     dataset_subset: str = "gpqa_extended"
+    dataset_split: str = "train"
 
     def to_filename_parts(self) -> list[str]:
         return [
@@ -386,6 +415,7 @@ class GPQA(WorkloadConfig):
         dataset = GPQADataset(
             dataset_path=self.dataset_path,
             dataset_subset=self.dataset_subset,
+            dataset_split=self.dataset_split,
             random_seed=self.seed,
         )
         return dataset.sample(

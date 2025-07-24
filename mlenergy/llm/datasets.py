@@ -468,11 +468,7 @@ class LMArenaHumanPreferenceDataset:
 
     def load_data(self):
         """Load data from HuggingFace datasets."""
-        data = load_dataset(
-            self.dataset_path,
-            split=self.dataset_split,
-            streaming=True,
-        )
+        data = load_dataset(self.dataset_path, split=self.dataset_split)
         return data.shuffle(seed=self.random_seed)
 
     def sample(
@@ -524,14 +520,104 @@ class LMArenaHumanPreferenceDataset:
         return requests
 
 
+def render_fim_prompt(
+    prefix: str, suffix: str, tokenizer: PreTrainedTokenizerBase
+) -> str:
+    """Render the fill-in-the-middle prompt."""
+    model = tokenizer.name_or_path.lower()
+
+    if (
+        model.startswith("qwen/qwen2.5-coder")
+        or model.startswith("qwen/qwen3-coder")
+        or model.startswith("google/codegemma")
+    ):
+        return f"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>"
+
+    if model.startswith("deepseek-ai/deepseek-coder-v2"):
+        return f"<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>"
+
+    if model.startswith("mistralai/codestral"):
+        # Lazy import for something that is needed for one specific code path
+        from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+        from mistral_common.protocol.fim.request import FIMRequest
+
+        request = FIMRequest(prompt=prefix, suffix=suffix)
+        return MistralTokenizer.v3().encode_fim(request).text
+
+    raise NotImplementedError(
+        f"Unsupported model {model} for fill-in-the-middle prompt rendering."
+    )
+
+
+class SourcegraphFIMDataset:
+    """Sourcegraph fill-in-the-middle dataset."""
+
+    def __init__(self, dataset_path: str, dataset_split: str, random_seed: int) -> None:
+        """Initialize the dataset."""
+        self.dataset_path = dataset_path
+        self.dataset_split = dataset_split
+        self.random_seed = random_seed
+        self.data: Any = None
+
+    def load_data(self):
+        """Load data from HuggingFace Hub."""
+        data = load_dataset(self.dataset_path, split=self.dataset_split)
+        return data.shuffle(seed=self.random_seed)
+
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+    ) -> list[SampleRequest]:
+        if self.data is None:
+            self.data = self.load_data()
+
+        random.seed(self.random_seed)
+
+        requests: list[SampleRequest] = []
+        for item in self.data:
+            if len(requests) >= num_requests:
+                break
+
+            assert isinstance(item, dict), (
+                "Each item in the dataset must be a dictionary."
+            )
+
+            prefix, answer, suffix = item["prefix"], item["middle"], item["suffix"]
+            prompt = render_fim_prompt(prefix, suffix, tokenizer)
+
+            prompt_len = len(tokenizer(prompt).input_ids)
+            answer_len = len(tokenizer(answer).input_ids)
+
+            requests.append(
+                SampleRequest(
+                    prompt=prompt,
+                    completion=answer,
+                    prompt_len=prompt_len,
+                    expected_output_len=answer_len,
+                    multimodal_contents=[],
+                )
+            )
+
+        maybe_oversample_requests(requests, num_requests, self.random_seed)
+
+        return requests
+
+
 class GPQADataset:
     """GPQA dataset."""
 
     def __init__(
-        self, dataset_path: str, dataset_subset: str, random_seed: int
+        self,
+        dataset_path: str,
+        dataset_subset: str,
+        dataset_split: str,
+        random_seed: int,
     ) -> None:
+        """Initialize the dataset."""
         self.dataset_path = dataset_path
         self.dataset_subset = dataset_subset
+        self.dataset_split = dataset_split
         self.random_seed = random_seed
         self.data: Any = None
 
@@ -539,7 +625,7 @@ class GPQADataset:
         data = load_dataset(
             self.dataset_path,
             self.dataset_subset,
-            split="train",
+            split=self.dataset_split,
             streaming=True,
         )
         return data.shuffle(seed=self.random_seed)

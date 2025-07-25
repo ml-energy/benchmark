@@ -19,6 +19,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.12.14",
     "datasets>=4.0.0",
+    "mistral-common>=1.8.2",
     "pillow>=11.3.0",
     "pydantic>=2.11.7",
     "requests>=2.32.4",

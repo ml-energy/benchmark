@@ -162,6 +162,7 @@ class RequestFuncInput:
 class RequestFuncOutput:
     """The output of the request function including metrics."""
 
+    prompt: str | list[str] = ""
     generated_text: str = ""
     success: bool = False
     latency: float = 0.0
@@ -283,6 +284,7 @@ async def async_request_openai_completions(
         headers = {}
 
         output = RequestFuncOutput()
+        output.prompt = request_func_input.prompt
         output.prompt_len = request_func_input.prompt_len
 
         generated_text = ""
@@ -425,6 +427,7 @@ async def async_request_openai_chat_completions(
         }
 
         output = RequestFuncOutput()
+        output.prompt = request_func_input.prompt
         output.prompt_len = request_func_input.prompt_len
 
         generated_text = ""
@@ -853,12 +856,9 @@ async def benchmark(
     )
 
     # here we use the steady state energy per token to calculate per generation energy
-    request_energies = [
+    energy_per_generation = [
         steady_state_energy_per_token * output_len for output_len in actual_output_lens
     ]
-    energy_per_generation = (
-        sum(request_energies) / len(actual_output_lens) if actual_output_lens else 0.0
-    )
 
     logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
@@ -876,11 +876,6 @@ async def benchmark(
         "%-40s: %.2f",
         "Steady state energy (J) per token",
         steady_state_energy_per_token,
-    )
-    logger.info(
-        "%-40s: %.2f",
-        "Energy (J) per generation",
-        energy_per_generation,
     )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info(
@@ -910,16 +905,27 @@ async def benchmark(
         "request_throughput": metrics.request_throughput,
         "output_throughput": metrics.output_throughput,
         "total_token_throughput": metrics.total_token_throughput,
-        "input_lens": [output.prompt_len for output in outputs],
-        "output_lens": actual_output_lens,
-        "ttfts": [output.ttft for output in outputs],
-        "itls": [output.itl for output in outputs],
-        "generated_texts": [output.generated_text for output in outputs],
-        "errors": [output.error for output in outputs],
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
-        "energy_per_generation": energy_per_generation,
-        "request_energies": request_energies,
+        "results": [
+            {
+                "prompt": output.prompt,
+                "generated_text": output.generated_text,
+                "input_len": output.prompt_len,
+                "output_len": output_len,
+                "latency": output.latency,
+                "ttft": output.ttft,
+                "itl": output.itl,
+                "error": output.error,
+                "energy": energy,
+            }
+            for output, output_len, energy in zip(
+                outputs,
+                actual_output_lens,
+                energy_per_generation,
+                strict=True,
+            )
+        ],
     }
 
     def process_one_metric(

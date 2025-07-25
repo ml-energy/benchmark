@@ -4,35 +4,35 @@ Inspired by https://github.com/vllm-project/vllm/blob/8188196a1c/vllm/benchmarks
 """
 
 from __future__ import annotations
+
 import asyncio
 import atexit
-from collections.abc import AsyncGenerator
 import contextlib
-from contextlib import redirect_stdout
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
 import gc
 import io
 import json
 import logging
 import os
-from pathlib import Path
 import random
 import resource
 import subprocess
 import sys
 import time
-import traceback
-from typing import Any, Generic, Literal, TypeVar
 import warnings
+import traceback
+from collections.abc import AsyncGenerator
+from typing import Any, Generic, Literal, TypeVar
+from contextlib import redirect_stdout
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
 
 import aiohttp
-import numpy as np
-from pydantic import BaseModel
-import requests
-from tqdm.asyncio import tqdm
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 import tyro
+import numpy as np
+import requests
+from pydantic import BaseModel
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from zeus.monitor import ZeusMonitor
 from zeus.show_env import show_env
 
@@ -186,13 +186,14 @@ class RequestTracker:
     to make sure we don't include the ramp down phase at all.
     """
 
-    def __init__(self, max_num_seqs: int, num_requests: int) -> None:
+    def __init__(self, max_num_seqs: int, num_requests: int, log: bool = True) -> None:
         """Initialize the CounterWaiter with a target value."""
         self.start_event = asyncio.Event()
         self.end_event = asyncio.Event()
 
         self.max_num_seqs = max_num_seqs
         self.num_requests = num_requests
+        self.log = log
 
         self.num_generated_tokens = 0
         self.num_started = 0
@@ -224,6 +225,13 @@ class RequestTracker:
         self.num_finished += 1
         if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
             self.end_event.set()
+        if self.log:
+            logger.info(
+                "%d/%d requests finished with %d cumulative tokens generated across all requests.",
+                self.num_finished,
+                self.num_requests,
+                self.num_generated_tokens,
+            )
 
     def get_num_generated_tokens(self) -> int:
         """Get the number of generated tokens."""
@@ -233,13 +241,12 @@ class RequestTracker:
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
     request_tracker: RequestTracker,
-    pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     """The async request function for the OpenAI Completions API.
 
     Args:
         request_func_input: The input for the request function.
-        pbar: The progress bar to display the progress.
+        request_tracker: Tracks request states and generated tokens.
 
     Returns:
         The output of the request function.
@@ -374,15 +381,12 @@ async def async_request_openai_completions(
         finally:
             request_tracker.notify_request_finished()
 
-    if pbar:
-        pbar.update(1)
     return output
 
 
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
     request_tracker: RequestTracker,
-    pbar: tqdm | None = None,
 ) -> RequestFuncOutput:
     api_url = request_func_input.api_url
     assert api_url.endswith(("chat/completions", "profile")), (
@@ -506,8 +510,6 @@ async def async_request_openai_chat_completions(
         finally:
             request_tracker.notify_request_finished()
 
-    if pbar:
-        pbar.update(1)
     return output
 
 
@@ -736,7 +738,7 @@ async def benchmark(
 
     test_output = await request_func(
         request_func_input=test_input,
-        request_tracker=RequestTracker(8, 100),
+        request_tracker=RequestTracker(8, 100, log=False),
     )
     if not test_output.success:
         raise ValueError(
@@ -744,7 +746,19 @@ async def benchmark(
             f"are correctly specified. Error: {test_output.error}"
         )
     else:
-        logger.info("Initial test run completed. Starting main benchmark run...")
+        logger.info("Initial test run completed. Starting warmup...")
+
+    # Warmup
+    await asyncio.gather(
+        *[
+            request_func(
+                request_func_input=test_input,
+                request_tracker=RequestTracker(8, 100, log=False),
+            )
+            for _ in range(10)
+        ]
+    )
+    logger.info("Warmup completed. Starting benchmark...")
 
     logger.info("Traffic request rate: %f req/s", request_rate)
 
@@ -759,8 +773,6 @@ async def benchmark(
     if max_concurrency is not None:
         logger.info("Maximum request concurrency: %d", max_concurrency)
 
-    pbar = tqdm(total=len(input_requests))
-
     semaphore = (
         asyncio.Semaphore(max_concurrency)
         if max_concurrency
@@ -770,12 +782,10 @@ async def benchmark(
         max_num_seqs=max_num_seqs, num_requests=workload.num_requests
     )
 
-    async def limited_request_func(request_func_input, pbar):
+    async def limited_request_func(request_func_input):
         async with semaphore:
             return await request_func(
-                request_func_input=request_func_input,
-                request_tracker=request_tracker,
-                pbar=pbar,
+                request_func_input=request_func_input, request_tracker=request_tracker
             )
 
     tasks: list[asyncio.Task] = []
@@ -807,7 +817,7 @@ async def benchmark(
         )
         tasks.append(
             asyncio.create_task(
-                limited_request_func(request_func_input=request_func_input, pbar=pbar)
+                limited_request_func(request_func_input=request_func_input)
             )
         )
 
@@ -832,9 +842,6 @@ async def benchmark(
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
-
-    if pbar is not None:
-        pbar.close()
 
     entire_mes = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
     benchmark_duration = time.perf_counter() - benchmark_start_time
@@ -982,16 +989,17 @@ def spawn_vllm(
     hf_home: str,
     gpu_ids: list[int],
     max_num_seqs: int,
+    max_num_batched_tokens: int | None,
     log_level: str,
     server_log_filepath: Path,
     vllm_cache_dir: str | None = None,
-) -> str:
+) -> list[str]:
     """Spawn vLLM server.
 
     This does not wait for the server to be ready.
 
     Retuens:
-        The container name of the spawned vLLM server.
+        The container names of the spawned vLLM servers.
     """
     gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
     gpu_str = f'"device={gpu_str}"'
@@ -1019,9 +1027,11 @@ def spawn_vllm(
         "--gpu-memory-utilization", "0.95",
         "--trust-remote-code",
         "--max-num-seqs", str(max_num_seqs),
-        # "--max-num-batched-tokens", str(max_num_batched_tokens),
     ]
     # fmt: on
+
+    if max_num_batched_tokens is not None:
+        server_cmd.extend(["--max-num-batched-tokens", str(max_num_batched_tokens)])
 
     logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
     logger.info("vLLM container name: %s", container_name)
@@ -1032,14 +1042,12 @@ def spawn_vllm(
     def kill_server():
         """Kill the vLLM server."""
         logger.info("Killing vLLM server container %s", container_name)
-        subprocess.run(["docker", "kill", container_name])
-        time.sleep(5)
-        subprocess.run(["docker", "rm", container_name])
+        subprocess.run(["docker", "rm", "-f", container_name])
         logger.info("vLLM server container %s killed and removed", container_name)
 
     atexit.register(kill_server)
 
-    return container_name
+    return [container_name]
 
 
 def set_ulimit(target_soft_limit=10000):
@@ -1099,7 +1107,7 @@ def main(args: Args) -> None:
 
     # Kick off server startup
     logger.info("Spawning vLLM server...")
-    spawn_vllm(
+    container_names = spawn_vllm(
         server_image=args.server_image,
         port=port,
         model_id=model_id,
@@ -1107,10 +1115,12 @@ def main(args: Args) -> None:
         hf_home=hf_home,
         gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
         max_num_seqs=args.workload.max_num_seqs,
+        max_num_batched_tokens=args.workload.max_num_batched_tokens,
         log_level="INFO",
         server_log_filepath=args.workload.to_path(of="server_log"),
         vllm_cache_dir=vllm_cache_dir,
     )
+    logger.info("Started vLLM containers %s", container_names)
 
     # Zeus
     buffer = io.StringIO()
@@ -1144,6 +1154,7 @@ def main(args: Args) -> None:
         ["tail", "-f", args.workload.to_path(of="server_log")]
     )
     try:
+        elapsed_seconds = 0
         while True:
             try:
                 response = requests.get(health_url, timeout=5)
@@ -1152,7 +1163,41 @@ def main(args: Args) -> None:
                     break
             except requests.RequestException as e:
                 logger.warning("Waiting for vLLM server to become healthy: %s", e)
+
             time.sleep(1)
+            elapsed_seconds += 1
+
+            # Check the container state
+            if elapsed_seconds >= 30:
+                for container_name in container_names:
+                    try:
+                        container_running = (
+                            subprocess.check_output(
+                                [
+                                    "docker",
+                                    "inspect",
+                                    "--format='{{json .State.Running}}'",
+                                    container_name,
+                                ]
+                            )
+                            .decode()
+                            .strip()
+                        )
+                    except subprocess.CalledProcessError as e:
+                        logger.exception(
+                            "Failed to inspect container %s: %s", container_name, e
+                        )
+                        raise
+
+                    if container_running != "'true'":
+                        logger.error(
+                            "Container %s seems to have crashed. Check server logs for details: %s",
+                            container_name,
+                            args.workload.to_path(of="server_log"),
+                        )
+                        raise RuntimeError(
+                            f"Container {container_name} seems to have crashed."
+                        )
     finally:
         tail_handle.terminate()
         tail_handle.wait()

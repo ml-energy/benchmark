@@ -59,9 +59,8 @@ class WorkloadConfig(BaseModel):
         seed: Random seed for reproducibility.
         model_id: Model identifier for the model to be used in the benchmark.
         num_requests: Number of requests to sample for the benchmark.
-        max_num_seqs: Maximum number of seuqences config to start vLLM with.
-        max_num_batched_tokens: Maximum number of batched tokens config to start
-            vLLM with. TODO: Investigate its impact on the benchmark.
+        max_num_seqs: vLLM maximum number of seuqences config.
+        max_num_batched_tokens: vLLM maximum number of batched tokens config.
     """
 
     # Input parameters
@@ -72,7 +71,7 @@ class WorkloadConfig(BaseModel):
 
     # Systems parameters
     max_num_seqs: int
-    # max_num_batched_tokens: int
+    max_num_batched_tokens: int | None = None
 
     @model_validator(mode="after")
     def _validate_workoad(self) -> Self:
@@ -192,7 +191,7 @@ class ImageChat(WorkloadConfig):
             str(self.num_images) + "image",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
-            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -231,7 +230,7 @@ class VideoChat(WorkloadConfig):
             str(self.num_videos) + "video",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
-            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -270,7 +269,7 @@ class AudioChat(WorkloadConfig):
             str(self.num_audios) + "audio",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
-            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -318,7 +317,7 @@ class OmniChat(WorkloadConfig):
             str(self.num_audio) + "audio",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
-            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -354,7 +353,7 @@ class LMArenaChat(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
-            # str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -381,6 +380,7 @@ class SourcegraphFIM(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -409,6 +409,7 @@ class GPQA(WorkloadConfig):
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:

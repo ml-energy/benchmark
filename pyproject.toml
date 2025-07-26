@@ -6,9 +6,6 @@ build-backend = "uv_build"
 module-root = ""
 module-name = "mlenergy"
 
-[tool.uv.sources]
-zeus = { git = "https://github.com/ml-energy/zeus", rev = "master" }
-
 [project]
 name = "mlenergy"
 version = "3.0.0"
@@ -28,7 +25,7 @@ dependencies = [
     "requests>=2.32.4",
     "transformers>=4.53.2",
     "tyro>=0.9.26",
-    "zeus>=0.12.0",
+    "zeus>=0.12.1",
 ]
 
 [tool.setuptools.packages.find]

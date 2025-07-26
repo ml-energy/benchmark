@@ -483,7 +483,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.4" },
     { name = "transformers", specifier = ">=4.53.2" },
     { name = "tyro", specifier = ">=0.9.26" },
-    { name = "zeus", specifier = ">=0.12.0" },
+    { name = "zeus", git = "https://github.com/ml-energy/zeus?rev=master" },
 ]
 
 [package.metadata.requires-dev]
@@ -1556,7 +1556,7 @@ wheels = [
 [[package]]
 name = "zeus"
 version = "0.12.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/ml-energy/zeus?rev=master#5642d2f12f55cb167e6731d69f1a01cd2295c97d" }
 dependencies = [
     { name = "amdsmi" },
     { name = "httpx" },
@@ -1568,8 +1568,4 @@ dependencies = [
     { name = "rich" },
     { name = "scikit-learn" },
     { name = "tyro" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/5d/9ab3a06753704b5c4f6b1ae2b4326b9068cccfbb7de23dd42f557a5d1a10/zeus-0.12.0.tar.gz", hash = "sha256:761e18ff08e9270731569ef5536045ac143e64833f04e87aaf49841462e93797", size = 194197, upload-time = "2025-05-17T05:57:24.486Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/e2/250b5e7b167b382d8f3afb6687b473807ac5ddfa13423a51028202c20c5c/zeus-0.12.0-py3-none-any.whl", hash = "sha256:1a8e354781a36fae7af868ef6d02131a48ee9cce770aea6f2bedb5535347ec1d", size = 249777, upload-time = "2025-05-17T05:57:22.647Z" },
 ]

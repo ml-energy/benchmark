@@ -6,6 +6,9 @@ build-backend = "uv_build"
 module-root = ""
 module-name = "mlenergy"
 
+[tool.uv.sources]
+zeus = { git = "https://github.com/ml-energy/zeus", rev = "master" }
+
 [project]
 name = "mlenergy"
 version = "3.0.0"

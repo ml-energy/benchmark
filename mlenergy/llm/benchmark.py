@@ -33,7 +33,7 @@ import numpy as np
 import requests
 from pydantic import BaseModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from zeus.monitor import ZeusMonitor
+from zeus.monitor import ZeusMonitor, PowerMonitor
 from zeus.show_env import show_env
 
 from mlenergy.llm.datasets import SampleRequest
@@ -760,6 +760,9 @@ async def benchmark(
     )
     logger.info("Warmup completed. Starting benchmark...")
 
+    # Zeus power monitor
+    power_monitor = PowerMonitor(update_period=0.03)
+
     logger.info("Traffic request rate: %f req/s", request_rate)
 
     if request_rate == float("inf"):
@@ -789,7 +792,7 @@ async def benchmark(
             )
 
     tasks: list[asyncio.Task] = []
-    benchmark_start_time = time.perf_counter()
+    benchmark_start_time = time.time()
     zeus_monitor.begin_window("entire_benchmark", sync_execution=False)
 
     async for request in get_request(input_requests, request_rate, burstiness):
@@ -831,10 +834,12 @@ async def benchmark(
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
     await request_tracker.wait_start()
+    steady_state_start_time = time.time()
     steady_state_token_begin = request_tracker.get_num_generated_tokens()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
     await request_tracker.wait_end()
+    steady_state_end_time = time.time()
     steady_state_token_end = request_tracker.get_num_generated_tokens()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
@@ -844,7 +849,13 @@ async def benchmark(
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
 
     entire_mes = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
-    benchmark_duration = time.perf_counter() - benchmark_start_time
+    benchmark_end_time = time.time()
+    benchmark_duration = benchmark_end_time - benchmark_start_time
+
+    power_timeline = power_monitor.get_all_power_timelines(
+        start_time=benchmark_start_time,
+        end_time=benchmark_end_time,
+    )
 
     metrics, actual_output_lens = calculate_metrics(
         input_requests=input_requests,
@@ -933,6 +944,13 @@ async def benchmark(
                 strict=True,
             )
         ],
+        "power_timeline": {
+            "benchmark_start_time": benchmark_start_time,
+            "benchmark_end_time": benchmark_end_time,
+            "steady_state_start_time": steady_state_start_time,
+            "steady_state_end_time": steady_state_end_time,
+            "power": power_timeline,
+        },
     }
 
     def process_one_metric(

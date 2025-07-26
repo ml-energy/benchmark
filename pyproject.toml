@@ -25,7 +25,7 @@ dependencies = [
     "requests>=2.32.4",
     "transformers>=4.53.2",
     "tyro>=0.9.26",
-    "zeus>=0.12.0",
+    "zeus>=0.12.1",
 ]
 
 [tool.setuptools.packages.find]

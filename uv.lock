@@ -483,7 +483,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.4" },
     { name = "transformers", specifier = ">=4.53.2" },
     { name = "tyro", specifier = ">=0.9.26" },
-    { name = "zeus", specifier = ">=0.12.0" },
+    { name = "zeus", specifier = ">=0.12.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -1555,7 +1555,7 @@ wheels = [
 
 [[package]]
 name = "zeus"
-version = "0.12.0"
+version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "amdsmi" },
@@ -1569,7 +1569,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "tyro" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/5d/9ab3a06753704b5c4f6b1ae2b4326b9068cccfbb7de23dd42f557a5d1a10/zeus-0.12.0.tar.gz", hash = "sha256:761e18ff08e9270731569ef5536045ac143e64833f04e87aaf49841462e93797", size = 194197, upload-time = "2025-05-17T05:57:24.486Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/de/20666580b4589af82655e15f6c9050c6204f765bec29320f95f7a49d8131/zeus-0.12.1.tar.gz", hash = "sha256:d4871c865ea1e17dd144f1d14c9842fe276f1374d38b5911b65b9d2fd9653a31", size = 195921, upload-time = "2025-07-26T22:03:55.77Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/e2/250b5e7b167b382d8f3afb6687b473807ac5ddfa13423a51028202c20c5c/zeus-0.12.0-py3-none-any.whl", hash = "sha256:1a8e354781a36fae7af868ef6d02131a48ee9cce770aea6f2bedb5535347ec1d", size = 249777, upload-time = "2025-05-17T05:57:22.647Z" },
+    { url = "https://files.pythonhosted.org/packages/90/2d/ad2e313d2b8690ace4e3239d2ad8a4fc5708eeaf7f1a202c0bad616e5611/zeus-0.12.1-py3-none-any.whl", hash = "sha256:39c018851f5096f0ac99b9cb2c01e20670308299331a0cbc5add94e5e50a6fc1", size = 251016, upload-time = "2025-07-26T22:03:54.452Z" },
 ]

@@ -45,6 +45,7 @@ from mlenergy.llm.workloads import (
     OmniChat,
     VideoChat,
     WorkloadConfig,
+    LengthControl,
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
@@ -1260,7 +1261,15 @@ def main(args: Args) -> None:
 
 if __name__ == "__main__":
     args = tyro.cli(
-        Args[ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA]
+        Args[
+            ImageChat
+            | VideoChat
+            | AudioChat
+            | OmniChat
+            | LMArenaChat
+            | GPQA
+            | LengthControl
+        ]
     )
 
     # Set up the logger so that it logs to both console and file

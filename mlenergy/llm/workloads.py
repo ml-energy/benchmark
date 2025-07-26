@@ -24,6 +24,7 @@ from mlenergy.llm.datasets import (
     OmniDataset,
     LMArenaHumanPreferenceDataset,
     GPQADataset,
+    ParetoExpDistributionDataset,
 )
 
 if TYPE_CHECKING:
@@ -43,7 +44,15 @@ class RequestsFile(BaseModel):
     """
 
     requests: list[SampleRequest]
-    workload: ImageChat | VideoChat | AudioChat | OmniChat | LMArenaChat | GPQA
+    workload: (
+        ImageChat
+        | VideoChat
+        | AudioChat
+        | OmniChat
+        | LMArenaChat
+        | GPQA
+        | LengthControl
+    )
 
 
 class WorkloadConfig(BaseModel):
@@ -360,6 +369,42 @@ class LMArenaChat(WorkloadConfig):
         dataset = LMArenaHumanPreferenceDataset(
             dataset_path=self.dataset_path,
             dataset_split=self.dataset_split,
+            random_seed=self.seed,
+        )
+        return dataset.sample(
+            tokenizer=self.tokenizer,
+            num_requests=self.num_requests,
+        )
+
+
+class LengthControl(WorkloadConfig):
+    """Workload that generates random strings with controlled input/output token lengths.
+
+    Uses Pareto distribution for input lengths and Exponential distribution for output lengths,
+    and generates synthetic random text.
+    """
+
+    input_mean: float = 500.0
+    output_mean: float = 300.0
+    pareto_a: float = 2.5
+
+    def to_filename_parts(self) -> list[str]:
+        return [
+            "length_control",
+            str(self.num_requests) + "req",
+            str(int(self.input_mean)) + "input_mean",
+            str(int(self.output_mean)) + "output_mean",
+            str(self.pareto_a).replace(".", "_") + "pareto_a",
+            str(self.seed) + "seed",
+            str(self.max_num_seqs) + "max_num_seqs",
+            str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+        ]
+
+    def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
+        dataset = ParetoExpDistributionDataset(
+            input_mean=self.input_mean,
+            output_mean=self.output_mean,
+            pareto_a=self.pareto_a,
             random_seed=self.seed,
         )
         return dataset.sample(

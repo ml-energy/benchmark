@@ -17,7 +17,6 @@ from typing import Any, TYPE_CHECKING
 
 import numpy as np
 from scipy import stats
-from tqdm import tqdm
 from PIL import Image
 from datasets import (
     get_dataset_config_names,
@@ -688,183 +687,134 @@ class GPQADataset:
         return requests
 
 
-class LMArenaParetExpDistDataset:
-    """LMArena Human Preference dataset with Pareto input length and Exponential output length distributions.
-    
-    This dataset samples input lengths from a Pareto distribution and 
-    output lengths from an Exponential distribution, following the 
-    ServeGen stable client pattern. The means of both distributions are configurable.
+class ParetoExpDistributionDataset:
+    """Dataset that generates random strings with controlled input/output token lengths.
+
+    This dataset samples input lengths from a Pareto distribution and output lengths
+    from an Exponential distribution, and generates synthetic random text.
     """
 
     def __init__(
-        self, 
-        dataset_path: str, 
-        dataset_split: str, 
+        self,
         random_seed: int = 0,
         input_mean: float = 500.0,
         output_mean: float = 300.0,
         pareto_a: float = 2.5,
     ) -> None:
-        """Initialize the LMArena Pareto-Exponential dataset.
-        
+        """Initialize the ParetoExpDistributionDataset dataset.
+
         Args:
-            dataset_path: Path to the HuggingFace dataset.
-            dataset_split: Dataset split to use (e.g., 'train', 'test').
             random_seed: Random seed for reproducible sampling.
             input_mean: Mean number of input tokens for Pareto distribution.
             output_mean: Mean number of output tokens for Exponential distribution.
-            pareto_a: Shape parameter for Pareto distribution. 
+            pareto_a: Shape parameter for Pareto distribution.
                 Smaller pareto_a (closer to 1): Heavier tail → more extreme/large values
                 Larger pareto_a: Lighter tail → values concentrated around smaller numbers
         """
-        self.dataset_path = dataset_path
-        self.dataset_split = dataset_split
         self.random_seed = random_seed
-        # self.data = None
-        self.data_by_length = None  # Dict mapping prompt_len -> list of (messages, completion, prompt_len, completion_len)
-        
         self.input_mean = input_mean
         self.pareto_a = pareto_a
         self.output_mean = output_mean
 
         np.random.seed(self.random_seed)
+        random.seed(self.random_seed)
 
         # Generate Pareto distribution for input tokens
         # For Pareto, mean = a * b / (a-1) where a > 1
         # We use a = 2.5, then b = mean * (a-1)/a = mean * 1.5/2.5 = mean * 0.6
-        pareto_b = self.input_mean * (self.pareto_a - 1) / self.pareto_a  # = input_mean * 0.6
+        pareto_b = self.input_mean * (self.pareto_a - 1) / self.pareto_a
         input_pdf = stats.pareto.pdf(np.arange(32768), self.pareto_a, scale=pareto_b)
         self.input_pdf = input_pdf / np.sum(input_pdf)  # Normalize to sum to 1
-        
+
         # Generate Exponential distribution for output tokens
         # For Exponential, mean = 1/lambda
-        exp_lambda = 1/self.output_mean
-        output_pdf = stats.expon.pdf(np.arange(32768), scale=1/exp_lambda)
+        exp_lambda = 1 / self.output_mean
+        output_pdf = stats.expon.pdf(np.arange(32768), scale=1 / exp_lambda)
         self.output_pdf = output_pdf / np.sum(output_pdf)  # Normalize to sum to 1
 
         self.rng = np.random.default_rng(random_seed)
 
-    def load_data(self, tokenizer: PreTrainedTokenizerBase):
-        """Load data from HuggingFace datasets and preprocess by prompt length.
-        
+    def _generate_random_text_with_length(
+        self, tokenizer: PreTrainedTokenizerBase, target_length: int
+    ) -> str:
+        """Generate random text that tokenizes to approximately the target length.
+
         Args:
-            tokenizer: Tokenizer to use for computing prompt lengths.
-        """ 
-        data = load_dataset(
-            self.dataset_path,
-            split=self.dataset_split,
-            streaming=True,
-        )
-        
-        # Group conversations by prompt length
-        data_by_length = {}
-        logger.info(f"Processing {self.dataset_path} dataset by prompt length...")
-        
-        # Try to get dataset length for progress bar
-        try:
-            dataset_len = len(data)
-            progress_bar = tqdm(enumerate(data), total=dataset_len, desc="Processing conversations", unit="items")
-        except (TypeError, AttributeError):
-            if "100k" in self.dataset_path.lower():
-                estimated_total = 100000
-            else:
-                estimated_total = None
-            progress_bar = tqdm(enumerate(data), total=estimated_total, desc="Processing conversations", unit="items")
-        
-        for idx, item in progress_bar:
-            assert isinstance(item, dict), (
-                "Each item in the dataset must be a dictionary."
-            )
-            
-            num_turns = item["turn"]
-            conversation = item["conversation_a"]
-            
-            for turns in range(num_turns):
-                # Build the prompt messages for this turn
-                messages = []
-                prompt_len = 0
-                for message in conversation[: 2 * turns + 1]:
-                    content = message["content"]
-                    messages.append(content)
-                    prompt_len += len(tokenizer(content).input_ids)
-                completion = conversation[2 * turns + 1]["content"]
-                completion_len = len(tokenizer(completion).input_ids)
-                
-                # Group by prompt length
-                if prompt_len not in data_by_length:
-                    data_by_length[prompt_len] = []
-                
-                data_by_length[prompt_len].append({
-                    'messages': messages,
-                    'completion': completion,
-                    'prompt_len': prompt_len,
-                    'completion_len': completion_len
-                })
-        
-        progress_bar.close()
-        logger.info(f"Preprocessed {len(data_by_length)} lengths of conversations")
-        return data_by_length
+            tokenizer: Tokenizer to use for measuring token length.
+            target_length: Target number of tokens.
+
+        Returns:
+            Random text string that tokenizes to approximately target_length tokens.
+        """
+        special_ids = set(tokenizer.all_special_ids)
+
+        def count_tokens(text: str) -> int:
+            return len(tokenizer.encode(text, add_special_tokens=False))
+
+        generated = ""
+        current_len = 0
+        while current_len < target_length:
+            remaining = target_length - current_len
+            chunk_size = min(remaining, 10)
+            # Sample random token IDs, avoiding specials
+            ids = []
+            while len(ids) < chunk_size:
+                token_id = random.randrange(tokenizer.vocab_size)
+                if token_id not in special_ids:
+                    ids.append(token_id)
+            text_chunk = tokenizer.decode(ids, clean_up_tokenization_spaces=True)
+            generated += " " + text_chunk
+            current_len = count_tokens(generated)
+
+        # If overshot, trim tokens to exact target length
+        ids = tokenizer.encode(generated, add_special_tokens=False)
+        trimmed_ids = ids[:target_length]
+        return tokenizer.decode(trimmed_ids, clean_up_tokenization_spaces=True).strip()
 
     def sample(
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
     ) -> list[SampleRequest]:
+        """Sample requests of input/output lengths from distributions."""
         # Pre-compute CDFs for sampling
         cdfs = {
             "input_tokens": np.cumsum(self.input_pdf),
             "output_tokens": np.cumsum(self.output_pdf),
         }
 
-        # Load and preprocess data by length
-        if self.data_by_length is None:
-            self.data_by_length = self.load_data(tokenizer)
-
         requests: list[SampleRequest] = []
-        available_lengths = sorted(self.data_by_length.keys())
-        
-        logger.info(f"Sampling {num_requests} requests")
+        logger.info(
+            f"Generating {num_requests} synthetic requests with sampled lengths"
+        )
+
         for _ in range(num_requests):
             # Sample desired input and output lengths using CDF
             random_values = self.rng.random(2)
             sampled_input_len = np.searchsorted(cdfs["input_tokens"], random_values[0])
-            sampled_output_len = np.searchsorted(cdfs["output_tokens"], random_values[1])
-            sampled_input_len = max(1, sampled_input_len) 
+            sampled_output_len = np.searchsorted(
+                cdfs["output_tokens"], random_values[1]
+            )
+            sampled_input_len = max(1, sampled_input_len)
             sampled_output_len = max(1, sampled_output_len)
-            
-            # Find conversation with exact sampled length, or find the best fit
-            if sampled_input_len in self.data_by_length:
-                # Perfect match - use a conversation with exactly this length
-                conversation_data = self.rng.choice(self.data_by_length[sampled_input_len])
-                final_input_len = sampled_input_len
-                
-            else:
-                # No exact match - find the closest longer conversation
-                longer_lengths = [l for l in available_lengths if l > sampled_input_len]
-                
-                if longer_lengths:
-                    # Use the shortest conversation that's longer than our target
-                    closest_length = min(longer_lengths)
-                    conversation_data = self.rng.choice(self.data_by_length[closest_length])
-                    final_input_len = closest_length
-                    logger.info(f"No perfect match, using closest longer conversation: {sampled_input_len}->{closest_length}")
-                    
-                else:
-                    # All conversations are shorter - find the longest one
-                    longest_length = max(available_lengths)
-                    conversation_data = self.rng.choice(self.data_by_length[longest_length])
-                    final_input_len = longest_length
-                    logger.info(f"No perfect match, using longest conversation: {sampled_input_len}->{longest_length}")
-            
-            messages = conversation_data['messages']
-            completion = conversation_data['completion']
+
+            # Generate random prompt and completion with target lengths
+            prompt = self._generate_random_text_with_length(
+                tokenizer, sampled_input_len
+            )
+            completion = self._generate_random_text_with_length(
+                tokenizer, sampled_output_len
+            )
+
+            actual_prompt_len = len(tokenizer(prompt).input_ids)
+            actual_completion_len = len(tokenizer(completion).input_ids)
 
             requests.append(
                 SampleRequest(
-                    prompt=messages,
+                    prompt=prompt,
                     completion=completion,
-                    prompt_len=final_input_len,
-                    expected_output_len=sampled_output_len,
+                    prompt_len=actual_prompt_len,
+                    expected_output_len=actual_completion_len,
                     multimodal_contents=[],
                 )
             )
@@ -872,15 +822,3 @@ class LMArenaParetExpDistDataset:
         maybe_oversample_requests(requests, num_requests, self.random_seed)
 
         return requests
-
-
-if __name__ == "__main__":
-    dataset = LMArenaParetExpDistDataset(
-        dataset_path="lmarena-ai/arena-human-preference-100k",
-        dataset_split="train",
-        random_seed=42,
-    )
-
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
-    requests = dataset.sample(tokenizer=tokenizer, num_requests=1000)

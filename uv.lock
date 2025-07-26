@@ -1556,7 +1556,7 @@ wheels = [
 [[package]]
 name = "zeus"
 version = "0.12.0"
-source = { git = "https://github.com/ml-energy/zeus?rev=master#5642d2f12f55cb167e6731d69f1a01cd2295c97d" }
+source = { git = "https://github.com/ml-energy/zeus?rev=master#21094972527ebe64a0de0f94db5b80a67b45cec0" }
 dependencies = [
     { name = "amdsmi" },
     { name = "httpx" },

@@ -761,7 +761,7 @@ async def benchmark(
     logger.info("Warmup completed. Starting benchmark...")
 
     # Zeus power monitor
-    power_monitor = PowerMonitor(update_period=0.01)
+    power_monitor = PowerMonitor(update_period=0.03)
 
     logger.info("Traffic request rate: %f req/s", request_rate)
 

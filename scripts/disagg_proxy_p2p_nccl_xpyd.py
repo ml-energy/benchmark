@@ -183,16 +183,22 @@ async def handle_request():
             f"{decode_zmq_addr}_{random_uuid()}"
         )
 
-        # finish prefill
-        async for _ in forward_request(
-            f"http://{prefill_addr}/v1/completions", prefill_request, request_id
-        ):
-            continue
+        async def prefill_decode_gen():
+            # finish prefill
+            async for chunk in forward_request(
+                f"http://{prefill_addr}/v1/completions", prefill_request, request_id
+            ):
+                # here we need to skip `data: [DONE]` chunk
+                if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
+                    continue
+                yield chunk
 
-        # return decode
-        generator = forward_request(
-            f"http://{decode_addr}/v1/completions", original_request_data, request_id
-        )
+            # return decode
+            async for chunk in forward_request(
+                f"http://{decode_addr}/v1/completions", original_request_data, request_id
+            ):
+                yield chunk
+        generator = prefill_decode_gen()
         response = await make_response(generator)
         # response.timeout = None
 

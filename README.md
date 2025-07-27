@@ -59,6 +59,9 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 # Prefill-Decode disaggregated serving
 CUDA_VISIBLE_DEVICES=0,1 python -m mlenergy.llm.benchmark --overwrite-results --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-8B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-8B-Instruct --workload.num-requests 200 --workload.max-num-seqs 64 --workload.num-prefills 1 --workload.num-decodes 1
 
+## With TP=2
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m mlenergy.llm.benchmark --overwrite-results --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-8B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-8B-Instruct --workload.num-requests 200 --workload.max-num-seqs 64 --workload.num-prefills 1 --workload.num-decodes 1
+
 # Check the results
 tree run
 ```

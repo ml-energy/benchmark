@@ -868,6 +868,23 @@ async def benchmark(
 
     steady_state_time = steady_state_mes.time
     steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+    steady_state_prefill_energy = None
+    steady_state_decode_energy = None
+    if workload.num_prefills and workload.num_decodes:
+        # separate prefill and decode energy
+        steady_state_prefill_energy = sum(
+            [steady_state_mes.gpu_energy[p] for p in range(workload.num_prefills)]
+        )
+        steady_state_decode_energy = sum(
+            [
+                steady_state_mes.gpu_energy[d]
+                for d in range(
+                    workload.num_prefills,
+                    workload.num_prefills + workload.num_decodes,
+                )
+            ]
+        )
+
     steady_state_energy_per_token = steady_state_energy / steady_state_tokens
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
     entire_benchmark_energy_per_token = (
@@ -891,6 +908,18 @@ async def benchmark(
     )
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+    if steady_state_prefill_energy is not None:
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state prefill energy (J)",
+            steady_state_prefill_energy,
+        )
+    if steady_state_decode_energy is not None:
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state decode energy (J)",
+            steady_state_decode_energy,
+        )
     logger.info(
         "%-40s: %.2f",
         "Steady state energy (J) per token",
@@ -918,6 +947,8 @@ async def benchmark(
         "completed": metrics.completed,
         "steady_state_duration": steady_state_time,
         "steady_state_energy": steady_state_energy,
+        "steady_state_prefill_energy": steady_state_prefill_energy,
+        "steady_state_decode_energy": steady_state_decode_energy,
         "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
@@ -1012,61 +1043,244 @@ def spawn_vllm(
     log_level: str,
     server_log_filepath: Path,
     vllm_cache_dir: str | None = None,
+    num_prefills: int = 0,
+    num_decodes: int = 0,
 ) -> list[str]:
-    """Spawn vLLM server.
+    """Spawn vLLM server(s).
 
     This does not wait for the server to be ready.
 
     Retuens:
         The container names of the spawned vLLM servers.
     """
-    gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
-    gpu_str = f'"device={gpu_str}"'
-    container_name = f"benchmark-vllm-{''.join(str(gpu_id) for gpu_id in gpu_ids)}"
-
     assert Path(hf_home).exists(), f"Hugging Face home directory not found: {hf_home}"
 
-    # fmt: off
-    server_cmd = [
-        "docker", "run",
-        "--gpus", gpu_str,
-        "--ipc", "host",
-        "--net", "host",
-        "--name", container_name,
-        "-e", f"HF_TOKEN={hf_token}",
-        "-e", f"LOG_LEVEL={log_level}",
-        "-v", f"{hf_home}:/root/.cache/huggingface",
-        *(
-            ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
-        ),
-        server_image,
-        "--port", str(port),
-        "--model", model_id,
-        "--tensor-parallel-size", str(len(gpu_ids)),
-        "--gpu-memory-utilization", "0.95",
-        "--trust-remote-code",
-        "--max-num-seqs", str(max_num_seqs),
-    ]
-    # fmt: on
+    spawned_containers = []
+    spawned_processes = []
+    if num_prefills != 0 and num_decodes != 0:
+        # PD
+        if len(gpu_ids) < num_decodes + num_prefills:
+            raise ValueError(
+                "Number of GPUs must be greater than or equal to "
+                "num_prefills + num_decodes."
+            )
+        # start proxy server first at port
+        proxy_filepath = server_log_filepath.with_name("proxy_server_log.txt")
+        proxy_log_file = open(proxy_filepath, "w")
+        proxy_server_cmd = [
+            "python3",
+            "-u",
+            "scripts/disagg_proxy_p2p_nccl_xpyd.py",
+            "--port",
+            str(port),
+            "--num-prefills",
+            str(num_prefills),
+            "--num-decodes",
+            str(num_decodes),
+        ]
+        logger.info(
+            "Spawning vLLM proxy server with command: %s",
+            " ".join(proxy_server_cmd),
+        )
+        proxy_handle = subprocess.Popen(
+            proxy_server_cmd,
+            stdout=proxy_log_file,
+            stderr=proxy_log_file,
+        )
+        spawned_processes.append(proxy_handle)
+        gpu_per_instance = len(gpu_ids) // (num_prefills + num_decodes)
+        remaining_gpus = len(gpu_ids) % (num_prefills + num_decodes)
+        if remaining_gpus != 0:
+            raise ValueError(
+                "Number of GPUs must be divisible by num_prefills + num_decodes."
+            )
 
-    if max_num_batched_tokens is not None:
-        server_cmd.extend(["--max-num-batched-tokens", str(max_num_batched_tokens)])
+        prefill_http_base_port = port + 1000
+        prefill_kv_base_port = port + 2000
+        for i in range(num_prefills):
+            cur_gpus = gpu_ids[i * gpu_per_instance : (i + 1) * gpu_per_instance]
+            gpu_str = ",".join(str(gpu_id) for gpu_id in cur_gpus)
+            container_name = f"benchmark-vllm-prefill-{i}-{''.join(str(gpu_id) for gpu_id in cur_gpus)}"
+            # fmt: off
+            prefill_kv_transfer_config = {
+                "kv_connector": "P2pNcclConnector",
+                "kv_role": "kv_producer",
+                "kv_buffer_size": "1e1",
+                "kv_port": str(prefill_kv_base_port + i),
+                "kv_connector_extra_config": {
+                    "proxy_ip": "0.0.0.0",
+                    "proxy_port": "30001",
+                    "http_port": str(prefill_http_base_port + i),
+                    "send_type": "PUT_ASYNC",
+                    "nccl_num_channels": "16",
+                }
+            }
+            server_cmd = [
+                "docker", "run",
+                # nccl needs peer GPUs to be visible,
+                # so we give all GPUs to the container
+                # while limiting the visible GPUs to vLLM
+                "--gpus", "all",
+                "-e", "CUDA_VISIBLE_DEVICES=" + gpu_str,
+                "--ipc", "host",
+                "--pid", "host",
+                "--net", "host",
+                "--name", container_name,
+                "-e", f"HF_TOKEN={hf_token}",
+                "-e", f"LOG_LEVEL={log_level}",
+                "-v", f"{hf_home}:/root/.cache/huggingface",
+                *(
+                    ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
+                ),
+                server_image,
+                "--port", str(prefill_http_base_port + i),
+                "--model", model_id,
+                "--tensor-parallel-size", str(len(cur_gpus)),
+                "--gpu-memory-utilization", "0.9",
+                "--trust-remote-code",
+                "--max-num-seqs", str(max_num_seqs),
+                "--kv-transfer-config", json.dumps(prefill_kv_transfer_config),
+            ]
+            # fmt: on
+            if max_num_batched_tokens is not None:
+                server_cmd.extend(
+                    ["--max-num-batched-tokens", str(max_num_batched_tokens)]
+                )
 
-    logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
-    logger.info("vLLM container name: %s", container_name)
-    logger.info("vLLM logs will be written to %s", server_log_filepath)
-    server_log_file = open(server_log_filepath, "w")
-    subprocess.Popen(server_cmd, stdout=server_log_file, stderr=server_log_file)
+            logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
+            logger.info("vLLM container name: %s", container_name)
+            prefill_log_filepath = server_log_filepath.with_name(
+                f"prefill_{i}_server_log.txt"
+            )
+            logger.info("vLLM logs will be written to %s", prefill_log_filepath)
+            prefill_server_log_file = open(prefill_log_filepath, "w")
+            subprocess.Popen(
+                server_cmd,
+                stdout=prefill_server_log_file,
+                stderr=prefill_server_log_file,
+            )
+            spawned_containers.append(container_name)
+
+        decode_http_base_port = port + 3000
+        decode_kv_base_port = port + 4000
+        decode_gpu_ids = gpu_ids[num_prefills * gpu_per_instance :]
+        for i in range(num_decodes):
+            cur_gpus = decode_gpu_ids[i * gpu_per_instance : (i + 1) * gpu_per_instance]
+            gpu_str = ",".join(str(gpu_id) for gpu_id in cur_gpus)
+            container_name = f"benchmark-vllm-decode-{i}-{''.join(str(gpu_id) for gpu_id in cur_gpus)}"
+            # fmt: off
+            decode_kv_transfer_config = {
+                "kv_connector": "P2pNcclConnector",
+                "kv_role": "kv_consumer",
+                "kv_buffer_size": "8e9",
+                "kv_port": str(decode_kv_base_port + i),
+                "kv_connector_extra_config": {
+                    "proxy_ip": "0.0.0.0",
+                    "proxy_port": "30001",
+                    "http_port": str(decode_http_base_port + i),
+                    "send_type": "PUT_ASYNC",
+                    "nccl_num_channels": "16",
+                }
+            }
+            server_cmd = [
+                "docker", "run",
+                # nccl needs peer GPUs to be visible,
+                # so we give all GPUs to the container
+                # while limiting the visible GPUs to vLLM
+                "--gpus", "all",
+                "-e", "CUDA_VISIBLE_DEVICES=" + gpu_str,
+                "--ipc", "host",
+                "--pid", "host",
+                "--net", "host",
+                "--name", container_name,
+                "-e", f"HF_TOKEN={hf_token}",
+                "-e", f"LOG_LEVEL={log_level}",
+                "-v", f"{hf_home}:/root/.cache/huggingface",
+                *(
+                    ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
+                ),
+                server_image,
+                "--port", str(decode_http_base_port + i),
+                "--model", model_id,
+                "--tensor-parallel-size", str(len(cur_gpus)),
+                "--gpu-memory-utilization", "0.8",
+                "--trust-remote-code",
+                "--max-num-seqs", str(max_num_seqs),
+                "--kv-transfer-config", json.dumps(decode_kv_transfer_config),
+            ]
+            # fmt: on
+            if max_num_batched_tokens is not None:
+                server_cmd.extend(
+                    ["--max-num-batched-tokens", str(max_num_batched_tokens)]
+                )
+
+            logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
+            logger.info("vLLM container name: %s", container_name)
+            decode_log_filepath = server_log_filepath.with_name(
+                f"decode_{i}_server_log.txt"
+            )
+            logger.info("vLLM logs will be written to %s", decode_log_filepath)
+            decode_server_log_file = open(decode_log_filepath, "w")
+            subprocess.Popen(
+                server_cmd, stdout=decode_server_log_file, stderr=decode_server_log_file
+            )
+            spawned_containers.append(container_name)
+
+    elif num_prefills == 0 and num_decodes == 0:
+        # Single vLLM server
+        gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
+        gpu_str = f'"device={gpu_str}"'
+        container_name = f"benchmark-vllm-{''.join(str(gpu_id) for gpu_id in gpu_ids)}"
+
+        # fmt: off
+        server_cmd = [
+            "docker", "run",
+            "--gpus", gpu_str,
+            "--ipc", "host",
+            "--net", "host",
+            "--name", container_name,
+            "-e", f"HF_TOKEN={hf_token}",
+            "-e", f"LOG_LEVEL={log_level}",
+            "-v", f"{hf_home}:/root/.cache/huggingface",
+            *(
+                ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
+            ),
+            server_image,
+            "--port", str(port),
+            "--model", model_id,
+            "--tensor-parallel-size", str(len(gpu_ids)),
+            "--gpu-memory-utilization", "0.95",
+            "--trust-remote-code",
+            "--max-num-seqs", str(max_num_seqs),
+        ]
+        # fmt: on
+
+        if max_num_batched_tokens is not None:
+            server_cmd.extend(["--max-num-batched-tokens", str(max_num_batched_tokens)])
+
+        logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
+        logger.info("vLLM container name: %s", container_name)
+        logger.info("vLLM logs will be written to %s", server_log_filepath)
+        server_log_file = open(server_log_filepath, "w")
+        subprocess.Popen(server_cmd, stdout=server_log_file, stderr=server_log_file)
+        spawned_containers.append(container_name)
+    else:
+        raise ValueError("Both num_prefills and num_decodes must be 0 or non-zero.")
 
     def kill_server():
-        """Kill the vLLM server."""
-        logger.info("Killing vLLM server container %s", container_name)
-        subprocess.run(["docker", "rm", "-f", container_name])
-        logger.info("vLLM server container %s killed and removed", container_name)
+        """Kill the vLLM servers."""
+        for container_name in spawned_containers:
+            logger.info("Killing vLLM server container %s", container_name)
+            subprocess.run(["docker", "rm", "-f", container_name])
+            logger.info("vLLM server container %s killed and removed", container_name)
+        for handle in spawned_processes:
+            handle.terminate()
+            handle.kill()
+            handle.wait()
 
     atexit.register(kill_server)
 
-    return [container_name]
+    return spawned_containers
 
 
 def set_ulimit(target_soft_limit=10000):
@@ -1138,6 +1352,8 @@ def main(args: Args) -> None:
         log_level="INFO",
         server_log_filepath=args.workload.to_path(of="server_log"),
         vllm_cache_dir=vllm_cache_dir,
+        num_prefills=args.workload.num_prefills if args.workload.num_prefills else 0,
+        num_decodes=args.workload.num_decodes if args.workload.num_decodes else 0,
     )
     logger.info("Started vLLM containers %s", container_names)
 
@@ -1169,9 +1385,11 @@ def main(args: Args) -> None:
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
     logger.info("Waiting for vLLM server to become healthy at %s", health_url)
-    tail_handle = subprocess.Popen(
-        ["tail", "-f", args.workload.to_path(of="server_log")]
-    )
+    tail_handle: subprocess.Popen | None = None
+    if args.workload.num_prefills == 0 or args.workload.num_decodes == 0:
+        tail_handle = subprocess.Popen(
+            ["tail", "-f", args.workload.to_path(of="server_log")]
+        )
     try:
         elapsed_seconds = 0
         while True:
@@ -1218,8 +1436,9 @@ def main(args: Args) -> None:
                             f"Container {container_name} seems to have crashed."
                         )
     finally:
-        tail_handle.terminate()
-        tail_handle.wait()
+        if tail_handle is not None:
+            tail_handle.terminate()
+            tail_handle.wait()
 
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()
@@ -1254,6 +1473,8 @@ def main(args: Args) -> None:
     result_json["endpoint_type"] = args.endpoint_type
     result_json["model_id"] = model_id
     result_json["num_prompts"] = args.workload.num_requests
+    result_json["num_prefills"] = args.workload.num_prefills
+    result_json["num_decodes"] = args.workload.num_decodes
 
     # Traffic
     result_json["request_rate"] = (
@@ -1289,6 +1510,15 @@ if __name__ == "__main__":
             | LengthControl
         ]
     )
+
+    if (
+        args.endpoint_type == "openai-chat"
+        and args.workload.num_prefills
+        and args.workload.num_decodes
+    ):
+        raise NotImplementedError(
+            "vLLM OpenAI chat endpoint has a bug with Prefill/Decode disaggregation."
+        )
 
     # Set up the logger so that it logs to both console and file
     logging.basicConfig(

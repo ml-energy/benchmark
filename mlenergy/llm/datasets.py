@@ -759,7 +759,7 @@ class ParetoExpDistributionDataset:
             # Sample random token IDs, avoiding specials
             ids = []
             while len(ids) < chunk_size:
-                token_id = random.randrange(tokenizer.vocab_size)
+                token_id = random.randrange(tokenizer.vocab_size)  # type: ignore
                 if token_id not in special_ids:
                     ids.append(token_id)
             text_chunk = tokenizer.decode(ids, clean_up_tokenization_spaces=True)

@@ -26,6 +26,9 @@ dependencies = [
     "transformers>=4.53.2",
     "tyro>=0.9.26",
     "zeus>=0.12.1",
+    "quart>=0.20.0",
+    "msgpack>=1.1.1",
+    "pyzmq>=27.0.0",
 ]
 
 [tool.setuptools.packages.find]

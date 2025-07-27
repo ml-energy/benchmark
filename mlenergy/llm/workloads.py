@@ -81,12 +81,20 @@ class WorkloadConfig(BaseModel):
     # Systems parameters
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
+    num_prefills: int | None = None
+    num_decodes: int | None = None
 
     @model_validator(mode="after")
     def _validate_workoad(self) -> Self:
         """Validate the sanity of the workload."""
         if self.num_requests < 2 * self.max_num_seqs:
             raise ValueError("There should be at least 2 * max_num_seqs requests.")
+        if (
+            self.num_prefills is not None
+            and self.num_decodes is not None
+            and (self.num_prefills <= 0 or self.num_decodes <= 0)
+        ):
+            raise ValueError("Invalid prefills and decodes configuration")
         return self
 
     def to_path(
@@ -201,6 +209,11 @@ class ImageChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -240,6 +253,11 @@ class VideoChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -279,6 +297,11 @@ class AudioChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -327,6 +350,11 @@ class OmniChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -363,6 +391,11 @@ class LMArenaChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -398,6 +431,11 @@ class LengthControl(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -426,6 +464,11 @@ class SourcegraphFIM(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -455,6 +498,11 @@ class GPQA(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
+            *(
+                [f"{self.num_prefills}p{self.num_decodes}d"]
+                if self.num_prefills and self.num_decodes
+                else []
+            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:

@@ -726,7 +726,9 @@ class ParetoExpDistributionDataset:
         # For Pareto, mean = a * b / (a-1) where a > 1
         # We use a = 2.5, then b = mean * (a-1)/a = mean * 1.5/2.5 = mean * 0.6
         pareto_b = self.input_mean * (self.pareto_a - 1) / self.pareto_a
-        input_pdf = stats.pareto.pdf(np.arange(self.max_length), self.pareto_a, scale=pareto_b)
+        input_pdf = stats.pareto.pdf(
+            np.arange(self.max_length), self.pareto_a, scale=pareto_b
+        )
         self.input_pdf = input_pdf / np.sum(input_pdf)  # Normalize to sum to 1
 
         # Generate Exponential distribution for output tokens
@@ -750,41 +752,49 @@ class ParetoExpDistributionDataset:
             Random text string that tokenizes to approximately target_length tokens.
         """
         special_ids = set(tokenizer.all_special_ids)
-        
+        vocab_size = len(tokenizer)
+
         # Pre-generate a long sequence of random token IDs
         pool_size = max(self.max_length, target_length * 2)
         long_token_ids = []
-        
+
         while len(long_token_ids) < pool_size:
-            batch_size = pool_size + max(50, pool_size // 100)  # Generate extra to account for filtering
-            random_tokens = np.random.randint(0, tokenizer.vocab_size, size=batch_size, dtype=np.int32)
-            
+            # Generate extra to account for filtering
+            batch_size = pool_size + max(50, pool_size // 100)
+            random_tokens = np.random.randint(
+                0, vocab_size, size=batch_size, dtype=np.int32
+            )
+
             # Filter out special tokens
             if special_ids:
                 mask = ~np.isin(random_tokens, list(special_ids))
                 valid_tokens = random_tokens[mask]
             else:
                 valid_tokens = random_tokens
-            
+
             long_token_ids.extend(valid_tokens.tolist())
-            
+
             if len(long_token_ids) >= pool_size:
                 long_token_ids = long_token_ids[:pool_size]
                 break
 
         # Take a slightly longer slice than needed (add some buffer)
-        buffer_size = min(50, max(10, target_length // 10))  # At least 10, up to 50 tokens buffer
+        buffer_size = min(
+            50, max(10, target_length // 10)
+        )  # At least 10, up to 50 tokens buffer
         slice_length = min(target_length + buffer_size, len(long_token_ids))
         token_slice = long_token_ids[:slice_length]
-        
+
         random.shuffle(token_slice)
-        
+
         # Fine-tune to get exact target_length after tokenization
         current_tokens = token_slice[:target_length]
-        prompt = tokenizer.decode(current_tokens, clean_up_tokenization_spaces=True).strip()
-        
+        prompt = tokenizer.decode(
+            current_tokens, clean_up_tokenization_spaces=True
+        ).strip()
+
         encoded_tokens = tokenizer.encode(prompt, add_special_tokens=False)
-        actual_length = len(encoded_tokens) + 1 # for the eos token
+        actual_length = len(encoded_tokens) + 1  # for the eos token
         current_tokens = encoded_tokens
 
         if actual_length == target_length:
@@ -793,16 +803,21 @@ class ParetoExpDistributionDataset:
             # Need more tokens, add from our shuffled pool
             needed = target_length - actual_length
             if len(current_tokens) + needed <= len(token_slice):
-                current_tokens = token_slice[:len(current_tokens) + needed]
+                current_tokens = token_slice[: len(current_tokens) + needed]
             else:
                 needed_from_pool = needed - (slice_length - target_length)
-                current_tokens = token_slice + long_token_ids[slice_length:slice_length + needed_from_pool]
+                current_tokens = (
+                    token_slice
+                    + long_token_ids[slice_length : slice_length + needed_from_pool]
+                )
         else:
             # Too many tokens, remove some
             excess = actual_length - target_length
-            current_tokens = current_tokens[:max(1, len(current_tokens) - excess)]
+            current_tokens = current_tokens[: max(1, len(current_tokens) - excess)]
 
-        prompt = tokenizer.decode(current_tokens, clean_up_tokenization_spaces=True).strip()
+        prompt = tokenizer.decode(
+            current_tokens, clean_up_tokenization_spaces=True
+        ).strip()
         return prompt
 
     def sample(

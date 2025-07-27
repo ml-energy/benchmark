@@ -34,5 +34,10 @@ where = ["mlenergy"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.403",
+    "pytest>=8.4.1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.12.4",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--numprocesses auto"

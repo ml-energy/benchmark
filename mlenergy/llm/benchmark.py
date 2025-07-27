@@ -238,10 +238,6 @@ class RequestTracker:
         """Get the number of generated tokens."""
         return self.num_generated_tokens
 
-    def get_num_finished(self) -> int:
-        """Get the number of finished requests."""
-        return self.num_finished
-
     def get_num_started(self) -> int:
         """Get the number of started requests."""
         return self.num_started
@@ -904,7 +900,7 @@ async def benchmark(
             ]
         )
         steady_state_decode_energy_per_token = steady_state_decode_energy / (
-            steady_state_num_requests - max_num_seqs
+            steady_state_tokens - steady_state_num_requests
         )
 
     steady_state_energy_per_token = steady_state_energy / steady_state_tokens

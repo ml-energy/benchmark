@@ -762,7 +762,7 @@ async def benchmark(
     logger.info("Warmup completed. Starting benchmark...")
 
     # Zeus power monitor
-    power_monitor = PowerMonitor(update_period=0.03)
+    power_monitor = PowerMonitor(update_period=0.05)
 
     logger.info("Traffic request rate: %f req/s", request_rate)
 
@@ -1519,6 +1519,17 @@ if __name__ == "__main__":
         raise NotImplementedError(
             "vLLM OpenAI chat endpoint has a bug with Prefill/Decode disaggregation."
         )
+    assert isinstance(args.workload, WorkloadConfig)
+
+    # Exit if the result file exists so that the script is idempotent.
+    result_file = args.workload.to_path(of="results")
+    if result_file.exists() and not args.overwrite_results:
+        logger.info(
+            "Result file %s already exists. Exiting immediately. "
+            "Specify --overwrite-results to run the benchmark and overwrite results.",
+            result_file,
+        )
+        raise SystemExit(0)
 
     # Set up the logger so that it logs to both console and file
     logging.basicConfig(
@@ -1530,6 +1541,12 @@ if __name__ == "__main__":
             logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w"),
         ],
     )
+
+    # Explicitly include Zeus PowerMonitor logs
+    zl = logging.getLogger("zeus.monitor.power")
+    zl.setLevel(logging.INFO)
+    zl.propagate = True
+    zl.handlers.clear()
 
     try:
         main(args)

@@ -238,6 +238,14 @@ class RequestTracker:
         """Get the number of generated tokens."""
         return self.num_generated_tokens
 
+    def get_num_finished(self) -> int:
+        """Get the number of finished requests."""
+        return self.num_finished
+
+    def get_num_started(self) -> int:
+        """Get the number of started requests."""
+        return self.num_started
+
 
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
@@ -837,14 +845,19 @@ async def benchmark(
     await request_tracker.wait_start()
     steady_state_start_time = time.time()
     steady_state_token_begin = request_tracker.get_num_generated_tokens()
+    steady_state_num_started_begin = request_tracker.get_num_started()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
     await request_tracker.wait_end()
     steady_state_end_time = time.time()
     steady_state_token_end = request_tracker.get_num_generated_tokens()
+    steady_state_num_started_end = request_tracker.get_num_started()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
     steady_state_tokens = steady_state_token_end - steady_state_token_begin
+    steady_state_num_requests = (
+        steady_state_num_started_end - steady_state_num_started_begin
+    )
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
@@ -869,11 +882,17 @@ async def benchmark(
     steady_state_time = steady_state_mes.time
     steady_state_energy = sum(steady_state_mes.gpu_energy.values())
     steady_state_prefill_energy = None
+    steady_state_prefill_energy_per_token = None
     steady_state_decode_energy = None
+    steady_state_decode_energy_per_token = None
     if workload.num_prefills and workload.num_decodes:
         # separate prefill and decode energy
         steady_state_prefill_energy = sum(
             [steady_state_mes.gpu_energy[p] for p in range(workload.num_prefills)]
+        )
+        # divided by number of requests in steady state
+        steady_state_decode_energy_per_token = (
+            steady_state_prefill_energy / steady_state_num_requests
         )
         steady_state_decode_energy = sum(
             [
@@ -883,6 +902,9 @@ async def benchmark(
                     workload.num_prefills + workload.num_decodes,
                 )
             ]
+        )
+        steady_state_decode_energy_per_token = steady_state_decode_energy / (
+            steady_state_num_requests - max_num_seqs
         )
 
     steady_state_energy_per_token = steady_state_energy / steady_state_tokens
@@ -914,11 +936,21 @@ async def benchmark(
             "Steady state prefill energy (J)",
             steady_state_prefill_energy,
         )
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state prefill energy (J) per token",
+            steady_state_prefill_energy_per_token,
+        )
     if steady_state_decode_energy is not None:
         logger.info(
             "%-40s: %.2f",
             "Steady state decode energy (J)",
             steady_state_decode_energy,
+        )
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state decode energy (J) per token",
+            steady_state_decode_energy_per_token,
         )
     logger.info(
         "%-40s: %.2f",
@@ -948,7 +980,9 @@ async def benchmark(
         "steady_state_duration": steady_state_time,
         "steady_state_energy": steady_state_energy,
         "steady_state_prefill_energy": steady_state_prefill_energy,
+        "steady_state_prefill_energy_per_token": steady_state_prefill_energy_per_token,
         "steady_state_decode_energy": steady_state_decode_energy,
+        "steady_state_decode_energy_per_token": steady_state_decode_energy_per_token,
         "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,

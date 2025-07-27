@@ -1063,6 +1063,7 @@ async def benchmark(
 def spawn_vllm(
     server_image: str,
     port: int,
+    discovery_port: int,
     model_id: str,
     hf_token: str,
     hf_home: str,
@@ -1102,6 +1103,8 @@ def spawn_vllm(
             "scripts/disagg_proxy_p2p_nccl_xpyd.py",
             "--port",
             str(port),
+            "--discovery-port",
+            str(discovery_port),
             "--num-prefills",
             str(num_prefills),
             "--num-decodes",
@@ -1138,7 +1141,7 @@ def spawn_vllm(
                 "kv_port": str(prefill_kv_base_port + i),
                 "kv_connector_extra_config": {
                     "proxy_ip": "0.0.0.0",
-                    "proxy_port": "30001",
+                    "proxy_port": str(discovery_port),
                     "http_port": str(prefill_http_base_port + i),
                     "send_type": "PUT_ASYNC",
                     "nccl_num_channels": "16",
@@ -1205,7 +1208,7 @@ def spawn_vllm(
                 "kv_port": str(decode_kv_base_port + i),
                 "kv_connector_extra_config": {
                     "proxy_ip": "0.0.0.0",
-                    "proxy_port": "30001",
+                    "proxy_port": str(discovery_port),
                     "http_port": str(decode_http_base_port + i),
                     "send_type": "PUT_ASYNC",
                     "nccl_num_channels": "16",
@@ -1361,6 +1364,7 @@ def main(args: Args) -> None:
     np.random.seed(args.workload.seed)
 
     port = 8000 + int(cuda_visible_devices.split(",")[0])
+    discovery_port = 30000 + int(cuda_visible_devices.split(",")[0])
     endpoint = {
         "openai": "/v1/completions",
         "openai-chat": "/v1/chat/completions",
@@ -1372,6 +1376,7 @@ def main(args: Args) -> None:
     container_names = spawn_vllm(
         server_image=args.server_image,
         port=port,
+        discovery_port=discovery_port,
         model_id=model_id,
         hf_token=hf_token,
         hf_home=hf_home,

@@ -37,6 +37,12 @@ parser.add_argument(
     help="Port to bind the proxy server to (default: 10001)",
 )
 parser.add_argument(
+    "--discovery-port",
+    type=int,
+    default=30001,
+    help="Port for service discovery (default: 30001)",
+)
+parser.add_argument(
     "--num-prefills",
     type=int,
     required=False,
@@ -319,6 +325,6 @@ async def health_check():
         return await make_response("Some instances are unhealthy", 503)
 
 if __name__ == "__main__":
-    t = start_service_discovery("0.0.0.0", 30001)
+    t = start_service_discovery("0.0.0.0", args.discovery_port)
     app.run(host="0.0.0.0", port=args.port)
     t.join()

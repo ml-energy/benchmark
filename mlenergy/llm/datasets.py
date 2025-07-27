@@ -785,7 +785,7 @@ class ParetoExpDistributionDataset:
         prompt = tokenizer.decode(current_tokens, clean_up_tokenization_spaces=True).strip()
         
         encoded_tokens = tokenizer.encode(prompt, add_special_tokens=False)
-        actual_length = len(encoded_tokens)
+        actual_length = len(encoded_tokens) + 1 # for the eos token
         current_tokens = encoded_tokens
 
         if actual_length == target_length:
@@ -837,12 +837,9 @@ class ParetoExpDistributionDataset:
             prompt = self._generate_random_text_with_length(
                 tokenizer, sampled_input_len
             )
-            completion = self._generate_random_text_with_length(
-                tokenizer, sampled_output_len
-            )
-
             actual_prompt_len = len(tokenizer(prompt).input_ids)
-            # actual_completion_len = len(tokenizer(completion).input_ids)
+
+            completion = "[This is omitted as only the output length is used]"
 
             requests.append(
                 SampleRequest(

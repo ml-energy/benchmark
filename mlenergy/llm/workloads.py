@@ -394,7 +394,7 @@ class LengthControl(WorkloadConfig):
             str(self.num_requests) + "req",
             str(int(self.input_mean)) + "input_mean",
             str(int(self.output_mean)) + "output_mean",
-            str(self.pareto_a).replace(".", "_") + "pareto_a",
+            str(self.pareto_a) + "pareto_a",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",

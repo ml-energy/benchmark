@@ -807,14 +807,14 @@ class ParetoExpDistributionDataset:
             )
 
             actual_prompt_len = len(tokenizer(prompt).input_ids)
-            actual_completion_len = len(tokenizer(completion).input_ids)
+            # actual_completion_len = len(tokenizer(completion).input_ids)
 
             requests.append(
                 SampleRequest(
                     prompt=prompt,
                     completion=completion,
                     prompt_len=actual_prompt_len,
-                    expected_output_len=actual_completion_len,
+                    expected_output_len=sampled_output_len,
                     multimodal_contents=[],
                 )
             )

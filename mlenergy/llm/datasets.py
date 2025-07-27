@@ -696,11 +696,11 @@ class ParetoExpDistributionDataset:
 
     def __init__(
         self,
-        tokenizer: PreTrainedTokenizerBase,
         random_seed: int = 0,
         input_mean: float = 500.0,
         output_mean: float = 300.0,
         pareto_a: float = 2.5,
+        model_max_length: int = 32768,
     ) -> None:
         """Initialize the ParetoExpDistributionDataset dataset.
 
@@ -716,7 +716,6 @@ class ParetoExpDistributionDataset:
         self.input_mean = input_mean
         self.pareto_a = pareto_a
         self.output_mean = output_mean
-        model_max_length = getattr(tokenizer, 'model_max_length', 32768)
         # some are too long, so we limit it to 32768
         self.max_length = min(model_max_length, 32768)
 

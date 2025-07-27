@@ -402,11 +402,11 @@ class LengthControl(WorkloadConfig):
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
         dataset = ParetoExpDistributionDataset(
-            tokenizer=self.tokenizer,
             input_mean=self.input_mean,
             output_mean=self.output_mean,
             pareto_a=self.pareto_a,
             random_seed=self.seed,
+            model_max_length=getattr(self.tokenizer, 'model_max_length', 32768),
         )
         return dataset.sample(
             tokenizer=self.tokenizer,

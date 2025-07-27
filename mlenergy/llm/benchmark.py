@@ -886,8 +886,7 @@ async def benchmark(
         steady_state_prefill_energy = sum(
             [steady_state_mes.gpu_energy[p] for p in range(workload.num_prefills)]
         )
-        # divided by number of requests in steady state
-        steady_state_decode_energy_per_token = (
+        steady_state_prefill_energy_per_token = (
             steady_state_prefill_energy / steady_state_num_requests
         )
         steady_state_decode_energy = sum(

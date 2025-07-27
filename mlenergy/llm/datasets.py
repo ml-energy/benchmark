@@ -696,6 +696,7 @@ class ParetoExpDistributionDataset:
 
     def __init__(
         self,
+        tokenizer: PreTrainedTokenizerBase,
         random_seed: int = 0,
         input_mean: float = 500.0,
         output_mean: float = 300.0,
@@ -715,6 +716,9 @@ class ParetoExpDistributionDataset:
         self.input_mean = input_mean
         self.pareto_a = pareto_a
         self.output_mean = output_mean
+        model_max_length = getattr(tokenizer, 'model_max_length', 32768)
+        # some are too long, so we limit it to 32768
+        self.max_length = min(model_max_length, 32768)
 
         np.random.seed(self.random_seed)
         random.seed(self.random_seed)
@@ -723,13 +727,13 @@ class ParetoExpDistributionDataset:
         # For Pareto, mean = a * b / (a-1) where a > 1
         # We use a = 2.5, then b = mean * (a-1)/a = mean * 1.5/2.5 = mean * 0.6
         pareto_b = self.input_mean * (self.pareto_a - 1) / self.pareto_a
-        input_pdf = stats.pareto.pdf(np.arange(32768), self.pareto_a, scale=pareto_b)
+        input_pdf = stats.pareto.pdf(np.arange(self.max_length), self.pareto_a, scale=pareto_b)
         self.input_pdf = input_pdf / np.sum(input_pdf)  # Normalize to sum to 1
 
         # Generate Exponential distribution for output tokens
         # For Exponential, mean = 1/lambda
         exp_lambda = 1 / self.output_mean
-        output_pdf = stats.expon.pdf(np.arange(32768), scale=1 / exp_lambda)
+        output_pdf = stats.expon.pdf(np.arange(self.max_length), scale=1 / exp_lambda)
         self.output_pdf = output_pdf / np.sum(output_pdf)  # Normalize to sum to 1
 
         self.rng = np.random.default_rng(random_seed)
@@ -747,29 +751,60 @@ class ParetoExpDistributionDataset:
             Random text string that tokenizes to approximately target_length tokens.
         """
         special_ids = set(tokenizer.all_special_ids)
+        
+        # Pre-generate a long sequence of random token IDs
+        pool_size = max(self.max_length, target_length * 2)
+        long_token_ids = []
+        
+        while len(long_token_ids) < pool_size:
+            batch_size = pool_size + max(50, pool_size // 100)  # Generate extra to account for filtering
+            random_tokens = np.random.randint(0, tokenizer.vocab_size, size=batch_size, dtype=np.int32)
+            
+            # Filter out special tokens
+            if special_ids:
+                mask = ~np.isin(random_tokens, list(special_ids))
+                valid_tokens = random_tokens[mask]
+            else:
+                valid_tokens = random_tokens
+            
+            long_token_ids.extend(valid_tokens.tolist())
+            
+            if len(long_token_ids) >= pool_size:
+                long_token_ids = long_token_ids[:pool_size]
+                break
 
-        def count_tokens(text: str) -> int:
-            return len(tokenizer.encode(text, add_special_tokens=False))
+        # Take a slightly longer slice than needed (add some buffer)
+        buffer_size = min(50, max(10, target_length // 10))  # At least 10, up to 50 tokens buffer
+        slice_length = min(target_length + buffer_size, len(long_token_ids))
+        token_slice = long_token_ids[:slice_length]
+        
+        random.shuffle(token_slice)
+        
+        # Fine-tune to get exact target_length after tokenization
+        current_tokens = token_slice[:target_length]
+        prompt = tokenizer.decode(current_tokens, clean_up_tokenization_spaces=True).strip()
+        
+        encoded_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+        actual_length = len(encoded_tokens)
+        current_tokens = encoded_tokens
 
-        generated = ""
-        current_len = 0
-        while current_len < target_length:
-            remaining = target_length - current_len
-            chunk_size = min(remaining, 10)
-            # Sample random token IDs, avoiding specials
-            ids = []
-            while len(ids) < chunk_size:
-                token_id = random.randrange(tokenizer.vocab_size)
-                if token_id not in special_ids:
-                    ids.append(token_id)
-            text_chunk = tokenizer.decode(ids, clean_up_tokenization_spaces=True)
-            generated += " " + text_chunk
-            current_len = count_tokens(generated)
+        if actual_length == target_length:
+            return prompt
+        elif actual_length < target_length:
+            # Need more tokens, add from our shuffled pool
+            needed = target_length - actual_length
+            if len(current_tokens) + needed <= len(token_slice):
+                current_tokens = token_slice[:len(current_tokens) + needed]
+            else:
+                needed_from_pool = needed - (slice_length - target_length)
+                current_tokens = token_slice + long_token_ids[slice_length:slice_length + needed_from_pool]
+        else:
+            # Too many tokens, remove some
+            excess = actual_length - target_length
+            current_tokens = current_tokens[:max(1, len(current_tokens) - excess)]
 
-        # If overshot, trim tokens to exact target length
-        ids = tokenizer.encode(generated, add_special_tokens=False)
-        trimmed_ids = ids[:target_length]
-        return tokenizer.decode(trimmed_ids, clean_up_tokenization_spaces=True).strip()
+        prompt = tokenizer.decode(current_tokens, clean_up_tokenization_spaces=True).strip()
+        return prompt
 
     def sample(
         self,

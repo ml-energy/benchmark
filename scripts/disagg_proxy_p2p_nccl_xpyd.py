@@ -6,7 +6,6 @@ required packages:
     quart
 """
 
-import os
 import socket
 import threading
 import time
@@ -130,6 +129,10 @@ def start_service_discovery(hostname, port):
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
 app = Quart(__name__)
+app.config.update(
+    RESPONSE_TIMEOUT = 3600,
+    BODY_TIMEOUT     = 3600,
+)
 
 
 def random_uuid() -> str:
@@ -141,16 +144,21 @@ async def forward_request(url, data, request_id):
         headers = {
             "X-Request-Id": request_id,
         }
-        async with session.post(url=url, json=data, headers=headers) as response:
-            if response.status == 200:
-                if True:
+        try:
+            async with session.post(url=url, json=data, headers=headers) as response:
+                if response.status == 200:
                     # async for chunk_bytes in response.content.iter_chunked(1024):
                     #     yield chunk_bytes
                     async for chunk, _ in response.content.iter_chunks():
                         yield chunk
                 else:
-                    content = await response.read()
-                    yield content
+                    print(f"Error forwarding request to {url}: {response.status}")
+                    raise Exception(
+                        f"Error forwarding request to {url}: {response.status}"
+                    )
+        except Exception as e:
+            print(f"Error forwarding request to {url}: {e}")
+            raise e
 
 
 @app.route("/v1/completions", methods=["POST"])
@@ -194,10 +202,12 @@ async def handle_request():
             async for chunk in forward_request(
                 f"http://{prefill_addr}/v1/completions", prefill_request, request_id
             ):
+                print("Prefill chunk received:", chunk)
                 # here we need to skip `data: [DONE]` chunk
                 if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
                     continue
                 yield chunk
+                # continue
 
             # return decode
             async for chunk in forward_request(
@@ -206,7 +216,7 @@ async def handle_request():
                 yield chunk
         generator = prefill_decode_gen()
         response = await make_response(generator)
-        # response.timeout = None
+        response.timeout = None
 
         return response
 
@@ -259,18 +269,25 @@ async def handle_chat_request():
             f"{decode_zmq_addr}_{random_uuid()}"
         )
 
-        # finish prefill
-        async for _ in forward_request(
-            f"http://{prefill_addr}/v1/chat/completions", prefill_request, request_id
-        ):
-            continue
+        async def prefill_decode_gen():
+            # finish prefill
+            async for chunk in forward_request(
+                f"http://{prefill_addr}/v1/completions", prefill_request, request_id
+            ):
+                print("Prefill chunk received:", chunk)
+                # here we need to skip `data: [DONE]` chunk
+                if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
+                    continue
+                yield chunk
 
-        # return decode
-        generator = forward_request(
-            f"http://{decode_addr}/v1/chat/completions", original_request_data, request_id
-        )
+            # return decode
+            async for chunk in forward_request(
+                f"http://{decode_addr}/v1/completions", original_request_data, request_id
+            ):
+                yield chunk
+        generator = prefill_decode_gen()
         response = await make_response(generator)
-        # response.timeout = None
+        response.timeout = None
 
         return response
 

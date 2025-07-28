@@ -58,10 +58,10 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 
 # Prefill-Decode disaggregated serving
 ## 3P1D
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m mlenergy.llm.benchmark --overwrite-results --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-8B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-8B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.num-prefills 3 --workload.num-decodes 1
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m mlenergy.llm.benchmark --overwrite-results --max-output-tokens dataset --ignore-eos --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:length-control --workload.model-id meta-llama/Llama-3.1-8B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-8B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.num-prefills 3 --workload.num-decodes 1
 
 ## TP=4, 1P1D
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m mlenergy.llm.benchmark --overwrite-results --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-70B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-70B-Instruct --workload.num-requests 200 --workload.max-num-seqs 64 --workload.num-prefills 1 --workload.num-decodes 1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m mlenergy.llm.benchmark --overwrite-results --max-output-tokens dataset --endpoint-type openai --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-70B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-70B-Instruct --workload.num-requests 200 --workload.max-num-seqs 64 --workload.num-prefills 1 --workload.num-decodes 1
 
 # Check the results
 tree run

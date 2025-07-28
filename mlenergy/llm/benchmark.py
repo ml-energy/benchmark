@@ -34,6 +34,7 @@ import requests
 from pydantic import BaseModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from zeus.monitor import ZeusMonitor, PowerMonitor
+from zeus.monitor.energy import Measurement
 from zeus.show_env import show_env
 
 from mlenergy.llm.datasets import SampleRequest
@@ -242,6 +243,106 @@ class RequestTracker:
         """Get the number of started requests."""
         return self.num_started
 
+class PDRequestTracker(RequestTracker):
+    """Tracks request states and generate tokens in disaggregated PD.
+
+    Start of decode steady state: When `max_num_seqs` requests have sent back their "second"
+    output tokens, we assume the server has ramped up to its steady state.
+
+    End of decode steady state: When `num_requests - max_num_seqs - 1` requests have
+    completely finished, we assume the server has begun ramping down from its steady
+    state. The `-1` is there to end the steady state measurement slightly early
+    to make sure we don't include the ramp down phase at all.
+
+    Start of prefill steady state: It's hard to determine the prefill steady state as 
+    the prefill phase is compute bound. We assume when `num_prefill_warmups` requests have sent back
+    their first output tokens, the prefill server has stalized.
+
+    End of prefill steady state: We assmue the end of the prefill steady state is 
+    when `num_requests - num_prefill_warmups ` requests have sent back their first token.
+
+    `num_prefill_warmups` should be an empircal value depending on the workload input length distribution,
+    max_num_batched_tokens, and the number of prefill instances.
+    """
+
+    def __init__(
+        self,
+        max_num_seqs: int,
+        num_requests: int,
+        log: bool = True,
+        num_prefill_warmups: int = 50,
+    ) -> None:
+        """Initialize the CounterWaiter with a target value."""
+        self.prefill_start_event = asyncio.Event()
+        self.prefill_end_event = asyncio.Event()
+        # for decode
+        self.start_event = asyncio.Event()
+        self.end_event = asyncio.Event()
+
+        self.max_num_seqs = max_num_seqs
+        self.num_requests = num_requests
+        self.log = log
+
+        self.num_generated_tokens = 0
+        self.num_started = 0
+        self.num_finished = 0
+
+        self.num_prefill_warmups = num_prefill_warmups
+        self.num_prefill_completed = 0
+
+    async def wait_prefill_start(self) -> None:
+        """Wait until the steady state starts."""
+        await self.prefill_start_event.wait()
+
+    async def wait_prefill_end(self) -> None:
+        """Wait until the steady state ends."""
+        await self.prefill_end_event.wait()
+
+    def notify_request_prefill_completed(self) -> None:
+        """Notify that a request's prefill phase has completed.
+
+        This should be called when the first token of the request is received.
+        """
+        self.num_prefill_completed += 1
+        if self.num_prefill_completed >= self.num_prefill_warmups:
+            self.prefill_start_event.set()
+        if self.num_prefill_completed >= self.num_requests - self.num_prefill_warmups:
+            self.prefill_end_event.set()
+
+    def notify_request_started(self) -> None:
+        """Notify that a request has started.
+
+        This should be called when the "second" token of the request is received.
+        """
+        self.num_started += 1
+        if self.num_started >= self.max_num_seqs:
+            self.start_event.set()
+
+    def notify_tokens_generated(self, num_tokens: int) -> None:
+        """Notify that a token has been generated."""
+        self.num_generated_tokens += num_tokens
+
+    def notify_request_finished(self) -> None:
+        """Notify that a request has finished."""
+        self.num_finished += 1
+        if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
+            self.end_event.set()
+        if self.log:
+            logger.info(
+                "%d/%d requests finished with %d cumulative tokens generated across all requests.",
+                self.num_finished,
+                self.num_requests,
+                self.num_generated_tokens,
+            )
+
+    def get_num_generated_tokens(self) -> int:
+        """Get the number of generated tokens."""
+        return self.num_generated_tokens
+
+    def get_num_started(self) -> int:
+        """Get the number of started requests."""
+        return self.num_started
+
 
 async def async_request_openai_completions(
     request_func_input: RequestFuncInput,
@@ -338,33 +439,34 @@ async def async_request_openai_completions(
                                 if not first_chunk_received:
                                     first_chunk_received = True
                                     ttft = time.perf_counter() - st
-                                    request_tracker.notify_request_started()
+                                    if isinstance(request_tracker, PDRequestTracker):
+                                        request_tracker.notify_request_prefill_completed()
+                                    else:
+                                        request_tracker.notify_request_started()
                                     output.ttft = ttft
 
                                 # Decoding phase
                                 else:
-                                    output.itl.append(timestamp - most_recent_timestamp)
+                                    usage = data.get("usage")
+                                    completion_tokens = usage and usage.get("completion_tokens")
+                                    if isinstance(request_tracker, PDRequestTracker) \
+                                        and completion_tokens and completion_tokens == 1:
+                                        # decode started when serving with PD
+                                        request_tracker.notify_request_started()
+                                        # skip appending itl
+                                    else:
+                                        output.itl.append(timestamp - most_recent_timestamp)
+
+                                    if completion_tokens:
+                                        inc = completion_tokens - current_completion_tokens
+                                        # if inc == 0, below are no-ops
+                                        request_tracker.notify_tokens_generated(inc)
+                                        current_completion_tokens = completion_tokens
+                                        for _ in range(inc - 1):
+                                            output.itl.append(0)
 
                                 most_recent_timestamp = timestamp
                                 generated_text += text or ""
-                                if usage := data.get("usage"):
-                                    if completion_tokens := usage.get(
-                                        "completion_tokens"
-                                    ):
-                                        if (
-                                            completion_tokens
-                                            != current_completion_tokens
-                                        ):
-                                            inc = (
-                                                completion_tokens
-                                                - current_completion_tokens
-                                            )
-                                            request_tracker.notify_tokens_generated(inc)
-                                            current_completion_tokens = (
-                                                completion_tokens
-                                            )
-                                            for _ in range(inc - 1):
-                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
                     if first_chunk_received:
@@ -471,32 +573,33 @@ async def async_request_openai_chat_completions(
                                 # First token
                                 if ttft == 0.0:
                                     ttft = timestamp - st
-                                    request_tracker.notify_request_started()
+                                    if isinstance(request_tracker, PDRequestTracker):
+                                        request_tracker.notify_request_prefill_completed()
+                                    else:
+                                        request_tracker.notify_request_started()
                                     output.ttft = ttft
 
                                 # Decoding phase
                                 else:
-                                    output.itl.append(timestamp - most_recent_timestamp)
+                                    usage = data.get("usage")
+                                    completion_tokens = usage and usage.get("completion_tokens")
+                                    if isinstance(request_tracker, PDRequestTracker) \
+                                        and completion_tokens and completion_tokens == 1:
+                                        # decode started when serving with PD
+                                        request_tracker.notify_request_started()
+                                        # skip appending itl
+                                    else:
+                                        output.itl.append(timestamp - most_recent_timestamp)
+
+                                    if completion_tokens:
+                                        inc = completion_tokens - current_completion_tokens
+                                        # if inc == 0, below are no-ops
+                                        request_tracker.notify_tokens_generated(inc)
+                                        current_completion_tokens = completion_tokens
+                                        for _ in range(inc - 1):
+                                            output.itl.append(0)
 
                                 generated_text += content or ""
-                                if usage := data.get("usage"):
-                                    if completion_tokens := usage.get(
-                                        "completion_tokens"
-                                    ):
-                                        if (
-                                            completion_tokens
-                                            != current_completion_tokens
-                                        ):
-                                            inc = (
-                                                completion_tokens
-                                                - current_completion_tokens
-                                            )
-                                            request_tracker.notify_tokens_generated(inc)
-                                            current_completion_tokens = (
-                                                completion_tokens
-                                            )
-                                            for _ in range(inc - 1):
-                                                output.itl.append(0)
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
 
@@ -721,6 +824,7 @@ async def benchmark(
         request_func = ASYNC_REQUEST_FUNCS[endpoint_type]
     else:
         raise ValueError(f"Unknown endpoint_type: {endpoint_type}")
+    pd_enabled = workload.num_prefills is not None and workload.num_decodes is not None
 
     logger.info("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_mm_content = (
@@ -786,9 +890,16 @@ async def benchmark(
         if max_concurrency
         else contextlib.nullcontext()
     )
-    request_tracker = RequestTracker(
-        max_num_seqs=max_num_seqs, num_requests=workload.num_requests
-    )
+    if pd_enabled:
+        logger.info("Using PD request tracker with max_num_seqs=%d", max_num_seqs)
+        request_tracker = PDRequestTracker(
+            max_num_seqs=max_num_seqs,
+            num_requests=workload.num_requests,
+        )
+    else:
+        request_tracker = RequestTracker(
+            max_num_seqs=max_num_seqs, num_requests=workload.num_requests
+        )
 
     async def limited_request_func(request_func_input):
         async with semaphore:
@@ -838,6 +949,22 @@ async def benchmark(
     # exit the steady state and enter the ramp down phase. Thus, for our steady state
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
+    prefill_steady_state_task: asyncio.Task | None = None
+    if pd_enabled:
+        assert isinstance(request_tracker, PDRequestTracker), "PDRequestTracker is expected when using prefill and decode steady state."
+        # we start a separate task that captures the prefill steady state window
+        async def capture_prefill_steady_state() -> tuple[float, float, Measurement]:
+            await request_tracker.wait_prefill_start()
+            prefill_steady_state_start_time = time.time()
+            zeus_monitor.begin_window("prefill_steady_state", sync_execution=False)
+            logger.info("Prefill steady state has begun.")
+            await request_tracker.wait_prefill_end()
+            prefill_steady_state_end_time = time.time()
+            steady_state_mes = zeus_monitor.end_window("prefill_steady_state", sync_execution=False)
+            logger.info("Prefill Steady state finished.")
+            return prefill_steady_state_start_time, prefill_steady_state_end_time, steady_state_mes
+        prefill_steady_state_task = asyncio.create_task(capture_prefill_steady_state())
+
     await request_tracker.wait_start()
     steady_state_start_time = time.time()
     steady_state_token_begin = request_tracker.get_num_generated_tokens()
@@ -854,6 +981,9 @@ async def benchmark(
     steady_state_num_requests = (
         steady_state_num_started_end - steady_state_num_started_begin
     )
+    if pd_enabled:
+        assert prefill_steady_state_task is not None, "Prefill steady state task should be created when using PD."
+        await prefill_steady_state_task
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)

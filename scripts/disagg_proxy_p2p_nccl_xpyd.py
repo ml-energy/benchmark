@@ -207,7 +207,6 @@ async def handle_request():
                 if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
                     continue
                 yield chunk
-                # continue
 
             # return decode
             async for chunk in forward_request(
@@ -272,7 +271,7 @@ async def handle_chat_request():
         async def prefill_decode_gen():
             # finish prefill
             async for chunk in forward_request(
-                f"http://{prefill_addr}/v1/completions", prefill_request, request_id
+                f"http://{prefill_addr}/v1/chat/completions", prefill_request, request_id
             ):
                 print("Prefill chunk received:", chunk)
                 # here we need to skip `data: [DONE]` chunk
@@ -282,7 +281,7 @@ async def handle_chat_request():
 
             # return decode
             async for chunk in forward_request(
-                f"http://{decode_addr}/v1/completions", original_request_data, request_id
+                f"http://{decode_addr}/v1/chat/completions", original_request_data, request_id
             ):
                 yield chunk
         generator = prefill_decode_gen()

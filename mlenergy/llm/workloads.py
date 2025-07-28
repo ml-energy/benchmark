@@ -102,6 +102,7 @@ class WorkloadConfig(BaseModel):
         of: Literal[
             "requests", "results", "driver_log", "server_log", "multimodal_dump"
         ],
+        create_dirs: bool = True,
     ) -> Path:
         """Generate a file path based on file type and workload parameters.
 
@@ -130,10 +131,11 @@ class WorkloadConfig(BaseModel):
                 raise ValueError(f"Unknown path type: {of}")
 
         path = dir / append
-        if not path.suffix:  # Directory
-            path.mkdir(parents=True, exist_ok=True)
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
+        if create_dirs:
+            if not path.suffix:  # Directory
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     @cached_property

@@ -766,7 +766,7 @@ async def benchmark(
     logger.info("Warmup completed. Starting benchmark...")
 
     # Zeus power monitor
-    power_monitor = PowerMonitor(update_period=0.05)
+    power_monitor = PowerMonitor(update_period=0.1)
 
     logger.info("Traffic request rate: %f req/s", request_rate)
 
@@ -1098,6 +1098,11 @@ def spawn_vllm(
                 "Number of GPUs must be greater than or equal to "
                 "num_prefills + num_decodes."
             )
+        send_type = "GET"
+        prefill_kv_buffer_size = "16e9"
+        decode_kv_buffer_size = "8e9"
+        prefill_gpu_memory_utilization = 0.7
+        decode_gpu_memory_utilization = 0.8
         # start proxy server first at port
         proxy_filepath = server_log_filepath.with_name("proxy_server_log.txt")
         proxy_log_file = open(proxy_filepath, "w")
@@ -1141,13 +1146,13 @@ def spawn_vllm(
             prefill_kv_transfer_config = {
                 "kv_connector": "P2pNcclConnector",
                 "kv_role": "kv_producer",
-                "kv_buffer_size": "1e1",
+                "kv_buffer_size": prefill_kv_buffer_size,
                 "kv_port": str(prefill_kv_base_port + i),
                 "kv_connector_extra_config": {
                     "proxy_ip": "0.0.0.0",
                     "proxy_port": str(discovery_port),
                     "http_port": str(prefill_http_base_port + i),
-                    "send_type": "PUT_ASYNC",
+                    "send_type": send_type,
                     "nccl_num_channels": "16",
                 }
             }
@@ -1172,7 +1177,7 @@ def spawn_vllm(
                 "--port", str(prefill_http_base_port + i),
                 "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
-                "--gpu-memory-utilization", "0.9",
+                "--gpu-memory-utilization", str(prefill_gpu_memory_utilization),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(prefill_kv_transfer_config),
@@ -1208,13 +1213,13 @@ def spawn_vllm(
             decode_kv_transfer_config = {
                 "kv_connector": "P2pNcclConnector",
                 "kv_role": "kv_consumer",
-                "kv_buffer_size": "8e9",
+                "kv_buffer_size": decode_kv_buffer_size,
                 "kv_port": str(decode_kv_base_port + i),
                 "kv_connector_extra_config": {
                     "proxy_ip": "0.0.0.0",
                     "proxy_port": str(discovery_port),
                     "http_port": str(decode_http_base_port + i),
-                    "send_type": "PUT_ASYNC",
+                    "send_type": send_type,
                     "nccl_num_channels": "16",
                 }
             }
@@ -1239,7 +1244,7 @@ def spawn_vllm(
                 "--port", str(decode_http_base_port + i),
                 "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
-                "--gpu-memory-utilization", "0.8",
+                "--gpu-memory-utilization", str(decode_gpu_memory_utilization),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(decode_kv_transfer_config),
@@ -1319,7 +1324,7 @@ def spawn_vllm(
     return spawned_containers
 
 
-def set_ulimit(target_soft_limit=10000):
+def set_ulimit(target_soft_limit=65535):
     """Set the soft limit for the number of open files (ulimit -n)."""
 
     resource_type = resource.RLIMIT_NOFILE

@@ -886,6 +886,8 @@ async def benchmark(
         steady_state_prefill_energy = sum(
             [steady_state_mes.gpu_energy[p] for p in range(workload.num_prefills)]
         )
+        # The number of requests that started (i.e., got their first token) during the
+        # steady state gives us the number of prefills done.
         steady_state_prefill_energy_per_token = (
             steady_state_prefill_energy / steady_state_num_requests
         )

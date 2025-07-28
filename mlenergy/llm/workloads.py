@@ -444,6 +444,7 @@ class LengthControl(WorkloadConfig):
             output_mean=self.output_mean,
             pareto_a=self.pareto_a,
             random_seed=self.seed,
+            model_max_length=getattr(self.tokenizer, "model_max_length", 32768),
         )
         return dataset.sample(
             tokenizer=self.tokenizer,

@@ -287,8 +287,9 @@ async def async_request_openai_completions(
                 "continuous_usage_stats": True,
             },
         }
-        if request_func_input.output_len is not None:
-            payload["max_tokens"] = request_func_input.output_len
+        # Especially for the Completions API, not setting this will default to 16 tokens.
+        # We need to explicitly set it to `None` to disable the limit.
+        payload["max_tokens"] = request_func_input.output_len
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
         if request_func_input.extra_body:
@@ -425,8 +426,7 @@ async def async_request_openai_chat_completions(
                 "continuous_usage_stats": True,
             },
         }
-        if request_func_input.output_len is not None:
-            payload["max_completion_tokens"] = request_func_input.output_len
+        payload["max_completion_tokens"] = request_func_input.output_len
         if request_func_input.ignore_eos:
             payload["ignore_eos"] = request_func_input.ignore_eos
         if request_func_input.extra_body:

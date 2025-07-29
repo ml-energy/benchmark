@@ -1091,14 +1091,9 @@ async def benchmark(
         decode_steady_state_energy_per_token = decode_steady_state_energy / (
             steady_state_tokens - prefill_ss_num_requests
         )
-        # the correct steady state energy composes from prefill and decode steady state
-        steady_state_energy = prefill_steady_state_energy + decode_steady_state_energy
-
         prefill_steady_state_energy_per_token = (
             prefill_steady_state_energy / prefill_ss_num_requests
         )
-        # this is averaged
-        steady_state_energy_per_token = steady_state_energy / steady_state_tokens
 
         # we compute the energy per generation based on prefill and decode separately
         energy_per_generation = [
@@ -1106,6 +1101,10 @@ async def benchmark(
             + decode_steady_state_energy_per_token * (output_len - 1)
             for output_len in actual_output_lens
         ]
+
+        # setting below to None as they are not meaningful in the PD case
+        steady_state_energy = None
+        steady_state_energy_per_token = None
     else:
         steady_state_energy = sum(steady_state_mes.gpu_energy.values())
         steady_state_energy_per_token = steady_state_energy / steady_state_tokens
@@ -1388,7 +1387,6 @@ def spawn_vllm(
                 server_image,
                 "--port", str(prefill_http_base_port + i),
                 "--model", model_id,
-                "--max-model-len", "8192",
                 "--tensor-parallel-size", str(len(cur_gpus)),
                 "--gpu-memory-utilization", str(prefill_gpu_memory_utilization),
                 "--trust-remote-code",
@@ -1456,7 +1454,6 @@ def spawn_vllm(
                 server_image,
                 "--port", str(decode_http_base_port + i),
                 "--model", model_id,
-                "--max-model-len", "8192",
                 "--tensor-parallel-size", str(len(cur_gpus)),
                 "--gpu-memory-utilization", str(decode_gpu_memory_utilization),
                 "--trust-remote-code",

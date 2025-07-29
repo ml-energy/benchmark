@@ -34,6 +34,7 @@ import requests
 from pydantic import BaseModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from zeus.monitor import ZeusMonitor, PowerMonitor
+from zeus.monitor.energy import Measurement
 from zeus.show_env import show_env
 
 from mlenergy.llm.datasets import SampleRequest
@@ -243,7 +244,113 @@ class RequestTracker:
         return self.num_started
 
 
+class PDRequestTracker(RequestTracker):
+    """Tracks request states and generate tokens in disaggregated PD.
+
+    Start of decode steady state: When `max_num_seqs` requests have sent back their "second"
+    output tokens, we assume the server has ramped up to its steady state.
+
+    End of decode steady state: When `num_requests - max_num_seqs - 1` requests have
+    completely finished, we assume the server has begun ramping down from its steady
+    state. The `-1` is there to end the steady state measurement slightly early
+    to make sure we don't include the ramp down phase at all.
+
+    Start of prefill steady state: It's hard to determine the prefill steady state as
+    the prefill phase is compute bound. We assume when `num_prefill_warmups` requests have sent back
+    their first output tokens, the prefill server has stalized.
+
+    End of prefill steady state: We assmue the end of the prefill steady state is
+    when `num_requests - num_prefill_warmups ` requests have sent back their first token.
+
+    `num_prefill_warmups` should be an empircal value depending on the workload input length distribution,
+    max_num_batched_tokens, and the number of prefill instances.
+    """
+
+    def __init__(
+        self,
+        max_num_seqs: int,
+        num_requests: int,
+        log: bool = True,
+        num_prefill_warmups: int = 50,
+    ) -> None:
+        """Initialize the CounterWaiter with a target value."""
+        self.prefill_start_event = asyncio.Event()
+        self.prefill_end_event = asyncio.Event()
+        # for decode
+        self.start_event = asyncio.Event()
+        self.end_event = asyncio.Event()
+
+        self.max_num_seqs = max_num_seqs
+        self.num_requests = num_requests
+        self.log = log
+
+        self.num_generated_tokens = 0
+        self.num_started = 0
+        self.num_finished = 0
+
+        self.num_prefill_warmups = num_prefill_warmups
+        self.num_prefill_completed = 0
+
+    async def wait_prefill_start(self) -> None:
+        """Wait until the steady state starts."""
+        await self.prefill_start_event.wait()
+
+    async def wait_prefill_end(self) -> None:
+        """Wait until the steady state ends."""
+        await self.prefill_end_event.wait()
+
+    def notify_request_prefill_completed(self) -> None:
+        """Notify that a request's prefill phase has completed.
+
+        This should be called when the first token of the request is received.
+        """
+        self.num_prefill_completed += 1
+        if self.num_prefill_completed >= self.num_prefill_warmups:
+            self.prefill_start_event.set()
+        if self.num_prefill_completed >= self.num_requests - self.num_prefill_warmups:
+            self.prefill_end_event.set()
+
+    def notify_request_started(self) -> None:
+        """Notify that a request has started.
+
+        This should be called when the "second" token of the request is received.
+        """
+        self.num_started += 1
+        if self.num_started >= self.max_num_seqs:
+            self.start_event.set()
+
+    def notify_tokens_generated(self, num_tokens: int) -> None:
+        """Notify that a token has been generated."""
+        self.num_generated_tokens += num_tokens
+
+    def notify_request_finished(self) -> None:
+        """Notify that a request has finished."""
+        self.num_finished += 1
+        if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
+            self.end_event.set()
+        if self.log:
+            logger.info(
+                "%d/%d requests finished with %d cumulative tokens generated across all requests.",
+                self.num_finished,
+                self.num_requests,
+                self.num_generated_tokens,
+            )
+
+    def get_num_generated_tokens(self) -> int:
+        """Get the number of generated tokens."""
+        return self.num_generated_tokens
+
+    def get_num_started(self) -> int:
+        """Get the number of started requests."""
+        return self.num_started
+
+    def get_num_prefill_completed(self) -> int:
+        """Get the number of prefill completed requests."""
+        return self.num_prefill_completed
+
+
 async def async_request_openai_completions(
+    client: aiohttp.ClientSession,
     request_func_input: RequestFuncInput,
     request_tracker: RequestTracker,
 ) -> RequestFuncOutput:
@@ -273,124 +380,127 @@ async def async_request_openai_completions(
             "not a list of strings."
         )
 
-    async with aiohttp.ClientSession(
-        trust_env=True, timeout=AIOHTTP_TIMEOUT
-    ) as session:
-        payload = {
-            "model": request_func_input.model,
-            "prompt": request_func_input.prompt,
-            "temperature": 0.0,
-            "repetition_penalty": 1.0,
-            "stream": True,
-            "stream_options": {
-                "include_usage": True,
-                "continuous_usage_stats": True,
-            },
-        }
-        # Especially for the Completions API, not setting this will default to 16 tokens.
-        # We need to explicitly set it to `None` to disable the limit.
-        payload["max_tokens"] = request_func_input.output_len
-        if request_func_input.ignore_eos:
-            payload["ignore_eos"] = request_func_input.ignore_eos
-        if request_func_input.extra_body:
-            payload.update(request_func_input.extra_body)
-        headers = {}
+    payload = {
+        "model": request_func_input.model,
+        "prompt": request_func_input.prompt,
+        "temperature": 0.0,
+        "repetition_penalty": 1.0,
+        "stream": True,
+        "stream_options": {
+            "include_usage": True,
+            "continuous_usage_stats": True,
+        },
+    }
+    # Especially for the Completions API, not setting this will default to 16 tokens.
+    # We need to explicitly set it to `None` to disable the limit.
+    payload["max_tokens"] = request_func_input.output_len
+    if request_func_input.ignore_eos:
+        payload["ignore_eos"] = request_func_input.ignore_eos
+    if request_func_input.extra_body:
+        payload.update(request_func_input.extra_body)
+    headers = {}
 
-        output = RequestFuncOutput()
-        output.prompt = request_func_input.prompt
-        output.prompt_len = request_func_input.prompt_len
+    output = RequestFuncOutput()
+    output.prompt = request_func_input.prompt
+    output.prompt_len = request_func_input.prompt_len
 
-        generated_text = ""
-        st = time.perf_counter()
-        most_recent_timestamp = st
-        try:
-            async with session.post(
-                url=api_url, json=payload, headers=headers
-            ) as response:
-                if response.status == 200:
-                    first_chunk_received = False
-                    current_completion_tokens = 0
-                    async for chunk_bytes in response.content:
-                        chunk_bytes = chunk_bytes.strip()
-                        if not chunk_bytes:
-                            continue
-                        chunk_bytes = chunk_bytes.decode("utf-8")
-                        # NOTE: SSE comments (often used as pings) start with
-                        # a colon. These are not JSON data payload and should
-                        # be skipped.
-                        if chunk_bytes.startswith(":"):
-                            continue
+    generated_text = ""
+    st = time.perf_counter()
+    most_recent_timestamp = st
+    try:
+        async with client.post(url=api_url, json=payload, headers=headers) as response:
+            if response.status == 200:
+                first_chunk_received = False
+                current_completion_tokens = 0
+                async for chunk_bytes in response.content:
+                    chunk_bytes = chunk_bytes.strip()
+                    if not chunk_bytes:
+                        continue
+                    chunk_bytes = chunk_bytes.decode("utf-8")
+                    # NOTE: SSE comments (often used as pings) start with
+                    # a colon. These are not JSON data payload and should
+                    # be skipped.
+                    if chunk_bytes.startswith(":"):
+                        continue
 
-                        chunk = chunk_bytes.removeprefix("data: ")
+                    chunk = chunk_bytes.removeprefix("data: ")
 
-                        if chunk != "[DONE]":
-                            data = json.loads(chunk)
+                    if chunk != "[DONE]":
+                        data = json.loads(chunk)
 
-                            # NOTE: Some completion API might have a last
-                            # usage summary response without a token so we
-                            # want to check a token was generated
-                            if choices := data.get("choices"):
-                                # Note that text could be empty here
-                                # e.g. for special tokens
-                                text = choices[0].get("text")
-                                timestamp = time.perf_counter()
-                                # First token
-                                if not first_chunk_received:
-                                    first_chunk_received = True
-                                    ttft = time.perf_counter() - st
+                        # NOTE: Some completion API might have a last
+                        # usage summary response without a token so we
+                        # want to check a token was generated
+                        if choices := data.get("choices"):
+                            # Note that text could be empty here
+                            # e.g. for special tokens
+                            text = choices[0].get("text")
+                            timestamp = time.perf_counter()
+                            # First token
+                            if not first_chunk_received:
+                                first_chunk_received = True
+                                ttft = time.perf_counter() - st
+                                if isinstance(request_tracker, PDRequestTracker):
+                                    request_tracker.notify_request_prefill_completed()
+                                else:
                                     request_tracker.notify_request_started()
-                                    output.ttft = ttft
+                                    request_tracker.notify_tokens_generated(1)
+                                output.ttft = ttft
 
-                                # Decoding phase
+                            # Decoding phase
+                            else:
+                                usage = data.get("usage")
+                                completion_tokens = usage and usage.get(
+                                    "completion_tokens"
+                                )
+                                if (
+                                    isinstance(request_tracker, PDRequestTracker)
+                                    and completion_tokens
+                                    and completion_tokens == 1
+                                ):
+                                    # decode started when serving with PD
+                                    request_tracker.notify_request_started()
+                                    # skip appending itl and don't increment generated tokens
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
 
-                                most_recent_timestamp = timestamp
-                                generated_text += text or ""
-                                if usage := data.get("usage"):
-                                    if completion_tokens := usage.get(
-                                        "completion_tokens"
-                                    ):
-                                        if (
-                                            completion_tokens
-                                            != current_completion_tokens
-                                        ):
-                                            inc = (
-                                                completion_tokens
-                                                - current_completion_tokens
-                                            )
-                                            request_tracker.notify_tokens_generated(inc)
-                                            current_completion_tokens = (
-                                                completion_tokens
-                                            )
-                                            for _ in range(inc - 1):
-                                                output.itl.append(0)
-                            elif usage := data.get("usage"):
-                                output.output_tokens = usage.get("completion_tokens")
-                    if first_chunk_received:
-                        output.success = True
-                    else:
-                        output.success = False
-                        output.error = (
-                            "Never received a valid chunk to calculate TTFT."
-                            "This response will be marked as failed!"
-                        )
-                    output.generated_text = generated_text
-                    output.latency = most_recent_timestamp - st
+                                if completion_tokens:
+                                    inc = completion_tokens - current_completion_tokens
+                                    # if inc == 0, below are no-ops
+                                    request_tracker.notify_tokens_generated(inc)
+                                    current_completion_tokens = completion_tokens
+                                    for _ in range(inc - 1):
+                                        output.itl.append(0)
+
+                            most_recent_timestamp = timestamp
+                            generated_text += text or ""
+                        elif usage := data.get("usage"):
+                            output.output_tokens = usage.get("completion_tokens")
+                if first_chunk_received:
+                    output.success = True
                 else:
-                    output.error = response.reason or ""
                     output.success = False
-        except Exception:
-            output.success = False
-            exc_info = sys.exc_info()
-            output.error = "".join(traceback.format_exception(*exc_info))
-        finally:
-            request_tracker.notify_request_finished()
+                    output.error = (
+                        "Never received a valid chunk to calculate TTFT."
+                        "This response will be marked as failed!"
+                    )
+                output.generated_text = generated_text
+                output.latency = most_recent_timestamp - st
+            else:
+                output.error = response.reason or ""
+                output.success = False
+    except Exception:
+        output.success = False
+        exc_info = sys.exc_info()
+        output.error = "".join(traceback.format_exception(*exc_info))
+    finally:
+        request_tracker.notify_request_finished()
 
     return output
 
 
 async def async_request_openai_chat_completions(
+    client: aiohttp.ClientSession,
     request_func_input: RequestFuncInput,
     request_tracker: RequestTracker,
 ) -> RequestFuncOutput:
@@ -413,107 +523,109 @@ async def async_request_openai_chat_completions(
                 {"role": role, "content": [{"type": "text", "text": prompt}]}
             )
 
-    async with aiohttp.ClientSession(
-        trust_env=True, timeout=AIOHTTP_TIMEOUT
-    ) as session:
-        payload = {
-            "model": request_func_input.model,
-            "messages": messages,
-            "temperature": 0.0,
-            "stream": True,
-            "stream_options": {
-                "include_usage": True,
-                "continuous_usage_stats": True,
-            },
-        }
-        payload["max_completion_tokens"] = request_func_input.output_len
-        if request_func_input.ignore_eos:
-            payload["ignore_eos"] = request_func_input.ignore_eos
-        if request_func_input.extra_body:
-            payload.update(request_func_input.extra_body)
-        headers = {
-            "Content-Type": "application/json",
-        }
+    payload = {
+        "model": request_func_input.model,
+        "messages": messages,
+        "temperature": 0.0,
+        "stream": True,
+        "stream_options": {
+            "include_usage": True,
+            "continuous_usage_stats": True,
+        },
+    }
+    payload["max_completion_tokens"] = request_func_input.output_len
+    if request_func_input.ignore_eos:
+        payload["ignore_eos"] = request_func_input.ignore_eos
+    if request_func_input.extra_body:
+        payload.update(request_func_input.extra_body)
+    headers = {
+        "Content-Type": "application/json",
+    }
 
-        output = RequestFuncOutput()
-        output.prompt = request_func_input.prompt
-        output.prompt_len = request_func_input.prompt_len
+    output = RequestFuncOutput()
+    output.prompt = request_func_input.prompt
+    output.prompt_len = request_func_input.prompt_len
 
-        generated_text = ""
-        ttft = 0.0
-        st = time.perf_counter()
-        most_recent_timestamp = st
-        try:
-            async with session.post(
-                url=api_url, json=payload, headers=headers
-            ) as response:
-                if response.status == 200:
-                    current_completion_tokens = 0
-                    async for chunk_bytes in response.content:
-                        chunk_bytes = chunk_bytes.strip()
-                        if not chunk_bytes:
-                            continue
-                        chunk_bytes = chunk_bytes.decode("utf-8")
-                        # NOTE: SSE comments (often used as pings) start with
-                        # a colon. These are not JSON data payload and should
-                        # be skipped.
-                        if chunk_bytes.startswith(":"):
-                            continue
+    generated_text = ""
+    ttft = 0.0
+    st = time.perf_counter()
+    most_recent_timestamp = st
+    try:
+        async with client.post(url=api_url, json=payload, headers=headers) as response:
+            if response.status == 200:
+                current_completion_tokens = 0
+                async for chunk_bytes in response.content:
+                    chunk_bytes = chunk_bytes.strip()
+                    if not chunk_bytes:
+                        continue
+                    chunk_bytes = chunk_bytes.decode("utf-8")
+                    # NOTE: SSE comments (often used as pings) start with
+                    # a colon. These are not JSON data payload and should
+                    # be skipped.
+                    if chunk_bytes.startswith(":"):
+                        continue
 
-                        chunk = chunk_bytes.removeprefix("data: ")
+                    chunk = chunk_bytes.removeprefix("data: ")
 
-                        if chunk != "[DONE]":
-                            timestamp = time.perf_counter()
-                            data = json.loads(chunk)
+                    if chunk != "[DONE]":
+                        timestamp = time.perf_counter()
+                        data = json.loads(chunk)
 
-                            if choices := data.get("choices"):
-                                content = choices[0]["delta"].get("content")
-                                # First token
-                                if ttft == 0.0:
-                                    ttft = timestamp - st
+                        if choices := data.get("choices"):
+                            content = choices[0]["delta"].get("content")
+                            # First token
+                            if ttft == 0.0:
+                                ttft = timestamp - st
+                                if isinstance(request_tracker, PDRequestTracker):
+                                    request_tracker.notify_request_prefill_completed()
+                                else:
                                     request_tracker.notify_request_started()
-                                    output.ttft = ttft
+                                request_tracker.notify_tokens_generated(1)
+                                output.ttft = ttft
 
-                                # Decoding phase
+                            # Decoding phase
+                            else:
+                                usage = data.get("usage")
+                                completion_tokens = usage and usage.get(
+                                    "completion_tokens"
+                                )
+                                if (
+                                    isinstance(request_tracker, PDRequestTracker)
+                                    and completion_tokens
+                                    and completion_tokens == 1
+                                ):
+                                    # decode started when serving with PD
+                                    request_tracker.notify_request_started()
+                                    # skip appending itl and don't increment generated tokens
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
 
-                                generated_text += content or ""
-                                if usage := data.get("usage"):
-                                    if completion_tokens := usage.get(
-                                        "completion_tokens"
-                                    ):
-                                        if (
-                                            completion_tokens
-                                            != current_completion_tokens
-                                        ):
-                                            inc = (
-                                                completion_tokens
-                                                - current_completion_tokens
-                                            )
-                                            request_tracker.notify_tokens_generated(inc)
-                                            current_completion_tokens = (
-                                                completion_tokens
-                                            )
-                                            for _ in range(inc - 1):
-                                                output.itl.append(0)
-                            elif usage := data.get("usage"):
-                                output.output_tokens = usage.get("completion_tokens")
+                                if completion_tokens:
+                                    inc = completion_tokens - current_completion_tokens
+                                    # if inc == 0, below are no-ops
+                                    request_tracker.notify_tokens_generated(inc)
+                                    current_completion_tokens = completion_tokens
+                                    for _ in range(inc - 1):
+                                        output.itl.append(0)
 
-                            most_recent_timestamp = timestamp
+                            generated_text += content or ""
+                        elif usage := data.get("usage"):
+                            output.output_tokens = usage.get("completion_tokens")
 
-                    output.generated_text = generated_text
-                    output.success = True
-                    output.latency = most_recent_timestamp - st
-                else:
-                    output.error = response.reason or ""
-                    output.success = False
-        except Exception:
-            output.success = False
-            exc_info = sys.exc_info()
-            output.error = "".join(traceback.format_exception(*exc_info))
-        finally:
-            request_tracker.notify_request_finished()
+                        most_recent_timestamp = timestamp
+
+                output.generated_text = generated_text
+                output.success = True
+                output.latency = most_recent_timestamp - st
+            else:
+                output.error = response.reason or ""
+                output.success = False
+    except Exception:
+        output.success = False
+        exc_info = sys.exc_info()
+        output.error = "".join(traceback.format_exception(*exc_info))
+    finally:
+        request_tracker.notify_request_finished()
 
     return output
 
@@ -721,6 +833,17 @@ async def benchmark(
         request_func = ASYNC_REQUEST_FUNCS[endpoint_type]
     else:
         raise ValueError(f"Unknown endpoint_type: {endpoint_type}")
+    pd_enabled = workload.num_prefills is not None and workload.num_decodes is not None
+
+    pool = aiohttp.TCPConnector(
+        limit=0,
+        ssl=False,
+        keepalive_timeout=6 * 60 * 60,
+    )
+    client = aiohttp.ClientSession(
+        timeout=AIOHTTP_TIMEOUT,
+        connector=pool,
+    )
 
     logger.info("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_mm_content = (
@@ -742,6 +865,7 @@ async def benchmark(
     )
 
     test_output = await request_func(
+        client=client,
         request_func_input=test_input,
         request_tracker=RequestTracker(8, 100, log=False),
     )
@@ -757,6 +881,7 @@ async def benchmark(
     await asyncio.gather(
         *[
             request_func(
+                client=client,
                 request_func_input=test_input,
                 request_tracker=RequestTracker(8, 100, log=False),
             )
@@ -786,14 +911,24 @@ async def benchmark(
         if max_concurrency
         else contextlib.nullcontext()
     )
-    request_tracker = RequestTracker(
-        max_num_seqs=max_num_seqs, num_requests=workload.num_requests
-    )
+    if pd_enabled:
+        logger.info("Using PD request tracker with max_num_seqs=%d", max_num_seqs)
+        request_tracker = PDRequestTracker(
+            max_num_seqs=max_num_seqs,
+            num_requests=workload.num_requests,
+            num_prefill_warmups=workload.num_prefill_warmups,
+        )
+    else:
+        request_tracker = RequestTracker(
+            max_num_seqs=max_num_seqs, num_requests=workload.num_requests
+        )
 
     async def limited_request_func(request_func_input):
         async with semaphore:
             return await request_func(
-                request_func_input=request_func_input, request_tracker=request_tracker
+                client=client,
+                request_func_input=request_func_input,
+                request_tracker=request_tracker,
             )
 
     tasks: list[asyncio.Task] = []
@@ -838,25 +973,68 @@ async def benchmark(
     # exit the steady state and enter the ramp down phase. Thus, for our steady state
     # measurement, we slice the time range between the moment B requests have sent back
     # their first token and the moment N - B requests have sent back their first token.
+    prefill_steady_state_task: asyncio.Task | None = None
+    if pd_enabled:
+        assert isinstance(request_tracker, PDRequestTracker), (
+            "PDRequestTracker is expected when using prefill and decode steady state."
+        )
+
+        # we start a separate task that captures the prefill steady state window
+        async def capture_prefill_steady_state() -> tuple[
+            int, float, float, Measurement
+        ]:
+            await request_tracker.wait_prefill_start()
+            prefill_steady_state_start_time = time.time()
+            prefill_steady_sdate_num_comp_begin = (
+                request_tracker.get_num_prefill_completed()
+            )
+            zeus_monitor.begin_window("prefill_steady_state", sync_execution=False)
+            logger.info("Prefill steady state has begun.")
+            await request_tracker.wait_prefill_end()
+            prefill_steady_state_end_time = time.time()
+            steady_state_mes = zeus_monitor.end_window(
+                "prefill_steady_state", sync_execution=False
+            )
+            prefill_steady_state_num_comp_end = (
+                request_tracker.get_num_prefill_completed()
+            )
+            logger.info("Prefill Steady state finished.")
+            prefill_steady_state_num_requests = (
+                prefill_steady_state_num_comp_end - prefill_steady_sdate_num_comp_begin
+            )
+            return (
+                prefill_steady_state_num_requests,
+                prefill_steady_state_start_time,
+                prefill_steady_state_end_time,
+                steady_state_mes,
+            )
+
+        prefill_steady_state_task = asyncio.create_task(capture_prefill_steady_state())
+
+    # this snippet covers for both the non-PD e2e case and the decode steady state in the PD case
     await request_tracker.wait_start()
     steady_state_start_time = time.time()
     steady_state_token_begin = request_tracker.get_num_generated_tokens()
-    steady_state_num_started_begin = request_tracker.get_num_started()
     zeus_monitor.begin_window("steady_state", sync_execution=False)
     logger.info("Steady state has begun.")
     await request_tracker.wait_end()
     steady_state_end_time = time.time()
     steady_state_token_end = request_tracker.get_num_generated_tokens()
-    steady_state_num_started_end = request_tracker.get_num_started()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
     steady_state_tokens = steady_state_token_end - steady_state_token_begin
-    steady_state_num_requests = (
-        steady_state_num_started_end - steady_state_num_started_begin
-    )
+    prefill_results: tuple[int, float, float, Measurement] | None = None
+    if pd_enabled:
+        assert prefill_steady_state_task is not None, (
+            "Prefill steady state task should be created when using PD."
+        )
+        prefill_results = await prefill_steady_state_task
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
+    logger.info("All requests have finished. Processing results...")
+    # close the aiohttp client session
+    await client.close()
 
     entire_mes = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
     benchmark_end_time = time.time()
@@ -876,22 +1054,29 @@ async def benchmark(
     )
 
     steady_state_time = steady_state_mes.time
-    steady_state_energy = sum(steady_state_mes.gpu_energy.values())
-    steady_state_prefill_energy = None
-    steady_state_prefill_energy_per_token = None
-    steady_state_decode_energy = None
-    steady_state_decode_energy_per_token = None
-    if workload.num_prefills and workload.num_decodes:
-        # separate prefill and decode energy
-        steady_state_prefill_energy = sum(
-            [steady_state_mes.gpu_energy[p] for p in range(workload.num_prefills)]
+    prefill_steady_state_duration = None
+    prefill_steady_state_start_time = None
+    prefill_steady_state_end_time = None
+    prefill_steady_state_energy = None
+    prefill_steady_state_energy_per_token = None
+    decode_steady_state_energy = None
+    decode_steady_state_energy_per_token = None
+    if pd_enabled:
+        assert workload.num_prefills is not None and workload.num_decodes is not None
+        assert prefill_results is not None
+        prefill_steady_state_start_time = prefill_results[1]
+        prefill_steady_state_end_time = prefill_results[2]
+        prefill_ss_mes = prefill_results[3]
+        prefill_steady_state_duration = prefill_ss_mes.time
+        prefill_steady_state_energy = sum(
+            [prefill_ss_mes.gpu_energy[p] for p in range(workload.num_prefills)]
         )
         # The number of requests that started (i.e., got their first token) during the
         # steady state gives us the number of prefills done.
-        steady_state_prefill_energy_per_token = (
-            steady_state_prefill_energy / steady_state_num_requests
+        prefill_steady_state_energy_per_token = (
+            prefill_steady_state_energy / prefill_results[0]
         )
-        steady_state_decode_energy = sum(
+        decode_steady_state_energy = sum(
             [
                 steady_state_mes.gpu_energy[d]
                 for d in range(
@@ -900,22 +1085,39 @@ async def benchmark(
                 )
             ]
         )
-        # Subtracting the number of prefilled tokens from total tokens gives us
-        # the number of tokens generated by the decode instances.
-        steady_state_decode_energy_per_token = steady_state_decode_energy / (
-            steady_state_tokens - steady_state_num_requests
+        # During recevie, we didn't count the second "first token" from the decode instance,
+        # so the decode tokens is total tokens minus the number of completed prefills.
+        prefill_ss_num_requests = prefill_results[0]
+        decode_steady_state_energy_per_token = decode_steady_state_energy / (
+            steady_state_tokens - prefill_ss_num_requests
+        )
+        prefill_steady_state_energy_per_token = (
+            prefill_steady_state_energy / prefill_ss_num_requests
         )
 
-    steady_state_energy_per_token = steady_state_energy / steady_state_tokens
+        # we compute the energy per generation based on prefill and decode separately
+        energy_per_generation = [
+            prefill_steady_state_energy_per_token
+            + decode_steady_state_energy_per_token * (output_len - 1)
+            for output_len in actual_output_lens
+        ]
+
+        # setting below to None as they are not meaningful in the PD case
+        steady_state_energy = None
+        steady_state_energy_per_token = None
+    else:
+        steady_state_energy = sum(steady_state_mes.gpu_energy.values())
+        steady_state_energy_per_token = steady_state_energy / steady_state_tokens
+        # here we use the steady state energy per token to calculate per generation energy
+        energy_per_generation = [
+            steady_state_energy_per_token * output_len
+            for output_len in actual_output_lens
+        ]
+
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
     entire_benchmark_energy_per_token = (
         entire_benchmark_energy / request_tracker.get_num_generated_tokens()
     )
-
-    # here we use the steady state energy per token to calculate per generation energy
-    energy_per_generation = [
-        steady_state_energy_per_token * output_len for output_len in actual_output_lens
-    ]
 
     logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
@@ -927,30 +1129,36 @@ async def benchmark(
         "Benchmark total energy (J) per token",
         entire_benchmark_energy_per_token,
     )
-    logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
-    logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
-    if steady_state_prefill_energy is not None:
+    if pd_enabled:
+        # prefill
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state prefill duration (s)",
+            prefill_steady_state_duration,
+        )
         logger.info(
             "%-40s: %.2f",
             "Steady state prefill energy (J)",
-            steady_state_prefill_energy,
+            prefill_steady_state_energy,
         )
         logger.info(
             "%-40s: %.2f",
             "Steady state prefill energy (J) per token",
-            steady_state_prefill_energy_per_token,
+            prefill_steady_state_energy_per_token,
         )
-    if steady_state_decode_energy is not None:
+        # decode
         logger.info(
             "%-40s: %.2f",
             "Steady state decode energy (J)",
-            steady_state_decode_energy,
+            decode_steady_state_energy,
         )
         logger.info(
             "%-40s: %.2f",
             "Steady state decode energy (J) per token",
-            steady_state_decode_energy_per_token,
+            decode_steady_state_energy_per_token,
         )
+    logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
+    logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
     logger.info(
         "%-40s: %.2f",
         "Steady state energy (J) per token",
@@ -978,10 +1186,11 @@ async def benchmark(
         "completed": metrics.completed,
         "steady_state_duration": steady_state_time,
         "steady_state_energy": steady_state_energy,
-        "steady_state_prefill_energy": steady_state_prefill_energy,
-        "steady_state_prefill_energy_per_token": steady_state_prefill_energy_per_token,
-        "steady_state_decode_energy": steady_state_decode_energy,
-        "steady_state_decode_energy_per_token": steady_state_decode_energy_per_token,
+        "prefill_steady_state_duration": prefill_steady_state_duration,
+        "prefill_steady_state_energy": prefill_steady_state_energy,
+        "prefill_steady_state_energy_per_token": prefill_steady_state_energy_per_token,
+        "decode_steady_state_energy": decode_steady_state_energy,
+        "decode_steady_state_energy_per_token": decode_steady_state_energy_per_token,
         "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
@@ -1014,6 +1223,8 @@ async def benchmark(
             "benchmark_end_time": benchmark_end_time,
             "steady_state_start_time": steady_state_start_time,
             "steady_state_end_time": steady_state_end_time,
+            "prefill_steady_state_start_time": prefill_steady_state_start_time,
+            "prefill_steady_state_end_time": prefill_steady_state_end_time,
             "power": power_timeline,
         },
     }

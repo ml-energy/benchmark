@@ -83,6 +83,7 @@ class WorkloadConfig(BaseModel):
     max_num_batched_tokens: int | None = None
     num_prefills: int | None = None
     num_decodes: int | None = None
+    num_prefill_warmups: int = 50
 
     @model_validator(mode="after")
     def _validate_workoad(self) -> Self:

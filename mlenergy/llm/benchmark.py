@@ -101,7 +101,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     # Workload configuration
     workload: WorkloadT
     # endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
-    # temporaily disable openai endpoint, the /v1/completions has different streaming 
+    # temporaily disable openai endpoint, the /v1/completions has different streaming
     # logic and the ITL counting needs further investigation
     endpoint_type: Literal["openai-chat"] = "openai-chat"
     max_concurrency: int | None = None
@@ -574,9 +574,7 @@ async def async_request_openai_chat_completions(
                         timestamp = time.perf_counter()
                         data = json.loads(chunk)
                         usage = data.get("usage")
-                        completion_tokens = usage and usage.get(
-                            "completion_tokens"
-                        )
+                        completion_tokens = usage and usage.get("completion_tokens")
                         if completion_tokens == 0:
                             continue
 
@@ -1066,6 +1064,8 @@ async def benchmark(
     prefill_steady_state_energy_per_token = None
     decode_steady_state_energy = None
     decode_steady_state_energy_per_token = None
+    mean_prefill_energy_percentage_per_generation = None
+    mean_decode_energy_percentage_per_generation = None
     if pd_enabled:
         assert workload.num_prefills is not None and workload.num_decodes is not None
         assert prefill_results is not None
@@ -1104,8 +1104,30 @@ async def benchmark(
         energy_per_generation = [
             prefill_steady_state_energy_per_token
             + decode_steady_state_energy_per_token * (output_len - 1)
+            if output_len > 0
+            else 0
             for output_len in actual_output_lens
         ]
+        prefill_energy_percentages = [
+            prefill_steady_state_energy_per_token / e if e > 0 else 0
+            for e in energy_per_generation
+        ]
+        decode_energy_percentages = [
+            (decode_steady_state_energy_per_token * (output_len - 1)) / e
+            if output_len > 1 and e > 0
+            else 0
+            for output_len, e in zip(
+                actual_output_lens, energy_per_generation, strict=True
+            )
+        ]
+
+        # cal mean after filtering out 0s (failures)
+        mean_prefill_energy_percentage_per_generation = np.mean(
+            [p for p in prefill_energy_percentages if p > 0]
+        )
+        mean_decode_energy_percentage_per_generation = np.mean(
+            [d for d in decode_energy_percentages if d > 0]
+        )
 
         # setting below to None as they are not meaningful in the PD case
         steady_state_energy = None
@@ -1118,6 +1140,8 @@ async def benchmark(
             steady_state_energy_per_token * output_len
             for output_len in actual_output_lens
         ]
+        prefill_energy_percentages = [0] * len(actual_output_lens)
+        decode_energy_percentages = [0] * len(actual_output_lens)
 
     entire_benchmark_energy = sum(entire_mes.gpu_energy.values())
     entire_benchmark_energy_per_token = (
@@ -1151,6 +1175,11 @@ async def benchmark(
             "Steady state prefill energy (J) per token",
             prefill_steady_state_energy_per_token,
         )
+        logger.info(
+            "%-40s: %.2f",
+            "Mean prefill energy percentage per generation",
+            mean_prefill_energy_percentage_per_generation,
+        )
         # decode
         logger.info(
             "%-40s: %.2f",
@@ -1161,6 +1190,11 @@ async def benchmark(
             "%-40s: %.2f",
             "Steady state decode energy (J) per token",
             decode_steady_state_energy_per_token,
+        )
+        logger.info(
+            "%-40s: %.2f",
+            "Mean decode energy percentage per generation",
+            mean_decode_energy_percentage_per_generation,
         )
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     if steady_state_energy is not None:
@@ -1196,8 +1230,10 @@ async def benchmark(
         "prefill_steady_state_duration": prefill_steady_state_duration,
         "prefill_steady_state_energy": prefill_steady_state_energy,
         "prefill_steady_state_energy_per_token": prefill_steady_state_energy_per_token,
+        "mean_prefill_energy_percentage_per_generation": mean_prefill_energy_percentage_per_generation,
         "decode_steady_state_energy": decode_steady_state_energy,
         "decode_steady_state_energy_per_token": decode_steady_state_energy_per_token,
+        "mean_decode_energy_percentage_per_generation": mean_decode_energy_percentage_per_generation,
         "steady_state_energy_per_token": steady_state_energy_per_token,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
@@ -1217,11 +1253,15 @@ async def benchmark(
                 "itl": output.itl,
                 "error": output.error,
                 "energy": energy,
+                "prefill_energy_percentage": prefill_percentage,
+                "decode_energy_percentage": decode_percentage,
             }
-            for output, output_len, energy in zip(
+            for output, output_len, energy, prefill_percentage, decode_percentage in zip(
                 outputs,
                 actual_output_lens,
                 energy_per_generation,
+                prefill_energy_percentages,
+                decode_energy_percentages,
                 strict=True,
             )
         ],
@@ -1750,6 +1790,7 @@ def main(args: Args) -> None:
     # Save to results file
     with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2)
+    logger.info("Benchmark results saved to %s", result_file)
 
     # Something failed. Treat the whole run as a failure.
     if benchmark_result["completed"] < args.workload.num_requests:

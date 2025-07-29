@@ -18,6 +18,10 @@ import msgpack
 import zmq
 from quart import Quart, make_response, request
 import argparse
+import resource
+
+from hypercorn.config import Config
+from hypercorn.asyncio import serve
 
 count = 0
 prefill_instances: dict[str, Any] = {}  # http_address: (zmq_address, stamp)
@@ -134,34 +138,60 @@ app.config.update(
     BODY_TIMEOUT     = 3600,
 )
 
+# ---- globals that will be filled at startup -------------------------------
+POOL: aiohttp.TCPConnector | None = None
+CLIENT: aiohttp.ClientSession | None = None
+# ---------------------------------------------------------------------------
+
+
+@app.before_serving
+async def _startup():
+    global POOL, CLIENT
+    POOL = aiohttp.TCPConnector(
+        limit=0,
+        ssl=False,
+        keepalive_timeout=6 * 60 * 60,
+    )
+    CLIENT = aiohttp.ClientSession(
+        timeout=AIOHTTP_TIMEOUT,
+        connector=POOL,
+    )
+    print("🔧  Global aiohttp pool created")
+
+
+@app.after_serving
+async def _shutdown():
+    if CLIENT:
+        await CLIENT.close()
+        print("🧹  Global aiohttp pool closed")
+
 
 def random_uuid() -> str:
     return str(uuid.uuid4().hex)
 
 
 async def forward_request(url, data, request_id):
-    async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
-        headers = {
-            "X-Request-Id": request_id,
-        }
-        try:
-            async with session.post(url=url, json=data, headers=headers) as response:
-                if response.status == 200:
-                    # async for chunk_bytes in response.content.iter_chunked(1024):
-                    #     yield chunk_bytes
-                    async for chunk, _ in response.content.iter_chunks():
-                        yield chunk
-                else:
-                    print(f"Error forwarding request to {url}: {response.status}")
-                    raise Exception(
-                        f"Error forwarding request to {url}: {response.status}"
-                    )
-        except Exception as e:
-            print(f"Error forwarding request to {url}: {e}")
-            raise e
+    assert CLIENT is not None, "aiohttp session has not been initialised"
+    headers = {"X-Request-Id": request_id}
+    try:
+        async with CLIENT.post(url=url, json=data, headers=headers) as response:
+            if response.status == 200:
+                # async for chunk_bytes in response.content.iter_chunked(1024):
+                #     yield chunk_bytes
+                async for chunk, _ in response.content.iter_chunks():
+                    yield chunk
+            else:
+                print(f"Error forwarding request to {url}: {response.status}")
+                raise Exception(
+                    f"Error forwarding request to {url}: {response.status}"
+                )
+    except Exception as e:
+        print(f"Error forwarding request to {url}: {e}")
+        raise e
 
 
 @app.route("/v1/completions", methods=["POST"])
+@app.route("/v1/chat/completions", methods=["POST"])
 async def handle_request():
     try:
         original_request_data = await request.get_json()
@@ -197,12 +227,13 @@ async def handle_request():
             f"{decode_zmq_addr}_{random_uuid()}"
         )
 
+        path = request.path
+
         async def prefill_decode_gen():
             # finish prefill
             async for chunk in forward_request(
-                f"http://{prefill_addr}/v1/completions", prefill_request, request_id
+                f"http://{prefill_addr}{path}", prefill_request, request_id
             ):
-                print("Prefill chunk received:", chunk)
                 # here we need to skip `data: [DONE]` chunk
                 if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
                     continue
@@ -210,78 +241,7 @@ async def handle_request():
 
             # return decode
             async for chunk in forward_request(
-                f"http://{decode_addr}/v1/completions", original_request_data, request_id
-            ):
-                yield chunk
-        generator = prefill_decode_gen()
-        response = await make_response(generator)
-        response.timeout = None
-
-        return response
-
-    except Exception as e:
-        import sys
-        import traceback
-
-        exc_info = sys.exc_info()
-        print("Error occurred in disagg prefill proxy server")
-        print(e)
-        print("".join(traceback.format_exception(*exc_info)))
-        return await make_response(
-            "An error occurred while processing the request.", 500
-        )
-
-
-@app.route("/v1/chat/completions", methods=["POST"])
-async def handle_chat_request():
-    try:
-        original_request_data = await request.get_json()
-
-        prefill_request = original_request_data.copy()
-        # change max_tokens = 1 to let it only do prefill
-        prefill_request["max_tokens"] = 1
-
-        global count
-        global prefill_instances
-        global prefill_cv
-        with prefill_cv:
-            prefill_list = list(prefill_instances.items())
-            prefill_addr, prefill_zmq_addr = prefill_list[count % len(prefill_list)]
-            prefill_zmq_addr = prefill_zmq_addr[0]
-
-        global decode_instances
-        global decode_cv
-        with decode_cv:
-            decode_list = list(decode_instances.items())
-            decode_addr, decode_zmq_addr = decode_list[count % len(decode_list)]
-            decode_zmq_addr = decode_zmq_addr[0]
-
-        print(
-            f"handle_request count: {count}, [HTTP:{prefill_addr}, "
-            f"ZMQ:{prefill_zmq_addr}] 👉 [HTTP:{decode_addr}, "
-            f"ZMQ:{decode_zmq_addr}]"
-        )
-        count += 1
-
-        request_id = (
-            f"___prefill_addr_{prefill_zmq_addr}___decode_addr_"
-            f"{decode_zmq_addr}_{random_uuid()}"
-        )
-
-        async def prefill_decode_gen():
-            # finish prefill
-            async for chunk in forward_request(
-                f"http://{prefill_addr}/v1/chat/completions", prefill_request, request_id
-            ):
-                print("Prefill chunk received:", chunk)
-                # here we need to skip `data: [DONE]` chunk
-                if b"data: [DONE]" in chunk.replace(b"\r", b"").strip():
-                    continue
-                yield chunk
-
-            # return decode
-            async for chunk in forward_request(
-                f"http://{decode_addr}/v1/chat/completions", original_request_data, request_id
+                f"http://{decode_addr}{path}", original_request_data, request_id
             ):
                 yield chunk
         generator = prefill_decode_gen()
@@ -319,13 +279,13 @@ async def health_check():
         )
     coros = []
     async def instance_healthy(http_address: str) -> bool:
+        assert CLIENT is not None, "aiohttp session has not been initialised"
         try:
-            async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
-                async with session.get(f"http://{http_address}/health") as response:
-                    if response.status == 200:
-                        print("Instance healthy:", http_address)
-                        return True
-                    return False
+            async with CLIENT.get(f"http://{http_address}/health") as response:
+                if response.status == 200:
+                    print("Instance healthy:", http_address)
+                    return True
+                return False
         except Exception as e:
             print(f"Health check failed for {http_address}: {e}")
             return False
@@ -340,7 +300,34 @@ async def health_check():
     else:
         return await make_response("Some instances are unhealthy", 503)
 
+def set_ulimit(target_soft_limit=65535):
+    """Set the soft limit for the number of open files (ulimit -n)."""
+
+    resource_type = resource.RLIMIT_NOFILE
+    current_soft, current_hard = resource.getrlimit(resource_type)
+
+    if current_soft < target_soft_limit:
+        try:
+            resource.setrlimit(resource_type, (target_soft_limit, current_hard))
+        except ValueError as e:
+            print(
+                "Found ulimit of %s and failed to automatically increase "
+                "with error %s. This can cause fd limit errors like "
+                "`OSError: [Errno 24] Too many open files`. Consider "
+                "increasing with ulimit -n",
+                current_soft,
+                e,
+            )
+
 if __name__ == "__main__":
+    set_ulimit()
     t = start_service_discovery("0.0.0.0", args.discovery_port)
-    app.run(host="0.0.0.0", port=args.port)
+
+    cfg = Config()
+    cfg.bind = [f"0.0.0.0:{args.port}"]
+    cfg.backlog = 2048
+    cfg.keep_alive_timeout = 3600
+    cfg.workers = 1
+
+    asyncio.run(serve(app, cfg))
     t.join()

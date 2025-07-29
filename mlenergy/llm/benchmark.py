@@ -100,7 +100,10 @@ class Args(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
-    endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
+    # endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
+    # temporaily disable openai endpoint, the /v1/completions has different streaming 
+    # logic and the ITL counting needs further investigation
+    endpoint_type: Literal["openai-chat"] = "openai-chat"
     max_concurrency: int | None = None
     request_rate: float = float("inf")
     burstiness: float = 1.0
@@ -570,6 +573,12 @@ async def async_request_openai_chat_completions(
                     if chunk != "[DONE]":
                         timestamp = time.perf_counter()
                         data = json.loads(chunk)
+                        usage = data.get("usage")
+                        completion_tokens = usage and usage.get(
+                            "completion_tokens"
+                        )
+                        if completion_tokens == 0:
+                            continue
 
                         if choices := data.get("choices"):
                             content = choices[0]["delta"].get("content")
@@ -585,10 +594,6 @@ async def async_request_openai_chat_completions(
 
                             # Decoding phase
                             else:
-                                usage = data.get("usage")
-                                completion_tokens = usage and usage.get(
-                                    "completion_tokens"
-                                )
                                 if (
                                     isinstance(request_tracker, PDRequestTracker)
                                     and completion_tokens
@@ -1158,12 +1163,14 @@ async def benchmark(
             decode_steady_state_energy_per_token,
         )
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
-    logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
-    logger.info(
-        "%-40s: %.2f",
-        "Steady state energy (J) per token",
-        steady_state_energy_per_token,
-    )
+    if steady_state_energy is not None:
+        logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+    if steady_state_energy_per_token is not None:
+        logger.info(
+            "%-40s: %.2f",
+            "Steady state energy (J) per token",
+            steady_state_energy_per_token,
+        )
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
     logger.info(
         "%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output
@@ -1765,14 +1772,6 @@ if __name__ == "__main__":
         ]
     )
 
-    if (
-        args.endpoint_type == "openai-chat"
-        and args.workload.num_prefills
-        and args.workload.num_decodes
-    ):
-        raise NotImplementedError(
-            "vLLM OpenAI chat endpoint has a bug with Prefill/Decode disaggregation."
-        )
     assert isinstance(args.workload, WorkloadConfig)
 
     # Exit if the result file exists so that the script is idempotent.

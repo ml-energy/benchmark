@@ -101,7 +101,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     # Workload configuration
     workload: WorkloadT
     # endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
-    # temporaily disable openai endpoint, the /v1/completions has different streaming 
+    # temporaily disable openai endpoint, the /v1/completions has different streaming
     # logic and the ITL counting needs further investigation
     endpoint_type: Literal["openai-chat"] = "openai-chat"
     max_concurrency: int | None = None
@@ -574,9 +574,7 @@ async def async_request_openai_chat_completions(
                         timestamp = time.perf_counter()
                         data = json.loads(chunk)
                         usage = data.get("usage")
-                        completion_tokens = usage and usage.get(
-                            "completion_tokens"
-                        )
+                        completion_tokens = usage and usage.get("completion_tokens")
                         if completion_tokens == 0:
                             continue
 
@@ -1062,6 +1060,7 @@ async def benchmark(
     prefill_steady_state_duration = None
     prefill_steady_state_start_time = None
     prefill_steady_state_end_time = None
+    prefill_steady_state_mes = None
     prefill_steady_state_energy = None
     prefill_steady_state_energy_per_token = None
     decode_steady_state_energy = None
@@ -1071,10 +1070,20 @@ async def benchmark(
         assert prefill_results is not None
         prefill_steady_state_start_time = prefill_results[1]
         prefill_steady_state_end_time = prefill_results[2]
-        prefill_ss_mes = prefill_results[3]
-        prefill_steady_state_duration = prefill_ss_mes.time
+        prefill_steady_state_mes = prefill_results[3]
+        prefill_steady_state_duration = prefill_steady_state_mes.time
+
+        # we infer the total number of GPUs from measurement
+        num_gpus = len(prefill_steady_state_mes.gpu_energy)
+        num_gpu_per_instance = num_gpus // (
+            workload.num_prefills + workload.num_decodes
+        )
+
         prefill_steady_state_energy = sum(
-            [prefill_ss_mes.gpu_energy[p] for p in range(workload.num_prefills)]
+            [
+                prefill_steady_state_mes.gpu_energy[p]
+                for p in range(workload.num_prefills * num_gpu_per_instance)
+            ]
         )
         # The number of requests that started (i.e., got their first token) during the
         # steady state gives us the number of prefills done.
@@ -1085,8 +1094,9 @@ async def benchmark(
             [
                 steady_state_mes.gpu_energy[d]
                 for d in range(
-                    workload.num_prefills,
-                    workload.num_prefills + workload.num_decodes,
+                    workload.num_prefills * num_gpu_per_instance,
+                    workload.num_prefills * num_gpu_per_instance
+                    + workload.num_decodes * num_gpu_per_instance,
                 )
             ]
         )
@@ -1104,6 +1114,8 @@ async def benchmark(
         energy_per_generation = [
             prefill_steady_state_energy_per_token
             + decode_steady_state_energy_per_token * (output_len - 1)
+            if output_len > 0
+            else 0.0
             for output_len in actual_output_lens
         ]
 
@@ -1204,6 +1216,9 @@ async def benchmark(
         "request_throughput": metrics.request_throughput,
         "output_throughput": metrics.output_throughput,
         "total_token_throughput": metrics.total_token_throughput,
+        "prefill_state_measurement": asdict(prefill_steady_state_mes)
+        if prefill_steady_state_mes
+        else None,
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
         "results": [

@@ -448,14 +448,33 @@ if __name__ == "__main__":
     args = tyro.cli(DiffusionArgs[TextToImage | TextToVideo])
 
     # Set up logging
+    # Only rank 0 should write to the driver log file to avoid conflicts
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    
+    # Create handlers
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    stream_handler.setFormatter(formatter)
+    
+    handlers = [stream_handler]
+    
+    if local_rank == 0:
+        file_handler = logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
+    
+    # Configure root logger with force=True to override any existing configuration
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w"),
-        ],
+        handlers=handlers,
+        force=True,
     )
 
     try:

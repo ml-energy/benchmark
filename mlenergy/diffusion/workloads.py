@@ -86,6 +86,9 @@ class DiffusionWorkloadConfig(BaseModel):
         height: Output image height
         width: Output image width
         inference_steps: Number of inference steps
+        use_torch_compile: Whether to use torch.compile optimization
+        ulysses_degree: Ulysses attention parallelism degree
+        ring_degree: Ring attention parallelism degree
     """
 
     # Input parameters
@@ -98,6 +101,10 @@ class DiffusionWorkloadConfig(BaseModel):
     height: Optional[int] = None
     width: Optional[int] = None
     inference_steps: Optional[int] = None
+    
+    # Parallelism configuration
+    ulysses_degree: int = 1
+    ring_degree: int = 1
 
     # Optimization parameters
     use_torch_compile: bool = False
@@ -167,6 +174,8 @@ class DiffusionWorkloadConfig(BaseModel):
             f"size-{self.height}x{self.width}",
             f"steps-{self.inference_steps}",
             f"seed-{self.seed}",
+            f"uly-{self.ulysses_degree}",
+            f"ring-{self.ring_degree}",
             f"tc-{self.use_torch_compile}",
         ]
         return parts

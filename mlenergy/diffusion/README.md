@@ -27,22 +27,22 @@ pip install -e "git+https://github.com/xdit-project/xDiT.git@21dcdcf#egg=xfuser[
 ```bash
 # Single GPU execution
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 mlenergy/diffusion/benchmark.py \
-    --ulysses_degree 1 \
-    --ring_degree 1 \
     workload:text-to-image \
     --workload.model_id black-forest-labs/FLUX.1-dev \
     --workload.base_dir run/diffusion/text-to-image/FLUX.1-dev \
-    --workload.batch_size 4
+    --workload.batch_size 4 \
+    --workload.ulysses_degree 1 \
+    --workload.ring_degree 1
 
 # Multi-GPU execution
 # ULYSSES_DEGREE * RING_DEGREE = 2 * 2 = 4
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 mlenergy/diffusion/benchmark.py \
-    --ulysses_degree 2 \
-    --ring_degree 2 \
     workload:text-to-image \
     --workload.model_id black-forest-labs/FLUX.1-dev \
     --workload.base_dir run/diffusion/text-to-image/FLUX.1-dev \
-    --workload.batch_size 4
+    --workload.batch_size 4 \
+    --workload.ulysses_degree 2 \
+    --workload.ring_degree 2
 ```
 
 <!-- #### Text-to-Video (T2V) - Coming Soon

@@ -92,13 +92,10 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     Attributes:
         workload: Workload configuration for the benchmark.
+        warmup_iters: Number of warmup iterations before benchmarking.
+        benchmark_iters: Number of benchmark iterations.
         overwrite_results: Whether to overwrite existing results.
         save_images: Whether to save generated images.
-        ulysses_degree: Ulysses attention parallelism degree.
-        ring_degree: Ring attention parallelism degree.
-        use_torch_compile: Whether to use torch.compile.
-        use_fp8_t5_encoder: Whether to use FP8 quantization for T5.
-        enable_sequential_cpu_offload: Whether to use CPU offload.
     """
 
     # Workload configuration
@@ -109,10 +106,6 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
     # Results configuration
     overwrite_results: bool = False
     save_images: bool = True
-
-    # Parallelism configuration
-    ulysses_degree: int = 1
-    ring_degree: int = 1
 
 
 def get_model_type_from_id(model_id: str) -> str:
@@ -304,8 +297,9 @@ def save_results(
     
     # Configuration details
     result_json["configurations"] = {
-        "ulysses_degree": args.ulysses_degree,
-        "ring_degree": args.ring_degree,
+        "ulysses_degree": args.workload.ulysses_degree,
+        "ring_degree": args.workload.ring_degree,
+        "use_torch_compile": args.workload.use_torch_compile,
     }
 
     # Save results
@@ -367,8 +361,8 @@ def main(args: DiffusionArgs) -> None:
     logger.info(f"Setting up xFuser args")
     xfuser_args = xFuserArgs(
         model=args.workload.model_id,
-        ulysses_degree=args.ulysses_degree,
-        ring_degree=args.ring_degree,
+        ulysses_degree=args.workload.ulysses_degree,
+        ring_degree=args.workload.ring_degree,
         height=args.workload.height,
         width=args.workload.width,
         num_inference_steps=args.workload.inference_steps,
@@ -420,7 +414,7 @@ def main(args: DiffusionArgs) -> None:
             zeus_monitor.begin_window("iteration")
         benchmark_output = pipe(**benchmark_kwargs)
         if zeus_monitor:
-                iter_energy_results.append(zeus_monitor.end_window("iteration"))
+            iter_energy_results.append(zeus_monitor.end_window("iteration"))
 
         save_generated_images(pipe, benchmark_output, benchmark_request, args, output_dir, i)
 
@@ -442,7 +436,6 @@ def main(args: DiffusionArgs) -> None:
 
 # TODO: download the model if not exists
 # TODO: handle the default configs of different models
-# TODO: move SP degree to the workload config
 # TODO: handle server log
 if __name__ == "__main__":
     args = tyro.cli(DiffusionArgs[TextToImage | TextToVideo])

@@ -31,6 +31,7 @@ if __name__ == "__main__":
         num_requests=100,
         num_images=2,
         model_id=model_id,
+        gpu_model="H100",
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -44,6 +45,7 @@ if __name__ == "__main__":
         num_videos=1,
         model_id=model_id,
         video_data_dir="/turbo/llava_video_178k",
+        gpu_model="H100",
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -57,6 +59,7 @@ if __name__ == "__main__":
         num_audios=1,
         model_id=model_id,
         audio_data_dir="/turbo/FSD50K.dev_audio",
+        gpu_model="H100",
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -71,6 +74,7 @@ if __name__ == "__main__":
     #     num_videos=1,
     #     num_audio=2,
     #     model_id=model_id,
+    #     gpu_model="H100",
     #     video_data_dir="/turbo/llava_video_178k",
     # max_num_seqs=512,
     # )
@@ -81,6 +85,7 @@ if __name__ == "__main__":
         base_dir=Path("run/llm/lmarena") / model_id,
         num_requests=100,
         model_id=model_id,
+        gpu_model="H100",
         max_num_seqs=32,
     )
     requests = work.load_requests()
@@ -92,6 +97,7 @@ if __name__ == "__main__":
         base_dir=Path("run/llm/gpqa") / model_id,
         num_requests=100,
         model_id=model_id,
+        gpu_model="H100",
         max_num_seqs=32,
     )
     requests = work.load_requests()

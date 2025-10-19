@@ -68,8 +68,13 @@ class WorkloadConfig(BaseModel):
         seed: Random seed for reproducibility.
         model_id: Model identifier for the model to be used in the benchmark.
         num_requests: Number of requests to sample for the benchmark.
+        gpu_model: GPU model identifier (e.g., "H100", "A100", "B200") used to
+            load model-specific vLLM configurations.
         max_num_seqs: vLLM maximum number of seuqences config.
         max_num_batched_tokens: vLLM maximum number of batched tokens config.
+        num_prefills: Number of prefill instances for disaggregated serving.
+        num_decodes: Number of decode instances for disaggregated serving.
+        num_prefill_warmups: Number of warmup requests for prefill steady state.
     """
 
     # Input parameters
@@ -79,6 +84,7 @@ class WorkloadConfig(BaseModel):
     num_requests: int
 
     # Systems parameters
+    gpu_model: str
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
     num_prefills: int | None = None
@@ -207,6 +213,7 @@ class ImageChat(WorkloadConfig):
         """Generate a list of parts that will be used to create a unique filename."""
         return [
             "image_chat",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.num_images) + "image",
             str(self.seed) + "seed",
@@ -250,6 +257,7 @@ class VideoChat(WorkloadConfig):
         """Generate a list of parts that will be used to create a unique filename."""
         return [
             "video_chat",
+            self.gpu_model,
             self.dataset_split,
             str(self.num_requests) + "req",
             str(self.num_videos) + "video",
@@ -295,6 +303,7 @@ class AudioChat(WorkloadConfig):
         """Generate a list of parts that will be used to create a unique filename."""
         return [
             "audio_chat",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.num_audios) + "audio",
             str(self.seed) + "seed",
@@ -346,6 +355,7 @@ class OmniChat(WorkloadConfig):
         """Generate a list of parts that will be used to create a unique filename."""
         return [
             "omni_chat",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.num_images) + "image",
             str(self.num_videos) + "video",
@@ -390,6 +400,7 @@ class LMArenaChat(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         return [
             "lmarena_chat",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
@@ -427,6 +438,7 @@ class LengthControl(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         return [
             "length_control",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(int(self.input_mean)) + "input_mean",
             str(int(self.output_mean)) + "output_mean",
@@ -464,6 +476,7 @@ class SourcegraphFIM(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         return [
             "sourcegraph_fim",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
@@ -498,6 +511,7 @@ class GPQA(WorkloadConfig):
     def to_filename_parts(self) -> list[str]:
         return [
             "gpqa",
+            self.gpu_model,
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",

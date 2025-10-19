@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -1394,6 +1394,7 @@ dependencies = [
     { name = "msgpack" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "pyzmq" },
     { name = "quart" },
     { name = "requests" },
@@ -1420,12 +1421,13 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "pyzmq", specifier = ">=27.0.0" },
     { name = "quart", specifier = ">=0.20.0" },
     { name = "requests", specifier = ">=2.32.4" },
     { name = "transformers", specifier = ">=4.53.2" },
     { name = "tyro", specifier = ">=0.9.26" },
-    { name = "zeus", specifier = ">=0.12.1" },
+    { name = "zeus", specifier = ">=0.12.3" },
 ]
 
 [package.metadata.requires-dev]
@@ -3129,7 +3131,7 @@ wheels = [
 
 [[package]]
 name = "zeus"
-version = "0.12.1.post1"
+version = "0.12.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "amdsmi" },
@@ -3143,7 +3145,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "tyro" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/aa/f365a56e45c52b9ae836c405923b3e4245891e013408669d36465451c9c2/zeus-0.12.1.post1.tar.gz", hash = "sha256:90dd19d26b7ba0ace9b3fcc67a647a82d4d5106b2d6767dc334836d9a6460d74", size = 196113, upload-time = "2025-07-27T03:56:14.776Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/70/04f0660f42f6f0b06893a646e498b195d04325be743f3bdab5f3257b4d66/zeus-0.12.3.tar.gz", hash = "sha256:2044d93b4a7c9bd0a0935b34e4a42e1611973524ef9eb023e9122d54b6bb0696", size = 197937, upload-time = "2025-10-19T04:45:23.976Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/20/bfc84a0221306465c9c02f4fe07e23dfcc2fffac9a0e3bc4758ae197dbc8/zeus-0.12.1.post1-py3-none-any.whl", hash = "sha256:6a445c7581bcc2a7ee3092a75d0fe656ec8378717e59472c61217f62da86e218", size = 251242, upload-time = "2025-07-27T03:56:12.901Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/74/74a0eb7c0922bb7cecc9dad0e9a0c269ef566c0fcb6c6c3eafff90c23f59/zeus-0.12.3-py3-none-any.whl", hash = "sha256:f99a2e7c9474fb1c6e8e2ea102964b8849ccffdb3634ca086731e2de5c426252", size = 253610, upload-time = "2025-10-19T04:45:22.355Z" },
 ]

@@ -33,7 +33,7 @@ import numpy as np
 import requests
 from pydantic import BaseModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from zeus.monitor import ZeusMonitor, PowerMonitor
+from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.monitor.energy import Measurement
 from zeus.show_env import show_env
 
@@ -48,10 +48,11 @@ from mlenergy.llm.workloads import (
     WorkloadConfig,
     LengthControl,
 )
+from mlenergy.llm.config import get_vllm_config_path, load_env_vars
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
-logger = logging.getLogger("mlenergy.llm.run")
+logger = logging.getLogger("mlenergy.llm.benchmark")
 
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)
@@ -490,7 +491,7 @@ async def async_request_openai_completions(
                 output.generated_text = generated_text
                 output.latency = most_recent_timestamp - st
             else:
-                output.error = response.reason or ""
+                output.error = (await response.text()) or response.reason or ""
                 output.success = False
     except Exception:
         output.success = False
@@ -621,7 +622,7 @@ async def async_request_openai_chat_completions(
                 output.success = True
                 output.latency = most_recent_timestamp - st
             else:
-                output.error = response.reason or ""
+                output.error = (await response.text()) or response.reason or ""
                 output.success = False
     except Exception:
         output.success = False
@@ -629,6 +630,8 @@ async def async_request_openai_chat_completions(
         output.error = "".join(traceback.format_exception(*exc_info))
     finally:
         request_tracker.notify_request_finished()
+        if not output.success:
+            logger.warning("Request failed with error: %s", output.error)
 
     return output
 
@@ -895,6 +898,7 @@ async def benchmark(
 
     # Zeus power monitor
     power_monitor = PowerMonitor(update_period=0.1)
+    temperature_monitor = TemperatureMonitor(update_period=0.5)
 
     logger.info("Traffic request rate: %f req/s", request_rate)
 
@@ -1047,6 +1051,10 @@ async def benchmark(
         start_time=benchmark_start_time,
         end_time=benchmark_end_time,
     )
+    temperature_timeline = temperature_monitor.get_temperature_timeline(
+        start_time=benchmark_start_time,
+        end_time=benchmark_end_time,
+    )
 
     metrics, actual_output_lens = calculate_metrics(
         input_requests=input_requests,
@@ -1136,69 +1144,35 @@ async def benchmark(
         entire_benchmark_energy / request_tracker.get_num_generated_tokens()
     )
 
+    # fmt: off
     logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
-    logger.info(
-        "%-40s: %.2f",
-        "Benchmark total energy (J) per token",
-        entire_benchmark_energy_per_token,
-    )
+    logger.info("%-40s: %.2f", "Benchmark total energy (J) per token", entire_benchmark_energy_per_token)
     if pd_enabled:
         # prefill
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill duration (s)",
-            prefill_steady_state_duration,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill energy (J)",
-            prefill_steady_state_energy,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill energy (J) per token",
-            prefill_steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state prefill duration (s)", prefill_steady_state_duration)
+        logger.info("%-40s: %.2f", "Steady state prefill energy (J)", prefill_steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state prefill energy (J) per token", prefill_steady_state_energy_per_token)
         # decode
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state decode energy (J)",
-            decode_steady_state_energy,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state decode energy (J) per token",
-            decode_steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state decode energy (J)", decode_steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state decode energy (J) per token", decode_steady_state_energy_per_token)
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     if steady_state_energy is not None:
         logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state average power (W)", steady_state_energy / steady_state_time)
     if steady_state_energy_per_token is not None:
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state energy (J) per token",
-            steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state energy (J) per token", steady_state_energy_per_token)
+        logger.info("%-40s: %.2f", "Average energy per generation (J)", steady_state_energy_per_token * metrics.total_output / metrics.completed)
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
-    logger.info(
-        "%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output
-    )
-    logger.info(
-        "%-40s: %d",
-        "Total generated tokens (counted)",
-        request_tracker.get_num_generated_tokens(),
-    )
+    logger.info("%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output)
+    logger.info("%-40s: %d", "Total generated tokens (counted)", request_tracker.get_num_generated_tokens())
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
-    logger.info(
-        "%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput
-    )
-    logger.info(
-        "%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput
-    )
+    logger.info("%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput)
+    logger.info("%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput)
+    # fmt: on
 
     result = {
         "duration": benchmark_duration,
@@ -1221,26 +1195,7 @@ async def benchmark(
         else None,
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
-        "results": [
-            {
-                "prompt": output.prompt,
-                "generated_text": output.generated_text,
-                "input_len": output.prompt_len,
-                "output_len": output_len,
-                "latency": output.latency,
-                "ttft": output.ttft,
-                "itl": output.itl,
-                "error": output.error,
-                "energy": energy,
-            }
-            for output, output_len, energy in zip(
-                outputs,
-                actual_output_lens,
-                energy_per_generation,
-                strict=True,
-            )
-        ],
-        "power_timeline": {
+        "timeline": {
             "benchmark_start_time": benchmark_start_time,
             "benchmark_end_time": benchmark_end_time,
             "steady_state_start_time": steady_state_start_time,
@@ -1248,6 +1203,7 @@ async def benchmark(
             "prefill_steady_state_start_time": prefill_steady_state_start_time,
             "prefill_steady_state_end_time": prefill_steady_state_end_time,
             "power": power_timeline,
+            "temperature": temperature_timeline,
         },
     }
 
@@ -1294,6 +1250,26 @@ async def benchmark(
 
     logger.info("=" * 50)
 
+    result["results"] = [
+        {
+            "prompt": output.prompt,
+            "generated_text": output.generated_text,
+            "input_len": output.prompt_len,
+            "output_len": output_len,
+            "latency": output.latency,
+            "ttft": output.ttft,
+            "itl": output.itl,
+            "error": output.error,
+            "energy": energy,
+        }
+        for output, output_len, energy in zip(
+            outputs,
+            actual_output_lens,
+            energy_per_generation,
+            strict=True,
+        )
+    ]
+
     return result
 
 
@@ -1302,6 +1278,7 @@ def spawn_vllm(
     port: int,
     discovery_port: int,
     model_id: str,
+    gpu_model: str,
     hf_token: str,
     hf_home: str,
     gpu_ids: list[int],
@@ -1317,25 +1294,33 @@ def spawn_vllm(
 
     This does not wait for the server to be ready.
 
-    Retuens:
+    Returns:
         The container names of the spawned vLLM servers.
     """
     assert Path(hf_home).exists(), f"Hugging Face home directory not found: {hf_home}"
 
     spawned_containers = []
     spawned_processes = []
+
+    # PD disaggregation
     if num_prefills != 0 and num_decodes != 0:
-        # PD
         if len(gpu_ids) < num_decodes + num_prefills:
             raise ValueError(
                 "Number of GPUs must be greater than or equal to "
                 "num_prefills + num_decodes."
             )
+
+        # Load model-specific configs for prefill and decode
+        prefill_config_path = get_vllm_config_path(model_id, gpu_model, "prefill")
+        prefill_env_vars = load_env_vars(model_id, gpu_model, "prefill")
+        decode_config_path = get_vllm_config_path(model_id, gpu_model, "decode")
+        decode_env_vars = load_env_vars(model_id, gpu_model, "decode")
+
+        # KV transfer configs
         send_type = "GET"
         prefill_kv_buffer_size = "16e9"
         decode_kv_buffer_size = "8e9"
-        prefill_gpu_memory_utilization = 0.7
-        decode_gpu_memory_utilization = 0.8
+
         # start proxy server first at port
         proxy_filepath = server_log_filepath.with_name("proxy_server_log.txt")
         proxy_log_file = open(proxy_filepath, "w")
@@ -1375,6 +1360,10 @@ def spawn_vllm(
             cur_gpus = gpu_ids[i * gpu_per_instance : (i + 1) * gpu_per_instance]
             gpu_str = ",".join(str(gpu_id) for gpu_id in cur_gpus)
             container_name = f"benchmark-vllm-prefill-{i}-{''.join(str(gpu_id) for gpu_id in cur_gpus)}"
+
+            # Container path for the config file
+            container_config_path = "/vllm_config/prefill.config.yaml"
+
             # fmt: off
             prefill_kv_transfer_config = {
                 "kv_connector": "P2pNcclConnector",
@@ -1402,15 +1391,21 @@ def spawn_vllm(
                 "--name", container_name,
                 "-e", f"HF_TOKEN={hf_token}",
                 "-e", f"LOG_LEVEL={log_level}",
+                # Add model-specific environment variables
+                *[item for k, v in prefill_env_vars.items() for item in ["-e", f"{k}={v}"]],
+                # Mount config file
+                "-v", f"{prefill_config_path}:{container_config_path}:ro",
                 "-v", f"{hf_home}:/root/.cache/huggingface",
                 *(
                     ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
                 ),
                 server_image,
+                # Use config file - other args will override config values
+                "--config", container_config_path,
+                # Runtime-specific args that override config
                 "--port", str(prefill_http_base_port + i),
                 "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
-                "--gpu-memory-utilization", str(prefill_gpu_memory_utilization),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(prefill_kv_transfer_config),
@@ -1442,6 +1437,10 @@ def spawn_vllm(
             cur_gpus = decode_gpu_ids[i * gpu_per_instance : (i + 1) * gpu_per_instance]
             gpu_str = ",".join(str(gpu_id) for gpu_id in cur_gpus)
             container_name = f"benchmark-vllm-decode-{i}-{''.join(str(gpu_id) for gpu_id in cur_gpus)}"
+
+            # Container path for the config file
+            container_config_path = "/vllm_config/decode.config.yaml"
+
             # fmt: off
             decode_kv_transfer_config = {
                 "kv_connector": "P2pNcclConnector",
@@ -1469,15 +1468,19 @@ def spawn_vllm(
                 "--name", container_name,
                 "-e", f"HF_TOKEN={hf_token}",
                 "-e", f"LOG_LEVEL={log_level}",
+                # Add model-specific environment variables
+                *[item for k, v in decode_env_vars.items() for item in ["-e", f"{k}={v}"]],
+                # Mount config file
+                "-v", f"{decode_config_path}:{container_config_path}:ro",
                 "-v", f"{hf_home}:/root/.cache/huggingface",
                 *(
                     ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
                 ),
                 server_image,
+                "--config", container_config_path,
                 "--port", str(decode_http_base_port + i),
                 "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
-                "--gpu-memory-utilization", str(decode_gpu_memory_utilization),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(decode_kv_transfer_config),
@@ -1500,11 +1503,18 @@ def spawn_vllm(
             )
             spawned_containers.append(container_name)
 
+    # Monolithic deployment
     elif num_prefills == 0 and num_decodes == 0:
-        # Single vLLM server
+        # Load model-specific config for monolithic deployment
+        monolithic_config_path = get_vllm_config_path(model_id, gpu_model, "monolithic")
+        monolithic_env_vars = load_env_vars(model_id, gpu_model, "monolithic")
+
         gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
         gpu_str = f'"device={gpu_str}"'
         container_name = f"benchmark-vllm-{''.join(str(gpu_id) for gpu_id in gpu_ids)}"
+
+        # Container path for the config file
+        container_config_path = "/vllm_config/monolithic.config.yaml"
 
         # fmt: off
         server_cmd = [
@@ -1515,16 +1525,21 @@ def spawn_vllm(
             "--name", container_name,
             "-e", f"HF_TOKEN={hf_token}",
             "-e", f"LOG_LEVEL={log_level}",
+            # Add model-specific environment variables
+            *[item for k, v in monolithic_env_vars.items() for item in ["-e", f"{k}={v}"]],
+            # Mount config file
+            "-v", f"{monolithic_config_path}:{container_config_path}:ro",
             "-v", f"{hf_home}:/root/.cache/huggingface",
             *(
                 ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
             ),
             server_image,
+            # Use config file - other args will override config values
+            "--config", container_config_path,
+            # Runtime-specific args that override config
             "--port", str(port),
             "--model", model_id,
             "--tensor-parallel-size", str(len(gpu_ids)),
-            "--gpu-memory-utilization", "0.95",
-            "--trust-remote-code",
             "--max-num-seqs", str(max_num_seqs),
         ]
         # fmt: on
@@ -1587,10 +1602,9 @@ def main(args: Args) -> None:
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:
-        logger.info(
-            "Result file %s already exists. Exiting immediately. "
+        print(
+            f"Result file {result_file} already exists. Exiting immediately. "
             "Specify --overwrite-results to run the benchmark and overwrite results.",
-            result_file,
         )
         return
 
@@ -1620,6 +1634,7 @@ def main(args: Args) -> None:
         port=port,
         discovery_port=discovery_port,
         model_id=model_id,
+        gpu_model=args.workload.gpu_model,
         hf_token=hf_token,
         hf_home=hf_home,
         gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
@@ -1681,7 +1696,7 @@ def main(args: Args) -> None:
             elapsed_seconds += 1
 
             # Check the container state
-            if elapsed_seconds >= 30:
+            if elapsed_seconds >= 300:
                 for container_name in container_names:
                     try:
                         container_running = (
@@ -1716,7 +1731,7 @@ def main(args: Args) -> None:
             tail_handle.terminate()
             tail_handle.wait()
 
-    # Avoid GC processing "static" data - reduce pause times.
+    # Freeze gc to prevent random pauses during benchmarking
     gc.collect()
     gc.freeze()
 
@@ -1811,10 +1826,16 @@ if __name__ == "__main__":
     )
 
     # Explicitly include Zeus PowerMonitor logs
-    zl = logging.getLogger("zeus.monitor.power")
-    zl.setLevel(logging.INFO)
-    zl.propagate = True
-    zl.handlers.clear()
+    zpl = logging.getLogger("zeus.monitor.power")
+    zpl.setLevel(logging.INFO)
+    zpl.propagate = True
+    zpl.handlers.clear()
+
+    # Explicitly include Zeus TemperatureMonitor logs
+    ztl = logging.getLogger("zeus.monitor.temperature")
+    ztl.setLevel(logging.INFO)
+    ztl.propagate = True
+    ztl.handlers.clear()
 
     try:
         main(args)

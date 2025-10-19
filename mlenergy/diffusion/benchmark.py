@@ -40,13 +40,17 @@ from xfuser import (
     xFuserHunyuanDiTPipeline,
     xFuserSanaPipeline,
 )
-from xfuser.config import FlexibleArgumentParser
+from xfuser import (
+    xFuserCogVideoXPipeline,
+)
 from xfuser.core.distributed import (
     get_world_group,
     get_data_parallel_rank,
     get_data_parallel_world_size,
     get_runtime_state,
+    is_dp_last_group,
 )
+from diffusers.utils import export_to_video
 
 from mlenergy.diffusion.dataset import DiffusionRequest
 from mlenergy.diffusion.workloads import (
@@ -88,6 +92,11 @@ PIPELINE_CONFIGS = {
     "Efficient-Large-Model/SANA1.5_4.8B_1024px_diffusers": {
         "pipeline_class": xFuserSanaPipeline,
         "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
+    "zai-org/CogVideoX1.5-5B": {
+        "pipeline_class": xFuserCogVideoXPipeline,
+        "needs_t5": False,  # CogVideoX uses built-in text encoder, not T5
         "dtype": torch.bfloat16,
     },
 }
@@ -160,6 +169,8 @@ def get_model_type_from_id(model_id: str) -> str:
         return "HunyuanDiT"
     elif "SANA" in model_id or "Sana" in model_id:
         return "Sana"
+    elif "CogVideo" in model_id:
+        return "CogVideo"
     else:
         return "Unknown"
 
@@ -262,13 +273,13 @@ def get_inference_kwargs(
     # Add video parameters
     if hasattr(args.workload, 'num_frames'):
         inference_kwargs["num_frames"] = args.workload.num_frames
-    if hasattr(args.workload, 'fps'):
-        inference_kwargs["fps"] = args.workload.fps
+    # if hasattr(args.workload, 'fps'):
+    #     inference_kwargs["fps"] = args.workload.fps
     
     return inference_kwargs
 
 
-def save_generated_images(
+def save_generated_media(
     pipe: Any,
     output: Any,
     request: Any,
@@ -276,25 +287,54 @@ def save_generated_images(
     output_dir: Path,
     iteration_idx: int = 0
 ):
-    if args.save_images:
-        dp_group_index = get_data_parallel_rank()
-        num_dp_groups = get_data_parallel_world_size()
-        num_prompts = len(request.prompts)
-        dp_batch_size = (num_prompts + num_dp_groups - 1) // num_dp_groups
-        
-        if pipe.is_dp_last_group():
-            for i, image in enumerate(output.images):
-                image_rank = dp_group_index * dp_batch_size + i
-                if image_rank < num_prompts:
-                    prompt_text = request.prompts[image_rank]
-                    # Extract a clean name from the prompt
-                    words = prompt_text.split()[:5]  # Take first 5 words
-                    safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
-                    safe_name = safe_name.replace(' ', '_').lower()
-                    filename = f"i{iteration_idx}-{image_rank}_{safe_name}.png"
-                    image_path = output_dir / filename
-                    image.save(image_path)
-                    logger.info(f"Saved image {image_rank} of {iteration_idx} to {image_path}")
+    """Save images or videos depending on pipeline output.
+
+    - Image case: output.images (list[PIL.Image])
+    - Video case: output.frames (Tensor[B, T, C, H, W])
+    """
+    if not args.save_images:
+        return
+
+    should_save = pipe.is_dp_last_group() if hasattr(pipe, 'is_dp_last_group') else is_dp_last_group()
+    if not should_save:
+        return
+    
+    dp_group_index = get_data_parallel_rank()
+    num_dp_groups = get_data_parallel_world_size()
+    num_prompts = len(request.prompts)
+    dp_batch_size = (num_prompts + num_dp_groups - 1) // num_dp_groups
+
+    # Save images
+    if hasattr(output, "images") and output.images is not None:
+        for i, image in enumerate(output.images):
+            image_rank = dp_group_index * dp_batch_size + i
+            if image_rank < num_prompts:
+                prompt_text = request.prompts[image_rank]
+                # Extract a clean name from the prompt
+                words = prompt_text.split()[:5]  # Take first 5 words
+                safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
+                safe_name = safe_name.replace(' ', '_').lower()
+                filename = f"i{iteration_idx}-{image_rank}_{safe_name}.png"
+                image_path = output_dir / filename
+                image.save(image_path)
+                logger.info(f"Saved image {image_rank} of {iteration_idx} to {image_path}")
+        return
+
+    # Save videos
+    if hasattr(output, "frames") and output.frames is not None:
+        fps = getattr(args.workload, "fps", 8)
+        for i, video_frames in enumerate(output.frames):
+            video_rank = dp_group_index * dp_batch_size + i
+            if video_rank < num_prompts:
+                prompt_text = request.prompts[video_rank]
+                # Extract a clean name from the prompt
+                words = prompt_text.split()[:5]  # Take first 5 words
+                safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
+                safe_name = safe_name.replace(' ', '_').lower()
+                filename = f"i{iteration_idx}-{video_rank}_{safe_name}.mp4"
+                video_path = output_dir / filename
+                export_to_video(video_frames, video_path, fps=fps)
+                logger.info(f"Saved video {video_rank} of {iteration_idx} to {video_path}")
 
 
 def save_results(
@@ -448,8 +488,16 @@ def main(args: DiffusionArgs) -> None:
     logger.info(f"Setting up xFuser pipeline")
     pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
 
-    logger.info(f"Preparing xFuser pipeline")
-    pipe.prepare_run(input_config, steps=args.workload.inference_steps)
+    # Prepare/warmup pipeline
+    model_type = get_model_type_from_id(args.workload.model_id)
+    if model_type == "CogVideo":
+        logger.info(f"Warming up CogVideoX pipeline with 1-step inference")
+        warmup_kwargs = get_inference_kwargs(requests[0], args)
+        warmup_kwargs["num_inference_steps"] = 1  # Single step warmup
+        _ = pipe(**warmup_kwargs)
+    else:
+        logger.info(f"Preparing xFuser pipeline with prepare_run")
+        pipe.prepare_run(input_config, steps=args.workload.inference_steps)
 
     # Warmup iterations with different requests
     logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")
@@ -460,7 +508,6 @@ def main(args: DiffusionArgs) -> None:
         warmup_request = requests[i]
         warmup_kwargs = get_inference_kwargs(warmup_request, args)
         warmup_output = pipe(**warmup_kwargs)
-        # save_generated_images(pipe, warmup_output, warmup_request, args, output_dir, i)
 
     # Benchmark iterations with different requests
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
@@ -484,7 +531,7 @@ def main(args: DiffusionArgs) -> None:
         if zeus_monitor:
             iter_energy_results.append(zeus_monitor.end_window("iteration"))
 
-        save_generated_images(pipe, benchmark_output, benchmark_request, args, output_dir, i)
+        save_generated_media(pipe, benchmark_output, benchmark_request, args, output_dir, i)
 
     torch.cuda.synchronize()
     torch.distributed.barrier()

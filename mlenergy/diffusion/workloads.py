@@ -16,7 +16,7 @@ from typing import Any, Literal, Self, Optional
 from datasets import load_dataset
 from pydantic import BaseModel, model_validator
 
-from mlenergy.diffusion.dataset import DiffusionRequest, OpenPreferenceDataset
+from mlenergy.diffusion.dataset import DiffusionRequest, OpenPreferenceDataset, EvalCrafterDataset
 from mlenergy.constants import DEFAULT_SEED
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,15 @@ MODEL_CONFIGS = {
         "num_frames": None,
         "fps": None,
     },
+    # https://huggingface.co/zai-org/CogVideoX1.5-5B
+    "zai-org/CogVideoX1.5-5B": {
+        "inference_steps": 50,
+        "height": 768,
+        "width": 1360,
+        "num_frames": 81,
+        "fps": 8,
+    },
+
 }
 
 
@@ -305,6 +314,16 @@ class TextToVideo(DiffusionWorkloadConfig):
             self.fps = defaults.get("fps", 8)
                 
         return self
+    
+    def sample(self, num_requests: int) -> list[DiffusionRequest]:
+        """Sample requests from the EvalCrafter dataset."""
+        dataset = EvalCrafterDataset(
+            dataset_path="RaphaelLiu/EvalCrafter_T2V_Dataset",
+            dataset_split="train",
+            random_seed=self.seed,
+        )
+        requests = dataset.sample(num_requests=num_requests, batch_size=self.batch_size)
+        return requests
 
 
 if __name__ == "__main__":

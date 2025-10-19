@@ -197,25 +197,56 @@ class DiffusionWorkloadConfig(BaseModel):
             List of DiffusionRequest objects, one for each iteration
         """
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-        request_path = self.to_path(of="requests")
-        if request_path.exists():
-            logger.info(f"Loading cached requests from {request_path}")
-            with open(request_path, 'r', encoding='utf-8') as f:
+        total_iters = warmup_iters + benchmark_iters
+
+        # Determine a shared cache directory like run/diffusion/text-to-image or text-to-video
+        def find_category_dir(base: Path) -> Path | None:
+            for p in [base] + list(base.parents):
+                if p.name in {"text-to-image", "text-to-video"}:
+                    return p
+            return None
+
+        category_dir = find_category_dir(self.base_dir)
+        model_request_path = self.to_path(of="requests")
+
+        shared_requests_path = None
+        if category_dir is not None:
+            total_prompts = total_iters * self.batch_size
+            shared_requests_path = category_dir / f"requests-totalprompts-{total_prompts}-seed-{self.seed}.json"
+            shared_requests_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Prefer loading from shared cache if available, otherwise fall back to model-specific cache
+        if shared_requests_path is not None and shared_requests_path.exists():
+            logger.info(f"Loading cached requests from {shared_requests_path}")
+            with open(shared_requests_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            # Handle both single request list of requests
             if isinstance(data, list):
                 requests = [DiffusionRequest(**req_data) for req_data in data]
             else:
                 requests = [DiffusionRequest(**data)]
             return requests
-        else:
-            logger.info(f"Creating new requests for {self.model_id}")
-            requests = self.sample(warmup_iters + benchmark_iters)
-            if local_rank == 0:
-                with open(request_path, 'w', encoding='utf-8') as f:
-                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
-                logger.info(f"Saved {len(requests)} requests to {request_path}")
+        if model_request_path.exists():
+            logger.info(f"Loading cached requests from {model_request_path}")
+            with open(model_request_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                requests = [DiffusionRequest(**req_data) for req_data in data]
+            else:
+                requests = [DiffusionRequest(**data)]
             return requests
+
+        # Neither cache exists; create new requests
+        logger.info(f"Creating new requests for {self.model_id}")
+        requests = self.sample(total_iters)
+        if local_rank == 0:
+            if shared_requests_path is not None:
+                with open(shared_requests_path, 'w', encoding='utf-8') as f:
+                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved {len(requests)} requests to {shared_requests_path}")
+            with open(model_request_path, 'w', encoding='utf-8') as f:
+                json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved {len(requests)} requests to {model_request_path}")
+        return requests
 
     def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the dataset.

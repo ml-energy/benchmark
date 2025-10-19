@@ -56,6 +56,14 @@ MODEL_CONFIGS = {
         "num_frames": None,
         "fps": None,
     },
+    # https://github.com/NVlabs/Sana
+    "Efficient-Large-Model/SANA1.5_4.8B_1024px_diffusers": {
+        "inference_steps": 20,
+        "height": 1024,
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
 }
 
 

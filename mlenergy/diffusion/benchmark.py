@@ -38,7 +38,7 @@ from xfuser import (
     xFuserPixArtSigmaPipeline,
     xFuserStableDiffusion3Pipeline,
     xFuserHunyuanDiTPipeline,
-    xFuserArgs
+    xFuserSanaPipeline,
 )
 from xfuser.config import FlexibleArgumentParser
 from xfuser.core.distributed import (
@@ -83,6 +83,11 @@ PIPELINE_CONFIGS = {
         "pipeline_class": xFuserHunyuanDiTPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
+        "dtype": torch.bfloat16,
+    },
+    "Efficient-Large-Model/SANA1.5_4.8B_1024px_diffusers": {
+        "pipeline_class": xFuserSanaPipeline,
+        "needs_t5": False,
         "dtype": torch.bfloat16,
     },
 }
@@ -153,6 +158,8 @@ def get_model_type_from_id(model_id: str) -> str:
         return "Sd3"
     elif "HunyuanDiT" in model_id:
         return "HunyuanDiT"
+    elif "SANA" in model_id or "Sana" in model_id:
+        return "Sana"
     else:
         return "Unknown"
 

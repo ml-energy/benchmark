@@ -65,28 +65,24 @@ PIPELINE_CONFIGS = {
         "pipeline_class": xFuserFluxPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
-        "t5_repo_id": "black-forest-labs/FLUX.1-dev",  # same repo for FLUX
         "dtype": torch.bfloat16,
     },
-    "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
+    "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS": {
         "pipeline_class": xFuserPixArtSigmaPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder",
-        "t5_repo_id": "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers",
         "dtype": torch.bfloat16,
     },
     "stabilityai/stable-diffusion-3-medium-diffusers": {
         "pipeline_class": xFuserStableDiffusion3Pipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_3",
-        "t5_repo_id": "stabilityai/stable-diffusion-3-medium-diffusers",
         "dtype": torch.bfloat16,
     },
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "pipeline_class": xFuserHunyuanDiTPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
-        "t5_repo_id": "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers",
         "dtype": torch.bfloat16,
     },
 }
@@ -192,8 +188,6 @@ def setup_pipeline(
     hf_cache_dir = os.environ.get("HF_HOME", None)
     if local_rank == 0:
         ensure_model_downloaded(model_id, hf_cache_dir)
-        if config.get("needs_t5") and config.get("t5_repo_id") and config["t5_repo_id"] != model_id:
-            ensure_model_downloaded(config["t5_repo_id"], hf_cache_dir)
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
@@ -208,9 +202,8 @@ def setup_pipeline(
     # Handle T5 encoder if needed
     text_encoder_kwargs = {}
     if config["needs_t5"]:
-        t5_repo = config.get("t5_repo_id", model_id)
         text_encoder = T5EncoderModel.from_pretrained(
-            t5_repo,
+            model_id,
             subfolder=config["t5_subfolder"],
             torch_dtype=config["dtype"],
         )

@@ -33,10 +33,10 @@ MODEL_CONFIGS = {
         "fps": None,
     },
     # https://huggingface.co/docs/diffusers/en/api/pipelines/pixart_sigma
-    "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
+    "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS": {
         "inference_steps": 100,
-        "height": 2048,
-        "width": 2048,
+        "height": 1024,
+        "width": 1024,
         "num_frames": None,
         "fps": None,
     },

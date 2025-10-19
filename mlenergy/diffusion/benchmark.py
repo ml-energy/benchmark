@@ -26,6 +26,7 @@ import numpy as np
 import torch
 import torch.distributed
 import tyro
+from huggingface_hub import snapshot_download
 from pydantic import BaseModel
 from transformers.models.t5 import T5EncoderModel
 from zeus.monitor import ZeusMonitor
@@ -64,27 +65,61 @@ PIPELINE_CONFIGS = {
         "pipeline_class": xFuserFluxPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
+        "t5_repo_id": "black-forest-labs/FLUX.1-dev",  # same repo for FLUX
         "dtype": torch.bfloat16,
     },
     "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
         "pipeline_class": xFuserPixArtSigmaPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder",
+        "t5_repo_id": "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers",
         "dtype": torch.bfloat16,
     },
     "stabilityai/stable-diffusion-3-medium-diffusers": {
         "pipeline_class": xFuserStableDiffusion3Pipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_3",
+        "t5_repo_id": "stabilityai/stable-diffusion-3-medium-diffusers",
         "dtype": torch.bfloat16,
     },
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "pipeline_class": xFuserHunyuanDiTPipeline,
         "needs_t5": True,
         "t5_subfolder": "text_encoder_2",
+        "t5_repo_id": "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers",
         "dtype": torch.bfloat16,
     },
 }
+
+
+def _apply_runtime_hotfixes() -> None:
+    """Apply small runtime hotfixes for upstream API changes.
+
+    - Forces diffusers' get_2d_rotary_pos_embed to return torch tensors by
+      overriding the reference used inside xFuser's HunyuanDiT pipeline, avoiding
+      the deprecation error when output_type == 'np' on diffusers >= 0.33.0.
+    """
+    try:
+        # Patch the local reference used by xFuser's HunyuanDiT wrapper module
+        import xfuser.model_executor.pipelines.pipeline_hunyuandit as xf_hun
+        from diffusers.models import embeddings as diff_embeddings
+
+        orig_fn = diff_embeddings.get_2d_rotary_pos_embed
+
+        def _patched_get_2d_rotary_pos_embed(*args, **kwargs):
+            # Ensure modern API path without triggering deprecated numpy return
+            if kwargs.get("output_type") != "pt":
+                kwargs["output_type"] = "pt"
+            result = orig_fn(*args, **kwargs)
+            # Guarantee torch tensors (tuple or single)
+            if isinstance(result, tuple):
+                return tuple(x if torch.is_tensor(x) else torch.as_tensor(x) for x in result)
+            return result if torch.is_tensor(result) else torch.as_tensor(result)
+
+        xf_hun.get_2d_rotary_pos_embed = _patched_get_2d_rotary_pos_embed
+        logger.info("Applied rotary-pos-embed hotfix: forcing output_type='pt'.")
+    except Exception as e:
+        logger.warning("Failed to apply rotary-pos-embed hotfix: %s", e)
 
 
 class DiffusionArgs(BaseModel, Generic[WorkloadT]):
@@ -126,6 +161,22 @@ def get_model_type_from_id(model_id: str) -> str:
         return "Unknown"
 
 
+def ensure_model_downloaded(model_id: str, cache_dir: str | None = None) -> str:
+    try:
+        logger.info(f"Downloading model {model_id}...")
+        local_path = snapshot_download(
+            repo_id=model_id,
+            cache_dir=cache_dir,
+            resume_download=True,
+            local_files_only=False,
+        )
+        logger.info(f"Model {model_id} is available at: {local_path}")
+        return local_path
+    except Exception as e:
+        logger.error(f"Failed to download model {model_id}: {e}")
+        raise
+
+
 def setup_pipeline(
     model_id: str,
     engine_config: Any,
@@ -138,6 +189,14 @@ def setup_pipeline(
     
     config = PIPELINE_CONFIGS[model_id]
 
+    hf_cache_dir = os.environ.get("HF_HOME", None)
+    if local_rank == 0:
+        ensure_model_downloaded(model_id, hf_cache_dir)
+        if config.get("needs_t5") and config.get("t5_repo_id") and config["t5_repo_id"] != model_id:
+            ensure_model_downloaded(config["t5_repo_id"], hf_cache_dir)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
     cache_args = {
         "use_teacache": False,
         "use_fbcache": False,
@@ -149,10 +208,11 @@ def setup_pipeline(
     # Handle T5 encoder if needed
     text_encoder_kwargs = {}
     if config["needs_t5"]:
+        t5_repo = config.get("t5_repo_id", model_id)
         text_encoder = T5EncoderModel.from_pretrained(
-            model_id,
+            t5_repo,
             subfolder=config["t5_subfolder"],
-            torch_dtype=config["dtype"]
+            torch_dtype=config["dtype"],
         )
 
         text_encoder_kwargs[config["t5_subfolder"]] = text_encoder
@@ -180,11 +240,6 @@ def setup_pipeline(
     
     pipe = config["pipeline_class"].from_pretrained(**pipeline_kwargs)
 
-    # Handle device placement
-    # if args.enable_sequential_cpu_offload:
-    #     pipe.enable_sequential_cpu_offload(gpu_id=local_rank)
-    #     logger.info(f"rank {local_rank} sequential CPU offload enabled")
-    # else:
     pipe = pipe.to(f"cuda:{local_rank}")
 
     return pipe
@@ -320,6 +375,9 @@ def main(args: DiffusionArgs) -> None:
     """Main benchmark function."""
     logger.info("%s", args)
     assert isinstance(args.workload, DiffusionWorkloadConfig)
+
+    # Apply runtime hotfixes for compatibility
+    _apply_runtime_hotfixes()
 
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:

@@ -52,7 +52,7 @@ from mlenergy.llm.config import get_vllm_config_path, load_env_vars
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
-logger = logging.getLogger("mlenergy.llm.run")
+logger = logging.getLogger("mlenergy.llm.benchmark")
 
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)
@@ -491,7 +491,7 @@ async def async_request_openai_completions(
                 output.generated_text = generated_text
                 output.latency = most_recent_timestamp - st
             else:
-                output.error = response.reason or ""
+                output.error = (await response.text()) or response.reason or ""
                 output.success = False
     except Exception:
         output.success = False
@@ -622,7 +622,7 @@ async def async_request_openai_chat_completions(
                 output.success = True
                 output.latency = most_recent_timestamp - st
             else:
-                output.error = response.reason or ""
+                output.error = (await response.text()) or response.reason or ""
                 output.success = False
     except Exception:
         output.success = False
@@ -630,6 +630,8 @@ async def async_request_openai_chat_completions(
         output.error = "".join(traceback.format_exception(*exc_info))
     finally:
         request_tracker.notify_request_finished()
+        if not output.success:
+            logger.warning("Request failed with error: %s", output.error)
 
     return output
 
@@ -1049,7 +1051,7 @@ async def benchmark(
         start_time=benchmark_start_time,
         end_time=benchmark_end_time,
     )
-    temperature_timeline = temperature_monitor.get_all_temperature_timelines(
+    temperature_timeline = temperature_monitor.get_temperature_timeline(
         start_time=benchmark_start_time,
         end_time=benchmark_end_time,
     )
@@ -1142,69 +1144,35 @@ async def benchmark(
         entire_benchmark_energy / request_tracker.get_num_generated_tokens()
     )
 
+    # fmt: off
     logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
     logger.info("%-40s: %d", "Total requests", workload.num_requests)
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
-    logger.info(
-        "%-40s: %.2f",
-        "Benchmark total energy (J) per token",
-        entire_benchmark_energy_per_token,
-    )
+    logger.info("%-40s: %.2f", "Benchmark total energy (J) per token", entire_benchmark_energy_per_token)
     if pd_enabled:
         # prefill
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill duration (s)",
-            prefill_steady_state_duration,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill energy (J)",
-            prefill_steady_state_energy,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state prefill energy (J) per token",
-            prefill_steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state prefill duration (s)", prefill_steady_state_duration)
+        logger.info("%-40s: %.2f", "Steady state prefill energy (J)", prefill_steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state prefill energy (J) per token", prefill_steady_state_energy_per_token)
         # decode
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state decode energy (J)",
-            decode_steady_state_energy,
-        )
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state decode energy (J) per token",
-            decode_steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state decode energy (J)", decode_steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state decode energy (J) per token", decode_steady_state_energy_per_token)
     logger.info("%-40s: %d", "Steady state duration (s)", steady_state_time)
     if steady_state_energy is not None:
         logger.info("%-40s: %.2f", "Steady state energy (J)", steady_state_energy)
+        logger.info("%-40s: %.2f", "Steady state average power (W)", steady_state_energy / steady_state_time)
     if steady_state_energy_per_token is not None:
-        logger.info(
-            "%-40s: %.2f",
-            "Steady state energy (J) per token",
-            steady_state_energy_per_token,
-        )
+        logger.info("%-40s: %.2f", "Steady state energy (J) per token", steady_state_energy_per_token)
+        logger.info("%-40s: %.2f", "Average energy per generation (J)", steady_state_energy_per_token * metrics.total_output / metrics.completed)
     logger.info("%-40s: %d", "Total input tokens", metrics.total_input)
-    logger.info(
-        "%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output
-    )
-    logger.info(
-        "%-40s: %d",
-        "Total generated tokens (counted)",
-        request_tracker.get_num_generated_tokens(),
-    )
+    logger.info("%-40s: %d", "Total generated tokens (usage stats)", metrics.total_output)
+    logger.info("%-40s: %d", "Total generated tokens (counted)", request_tracker.get_num_generated_tokens())
     logger.info("%-40s: %.2f", "Request throughput (req/s)", metrics.request_throughput)
-    logger.info(
-        "%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput
-    )
-    logger.info(
-        "%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput
-    )
+    logger.info("%-40s: %.2f", "Output token throughput (tok/s)", metrics.output_throughput)
+    logger.info("%-40s: %.2f", "Total Token throughput (tok/s)", metrics.total_token_throughput)
+    # fmt: on
 
     result = {
         "duration": benchmark_duration,
@@ -1227,25 +1195,6 @@ async def benchmark(
         else None,
         "steady_state_measurement": asdict(steady_state_mes),
         "entire_benchmark_measurement": asdict(entire_mes),
-        "results": [
-            {
-                "prompt": output.prompt,
-                "generated_text": output.generated_text,
-                "input_len": output.prompt_len,
-                "output_len": output_len,
-                "latency": output.latency,
-                "ttft": output.ttft,
-                "itl": output.itl,
-                "error": output.error,
-                "energy": energy,
-            }
-            for output, output_len, energy in zip(
-                outputs,
-                actual_output_lens,
-                energy_per_generation,
-                strict=True,
-            )
-        ],
         "timeline": {
             "benchmark_start_time": benchmark_start_time,
             "benchmark_end_time": benchmark_end_time,
@@ -1300,6 +1249,26 @@ async def benchmark(
     process_one_metric("e2el", "E2EL", "End-to-end Latency")
 
     logger.info("=" * 50)
+
+    result["results"] = [
+        {
+            "prompt": output.prompt,
+            "generated_text": output.generated_text,
+            "input_len": output.prompt_len,
+            "output_len": output_len,
+            "latency": output.latency,
+            "ttft": output.ttft,
+            "itl": output.itl,
+            "error": output.error,
+            "energy": energy,
+        }
+        for output, output_len, energy in zip(
+            outputs,
+            actual_output_lens,
+            energy_per_generation,
+            strict=True,
+        )
+    ]
 
     return result
 
@@ -1633,10 +1602,9 @@ def main(args: Args) -> None:
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:
-        logger.info(
-            "Result file %s already exists. Exiting immediately. "
+        print(
+            f"Result file {result_file} already exists. Exiting immediately. "
             "Specify --overwrite-results to run the benchmark and overwrite results.",
-            result_file,
         )
         return
 
@@ -1728,7 +1696,7 @@ def main(args: Args) -> None:
             elapsed_seconds += 1
 
             # Check the container state
-            if elapsed_seconds >= 30:
+            if elapsed_seconds >= 300:
                 for container_name in container_names:
                     try:
                         container_running = (

@@ -42,6 +42,7 @@ def get_vllm_config_path(
     # model_id might contain slashes (e.g., "meta-llama/Llama-3.1-8B-Instruct")
     model_config_dir = config_base_path / model_id / gpu_model
     config_file = model_config_dir / f"{mode}.config.yaml"
+    config_file = config_file.absolute()
 
     if not config_file.exists():
         raise FileNotFoundError(

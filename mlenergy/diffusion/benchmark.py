@@ -29,7 +29,7 @@ import tyro
 from huggingface_hub import snapshot_download
 from pydantic import BaseModel
 from transformers.models.t5 import T5EncoderModel
-from zeus.monitor import ZeusMonitor
+from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.show_env import show_env
 
 from xfuser import (
@@ -302,7 +302,11 @@ def save_results(
     benchmark_duration: float,
     total_energy_result: Any = None,
     iter_energy_results: list[Any] = None,
-    local_rank: int = 0
+    local_rank: int = 0,
+    power_timeline: Any | None = None,
+    temperature_timeline: Any | None = None,
+    benchmark_start_time: float | None = None,
+    benchmark_end_time: float | None = None,
 ) -> None:
     if local_rank != 0:
         return
@@ -350,6 +354,15 @@ def save_results(
         "use_torch_compile": args.workload.use_torch_compile,
     }
 
+    # Timeline details (power and temperature over time)
+    if benchmark_start_time is not None and benchmark_end_time is not None:
+        result_json["timeline"] = {
+            "benchmark_start_time": benchmark_start_time,
+            "benchmark_end_time": benchmark_end_time,
+            "power": power_timeline,
+            "temperature": temperature_timeline,
+        }
+
     # Save results
     result_file = args.workload.to_path(of="results")
     with open(result_file, "w", encoding="utf-8") as f:
@@ -376,8 +389,8 @@ def main(args: DiffusionArgs) -> None:
     logger.info("%s", args)
     assert isinstance(args.workload, DiffusionWorkloadConfig)
 
-    # Apply runtime hotfixes for compatibility
-    _apply_runtime_hotfixes()
+    # # Apply runtime hotfixes for compatibility
+    # _apply_runtime_hotfixes()
 
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:
@@ -394,6 +407,8 @@ def main(args: DiffusionArgs) -> None:
     # hf_home = os.environ["HF_HOME"]
     
     zeus_monitor = None
+    power_monitor = None
+    temperature_monitor = None
     if os.environ.get("LOCAL_RANK", "0") == "0":
         buffer = io.StringIO()
         with redirect_stdout(buffer):
@@ -401,6 +416,8 @@ def main(args: DiffusionArgs) -> None:
         logger.info("Zeus environment information:\n%s", buffer.getvalue())
 
         zeus_monitor = ZeusMonitor()
+        power_monitor = PowerMonitor(update_period=0.1)
+        temperature_monitor = TemperatureMonitor(update_period=0.5)
     
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
@@ -450,7 +467,7 @@ def main(args: DiffusionArgs) -> None:
     iter_energy_results = []
     torch.cuda.synchronize()
     torch.distributed.barrier()
-    benchmark_start_time = time.perf_counter()
+    benchmark_start_time = time.time()
     
     if zeus_monitor:
         zeus_monitor.begin_window("entire_benchmark")
@@ -475,17 +492,39 @@ def main(args: DiffusionArgs) -> None:
     total_energy_result = None
     if zeus_monitor:
         total_energy_result = zeus_monitor.end_window("entire_benchmark")
+    benchmark_end_time = time.time()
+
+    power_timeline = None
+    temperature_timeline = None
+    if power_monitor and temperature_monitor:
+        power_timeline = power_monitor.get_all_power_timelines(
+            start_time=benchmark_start_time,
+            end_time=benchmark_end_time,
+        )
+        temperature_timeline = temperature_monitor.get_temperature_timeline(
+            start_time=benchmark_start_time,
+            end_time=benchmark_end_time,
+        )
     
-    benchmark_duration = time.perf_counter() - benchmark_start_time
+    benchmark_duration = benchmark_end_time - benchmark_start_time
     logger.info(f"End running diffusion benchmark, duration: {benchmark_duration:.2f}s")
 
     if local_rank == 0:
-        save_results(args, benchmark_duration, total_energy_result, iter_energy_results)
+        save_results(
+            args,
+            benchmark_duration,
+            total_energy_result,
+            iter_energy_results,
+            local_rank,
+            power_timeline,
+            temperature_timeline,
+            benchmark_start_time,
+            benchmark_end_time,
+        )
     
     get_runtime_state().destroy_distributed_env()
 
 
-# TODO: download the model if not exists
 # TODO: handle server log
 if __name__ == "__main__":
     args = tyro.cli(DiffusionArgs[TextToImage | TextToVideo])

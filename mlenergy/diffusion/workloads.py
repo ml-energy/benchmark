@@ -24,27 +24,31 @@ logger = logging.getLogger(__name__)
 
 # Model configurations - map model_id to pipeline and settings
 MODEL_CONFIGS = {
+    # https://huggingface.co/black-forest-labs/FLUX.1-dev
     "black-forest-labs/FLUX.1-dev": {
-        "inference_steps": 28,
+        "inference_steps": 50,
         "height": 1024,
         "width": 1024,
         "num_frames": None,
         "fps": None,
     },
+    # https://huggingface.co/docs/diffusers/en/api/pipelines/pixart_sigma
     "PixArt-alpha/PixArt-Sigma-XL-2-2K-MS": {
-        "inference_steps": 20,
+        "inference_steps": 100,
         "height": 2048,
         "width": 2048,
         "num_frames": None,
         "fps": None,
     },
+    # https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers
     "stabilityai/stable-diffusion-3-medium-diffusers": {
-        "inference_steps": 20,
-        "height": 1024,
+        "inference_steps": 28,
+        "height": 1024, 
         "width": 1024,
         "num_frames": None,
         "fps": None,
     },
+    # https://huggingface.co/docs/diffusers/en/api/pipelines/hunyuandit
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "inference_steps": 50,
         "height": 1024,

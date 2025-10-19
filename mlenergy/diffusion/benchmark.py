@@ -192,24 +192,17 @@ def setup_pipeline(
 
 def get_inference_kwargs(
     request: DiffusionRequest,
-    guidance_scale: float,
     args: DiffusionArgs,
 ) -> Any:
+    # will use the default max_sequence_length and guidance_scale for each model
     inference_kwargs = {
         "prompt": request.prompts,
         "height": args.workload.height,
         "width": args.workload.width,
         "num_inference_steps": args.workload.inference_steps,
-        "guidance_scale": guidance_scale,
         "output_type": "pil" if args.save_images else "latent",
         "generator": torch.Generator(device="cuda").manual_seed(args.workload.seed),
     }
-    
-    model_type = get_model_type_from_id(args.workload.model_id)
-    if model_type == "Flux":
-        inference_kwargs["max_sequence_length"] = 256
-    elif model_type in ["Pixart-alpha", "Pixart-sigma", "HunyuanDiT"]:
-        inference_kwargs["use_resolution_binning"] = True
     
     # Add video parameters
     if hasattr(args.workload, 'num_frames'):
@@ -390,7 +383,7 @@ def main(args: DiffusionArgs) -> None:
     for i in range(args.warmup_iters):
         logger.info(f"Warmup iteration {i+1}/{args.warmup_iters}")
         warmup_request = requests[i]
-        warmup_kwargs = get_inference_kwargs(warmup_request, input_config.guidance_scale, args)
+        warmup_kwargs = get_inference_kwargs(warmup_request, args)
         warmup_output = pipe(**warmup_kwargs)
         # save_generated_images(pipe, warmup_output, warmup_request, args, output_dir, i)
 
@@ -407,7 +400,7 @@ def main(args: DiffusionArgs) -> None:
     for i in range(args.benchmark_iters):
         request_idx = args.warmup_iters + i
         benchmark_request = requests[request_idx]
-        benchmark_kwargs = get_inference_kwargs(benchmark_request, input_config.guidance_scale, args)
+        benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
         
         logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
         if zeus_monitor:
@@ -435,7 +428,6 @@ def main(args: DiffusionArgs) -> None:
 
 
 # TODO: download the model if not exists
-# TODO: handle the default configs of different models
 # TODO: handle server log
 if __name__ == "__main__":
     args = tyro.cli(DiffusionArgs[TextToImage | TextToVideo])

@@ -25,6 +25,22 @@ class LMArenaChatDLLM(LMArenaChat):
         ]
 
 
+def default_lmarena_chat_dllm() -> LMArenaChatDLLM:
+    model_id = "GSAI-ML/LLaDA-8B-Instruct"
+    max_num_seqs: int = 16
+    num_requests: int = 32
+    model_id: str = model_id
+    gpu_model: str = "H100"
+    base_dir: Path = Path("run/llm/lmarena") / model_id
+
+    return LMArenaChatDLLM(base_dir=base_dir,
+        num_requests=num_requests,
+        model_id=model_id,
+        max_num_seqs=max_num_seqs,
+        gpu_model=gpu_model
+    )
+
+
 if __name__ == "__main__":
     """Testing"""
 

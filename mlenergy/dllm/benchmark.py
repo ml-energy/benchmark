@@ -6,10 +6,13 @@ in `mlenergy.llm.workloads`
 
 from dataclasses import asdict
 import json
+import subprocess
+import sys
 import tyro
 import logging
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pathlib import Path
 from typing import Any, TypeVar, Generic
 from datetime import datetime
 
@@ -19,16 +22,38 @@ from mlenergy.llm.workloads import (
     WorkloadConfig,
 )
 
+from mlenergy.dllm.workloads import (
+    LMArenaChatDLLM,
+    default_lmarena_chat_dllm,
+)
+
+from mlenergy.dllm.dllm_runtime import (
+    DLLMRuntime,
+    FastDLLMRuntime,
+    default_fast_dllm_runtime,
+)
+
 
 model_ids = ["GSAI-ML/LLaDA-8B-Instruct"]
 
 logger = logging.getLogger("mlenergy.dllm.benchmark")
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)
+DLLMRuntimeT = TypeVar("DLLMRuntimeT", bound=DLLMRuntime)
 
 
-class DLLMArgs(BaseModel, Generic[WorkloadT]):
-    workload: WorkloadT
+class DLLMArgs(BaseModel, Generic[WorkloadT, DLLMRuntimeT]):
+    """Arguments for dLLM benchmark runner.
+
+    Attributes:
+        workload: Workload configuration for dLLM: {LMArenaChatDLLM}
+        dllm_runtime: Runtime configuration for dLLM: {FastDLLMRuntime}
+        warmup_iters: Number of warmup iterations.
+        benchmark_iters: Number of benchmark iterations.
+    """
+
+    workload: WorkloadT = Field(default_factory=default_lmarena_chat_dllm)
+    dllm_runtime: DLLMRuntimeT = Field(default_factory=default_fast_dllm_runtime)
     warmup_iters: int = 2
     benchmark_iters: int = 6
 
@@ -87,16 +112,23 @@ def save_results(
         )
 
 
-def install_fast_dllm() -> None:
-    pass
+def main(args: DLLMArgs) -> None:
+    """Main benchmark function.
 
-
-def main(args: DLLMArgs[WorkloadT]) -> None:
-    pass
+    Args:
+        args: Benchmark arguments with workload and runtime configurations.
+    """
+    logger.info("Installing dLLM runtime: %s", type(args.dllm_runtime).__name__)
+    args.dllm_runtime.install_runtime()
 
 
 if __name__ == "__main__":
-    args = tyro.cli(DLLMArgs[LMArenaChat])
+    args = tyro.cli(
+        DLLMArgs[
+            LMArenaChatDLLM,
+            FastDLLMRuntime,
+        ]
+    )
 
     # Set up logging
     logging.basicConfig(

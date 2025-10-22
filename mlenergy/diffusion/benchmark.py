@@ -207,7 +207,7 @@ def setup_pipeline(
     if local_rank == 0:
         ensure_model_downloaded(model_id, hf_cache_dir)
     if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+        torch.distributed.barrier(device_ids=[local_rank])
 
     cache_args = {
         "use_teacache": False,
@@ -440,12 +440,11 @@ def main(args: DiffusionArgs) -> None:
             result_file,
         )
         return
-    
-    # # Necessary envs
-    # cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
-    # hf_token = os.environ["HF_TOKEN"]
-    # hf_home = os.environ["HF_HOME"]
-    
+
+    # fix lamdalab segfault error
+    os.environ["NCCL_NET"] = "Socket"
+    os.environ["NCCL_SOCKET_IFNAME"] = "lo"
+
     zeus_monitor = None
     power_monitor = None
     temperature_monitor = None
@@ -513,7 +512,7 @@ def main(args: DiffusionArgs) -> None:
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
     iter_energy_results = []
     torch.cuda.synchronize()
-    torch.distributed.barrier()
+    torch.distributed.barrier(device_ids=[local_rank])
     benchmark_start_time = time.time()
     
     if zeus_monitor:
@@ -534,7 +533,7 @@ def main(args: DiffusionArgs) -> None:
         save_generated_media(pipe, benchmark_output, benchmark_request, args, output_dir, i)
 
     torch.cuda.synchronize()
-    torch.distributed.barrier()
+    torch.distributed.barrier(device_ids=[local_rank])
 
     total_energy_result = None
     if zeus_monitor:

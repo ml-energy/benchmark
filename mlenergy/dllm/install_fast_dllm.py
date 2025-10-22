@@ -137,7 +137,7 @@ def main():
 def install_runtime(self) -> None:
     """Install Fast-dLLM dependencies and setup Python path."""
     repo_url = "https://github.com/ml-energy/fast-dllm"
-    commit = "037942"
+    commit = "39749b4"
     base_dir = Path(__file__).resolve().parent
     fast_dir = base_dir / "Fast-dLLM"
 
@@ -160,4 +160,4 @@ def install_runtime(self) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    install_runtime()

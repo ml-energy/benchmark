@@ -1,7 +1,42 @@
 # Diffusion LLM
-## Task Benchmark
-- Chat: Text-based conversational AI applications, like ChatGPT or Claude
 
-## Control Benchmark
-- Block size
-- Usage of approximate KV cache proposed by fast-dllm
+## Benchmark Description
+### Task Benchmark
+- Chat: Text-based conversational AI applications, like ChatGPT or Claude
+    - Each batch of chat conversations has a fixed output length
+
+### Control Benchmark
+- Generation Length
+- Block Length
+- Cache mode (dual or prefix)
+- Remasking strategy (low confidence remasking or random remasking)
+
+## Installation
+We use a [fork](https://github.com/ml-energy/fast-dllm/tree/39749b414f3657f94658a0bc41247f9d33c9668a) of Fast-dLLM that makes the import easier.
+
+To install Fast-dLLM, in the current directory (`mlenergy/dllm/`):
+```
+python install_fast_dllm.py
+```
+
+In the above installation script, there are also functions that subsitute the import headers of the example applications of Fast-dLLMs, which might be helpful.
+
+## Usage Examples
+We currently support LLaDA and Dream models. **Dream can only run with batch size of 1.**
+```
+# LLaDA
+python -m mlenergy.dllm.benchmark \
+  dllm-runtime:llada-runtime \
+  --dllm-runtime.steps 128 \
+  --dllm-runtime.gen-length 128 \
+  --dllm-runtime.block-length 32 \
+  --dllm-runtime.remasking low_confidence
+
+# Dream
+python -m mlenergy.dllm.benchmark \
+  dllm-runtime:dream-runtime \
+  --dllm-runtime.steps 16 \
+  --dllm-runtime.gen-length 128 \
+  --dllm-runtime.block-length 32 \
+  --dllm-runtime.remasking low_confidence
+```

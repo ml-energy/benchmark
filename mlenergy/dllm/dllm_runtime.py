@@ -12,7 +12,11 @@ import abc
 import torch
 from transformers import AutoTokenizer
 from fast_dllm.llada.model.modeling_llada import LLaDAModelLM
-from fast_dllm.llada.generate import generate
+from fast_dllm.llada.generate import (
+    generate,
+    generate_with_prefix_cache,
+    generate_with_dual_cache,
+)
 
 from pydantic import BaseModel
 
@@ -44,8 +48,7 @@ class DLLMRuntime(BaseModel, abc.ABC):
     steps: int = 128
     gen_length: int = 128
     block_length: int = 32
-    mask_id: int = 126336
-    cache_mode: str = "dual"
+    cache_mode: str | None = None
     remasking: str = "low_confidence"
 
     model: object | None = None
@@ -140,22 +143,47 @@ class LladaRuntime(DLLMRuntime):
             f"Batch size: {input_ids.shape[0]}, Max length: {input_ids.shape[1]}"
         )
 
-        out, nfe = generate(
-            self.model,
-            input_ids,
-            steps=self.steps,
-            gen_length=self.gen_length,
-            block_length=self.block_length,
-            temperature=0.0,
-            remasking=self.remasking,
-            mask_id=self.mask_id,
-            threshold=None,
-        )
-
-        # out: (batch_size, prompt_len + gen_length). Decode only the generated part
-        answers = self.tokenizer.batch_decode(
-            out[:, input_ids.shape[1] :], skip_special_tokens=True
-        )
+        answers = []
+        if self.cache_mode is None:
+            out, nfe = generate(
+                self.model,
+                input_ids,
+                steps=self.steps,
+                gen_length=self.gen_length,
+                block_length=self.block_length,
+                temperature=0.0,
+                remasking=self.remasking,
+                threshold=None,
+            )
+            answers = self.tokenizer.batch_decode(
+                out[:, input_ids.shape[1] :], skip_special_tokens=True
+            )
+        elif self.cache_mode == "prefix":
+            out, nfe = generate_with_prefix_cache(
+                self.model,
+                input_ids,
+                steps=self.steps,
+                gen_length=self.gen_length,
+                block_length=self.block_length,
+                temperature=0.0,
+                remasking=self.remasking,
+            )
+            answers = self.tokenizer.batch_decode(
+                out[:, input_ids.shape[1] :], skip_special_tokens=True
+            )
+        elif self.cache_mode == "dual":
+            out, nfe = generate_with_dual_cache(
+                self.model,
+                input_ids,
+                steps=self.steps,
+                gen_length=self.gen_length,
+                block_length=self.block_length,
+                temperature=0.0,
+                remasking=self.remasking,
+            )
+            answers = self.tokenizer.batch_decode(
+                out[:, input_ids.shape[1] :], skip_special_tokens=True
+            )
 
         logger.info(f"Generated {len(answers)} outputs with {nfe} function evaluations")
 
@@ -171,7 +199,7 @@ class DreamRuntime(DLLMRuntime):
     """
 
     model_id: str = "Dream-org/Dream-v0-Instruct-7B"
-    steps: int = 16  # DREAM typically uses fewer steps than LLaDA
+    steps: int = 16
 
     def model_post_init(self, __context):
         """Pydantic v2 hook called after model initialization."""
@@ -264,7 +292,7 @@ class DreamRuntime(DLLMRuntime):
         )
 
         answer = self.tokenizer.batch_decode(
-            output[:, input_ids.shape[1]:], skip_special_tokens=True
+            output[:, input_ids.shape[1] :], skip_special_tokens=True
         )[0]
 
         logger.info("Generated 1 output")
@@ -290,7 +318,6 @@ def default_llada_runtime() -> LladaRuntime:
         steps=128,
         gen_length=128,
         block_length=32,
-        mask_id=126336,
         cache_mode="dual",
         remasking="low_confidence",
     )
@@ -303,7 +330,6 @@ def default_dream_runtime() -> DreamRuntime:
         steps=16,
         gen_length=128,
         block_length=32,
-        mask_id=126336,
         cache_mode="dual",
         remasking="low_confidence",
     )

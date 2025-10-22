@@ -100,7 +100,6 @@ def save_results(
         "steps": args.dllm_runtime.steps,
         "gen_length": args.dllm_runtime.gen_length,
         "block_length": args.dllm_runtime.block_length,
-        "mask_id": args.dllm_runtime.mask_id,
         "cache_mode": args.dllm_runtime.cache_mode,
         "remasking": args.dllm_runtime.remasking,
     }
@@ -204,9 +203,9 @@ def main(args: DLLMArgs) -> None:
     zeus_metrics = zeus_monitor.end_window("total")
     benchmark_duration = benchmark_end_time - benchmark_start_time
     power_timeline = power_monitor.get_all_power_timelines(
-            start_time=benchmark_start_time,
-            end_time=benchmark_end_time,
-        )
+        start_time=benchmark_start_time,
+        end_time=benchmark_end_time,
+    )
     temperature_timeline = temperature_monitor.get_temperature_timeline(
         start_time=benchmark_start_time,
         end_time=benchmark_end_time,

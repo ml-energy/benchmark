@@ -6,17 +6,20 @@ should be initialized, configured, and used for generation.
 
 from __future__ import annotations
 
-from pathlib import Path
-import subprocess
-import sys
 import logging
 import abc
-from typing import Any, TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+import torch
+from transformers import AutoTokenizer
+from fast_dllm.llada.model.modeling_llada import LLaDAModelLM
+from fast_dllm.llada.generate import generate
 
-if TYPE_CHECKING:
-    from transformers.tokenization_utils import PreTrainedTokenizer
+from pydantic import BaseModel
+
+import types
+from fast_dllm.dream.model.modeling_dream import DreamModel
+from fast_dllm.dream.model.generation_utils_block import DreamGenerationMixin
+
 
 logger = logging.getLogger("mlenergy.dllm.benchmark")
 
@@ -26,82 +29,250 @@ class DLLMRuntime(BaseModel, abc.ABC):
 
     A runtime configuration defines how a specific dLLM system should be
     initialized and used for generation.
-    """
-
-    @abc.abstractmethod
-    def install_runtime(self) -> None:
-        """Install the runtime dependencies and setup."""
-        pass
-
-    @abc.abstractmethod
-    def run_batch(self, input_requests: list[str]) -> list[str]:
-        """Run a batch of generation requests.
-
-        Args:
-            input_requests: List of input prompt strings.
-
-        Returns:
-            List of generated text outputs.
-        """
-        pass
-
-
-class FastDLLMRuntime(DLLMRuntime):
-    """Runtime implementation for Fast-dLLM (LLaDA).
 
     Attributes:
         model_id: Model identifier for the model to be used.
-        steps: Number of sampling steps for generation.
+        steps: Number of sampling/diffusion steps for generation.
         gen_length: Length of generated text.
         block_length: Block length for semi-autoregressive generation.
-        temperature: Sampling temperature.
         mask_id: Token ID for the mask token.
         cache_mode: Caching mode ('none', 'prefix', or 'dual').
+        remasking: Remasking strategy ('low_confidence' or 'random').
     """
 
-    model_id: str = "GSAI-ML/LLaDA-8B-Instruct"
+    model_id: str
     steps: int = 128
     gen_length: int = 128
     block_length: int = 32
-    temperature: float = 0.0
     mask_id: int = 126336
     cache_mode: str = "dual"
+    remasking: str = "low_confidence"
 
-    def install_runtime(self) -> None:
-        """Install Fast-dLLM dependencies and setup Python path."""
-        repo_url = "https://github.com/NVlabs/Fast-dLLM"
-        commit = "8292f3c"
-        base_dir = Path(__file__).resolve().parent
-        fast_dir = base_dir / "Fast-dLLM"
+    model: object | None = None
+    tokenizer: object | None = None
 
-        try:
-            if not fast_dir.exists():
-                logger.info("Cloning Fast-dLLM into %s", fast_dir)
-                subprocess.run(["git", "clone", repo_url, str(fast_dir)], check=True)
-                logger.info("Fetching and checking out commit %s in %s", commit, fast_dir)
-                subprocess.run(["git", "fetch", "--all"], cwd=str(fast_dir), check=True)
-                subprocess.run(["git", "checkout", commit], cwd=str(fast_dir), check=True)
+    @abc.abstractmethod
+    def _install_runtime(self) -> None:
+        pass
 
-            req_file = fast_dir / "requirements.txt"
-            if req_file.exists():
-                logger.info("Installing requirements from %s", req_file)
-                subprocess.run(["uv", "pip", "install", "-r", str(req_file)], cwd=str(fast_dir), check=True)
-            else:
-                logger.warning("requirements.txt not found in %s; skipping pip install", fast_dir)
+    @abc.abstractmethod
+    def _check_args(self) -> None:
+        """Check validity of runtime configuration arguments."""
+        pass
 
-            # Add Fast-dLLM to Python path for imports
-            if str(fast_dir) not in sys.path:
-                sys.path.insert(0, str(fast_dir))
-                logger.info("Added %s to Python path", fast_dir)
+    @abc.abstractmethod
+    def load_model(self) -> None:
+        """Load the model and tokenizer for the runtime."""
+        pass
 
-        except subprocess.CalledProcessError as e:
-            logger.error("Failed to install Fast-dLLM: %s", e)
-            raise
+    @abc.abstractmethod
+    def run_one_batch(self, prompts: list[str]) -> list[str]:
+        """Run a batch of generation requests.
 
-        logger.info("Fast-dLLM installation complete.")
+        Args:
+            prompts: List of input prompt strings.
+
+        Returns:
+            List of generated text outputs.
+        """
+        pass
+
+
+class LladaRuntime(DLLMRuntime):
+    """Runtime implementation for Fast-dLLM (LLaDA).
+
+    All configuration parameters are inherited from DLLMRuntime.
+    """
+
+    model_id: str = "GSAI-ML/LLaDA-8B-Instruct"
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        self._check_args()
+        self._install_runtime()
+        self.load_model()
+
+    def _check_args(self) -> None:
+        return True
+
+    def _install_runtime(self) -> None:
+        logger.info(
+            "Fast-dLLM (LLaDA) must be installed manually. Follow the instructions in mlenergy/dllm/README.md"
+        )
+
+    def load_model(self) -> None:
+        """
+        Loading model and tokenizer
+        """
+        device = "cuda"
+        self.model = (
+            LLaDAModelLM.from_pretrained(
+                self.model_id,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+            )
+            .to(device)
+            .eval()
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_id, trust_remote_code=True
+        )
+
+    def run_one_batch(self, prompts: list[str]) -> list[str]:
+        device = "cuda"
+
+        formatted_prompts = []
+        for prompt in prompts:
+            m = [{"role": "user", "content": prompt}]
+            user_input = self.tokenizer.apply_chat_template(
+                m, add_generation_prompt=True, tokenize=False
+            )
+            formatted_prompts.append(user_input)
+
+        tokenized = self.tokenizer(
+            formatted_prompts,
+            padding=True,
+            return_tensors="pt",
+        )
+        input_ids = tokenized["input_ids"].to(device)
+
+        logger.info(
+            f"Batch size: {input_ids.shape[0]}, Max length: {input_ids.shape[1]}"
+        )
+
+        out, nfe = generate(
+            self.model,
+            input_ids,
+            steps=self.steps,
+            gen_length=self.gen_length,
+            block_length=self.block_length,
+            temperature=0.0,
+            remasking=self.remasking,
+            mask_id=self.mask_id,
+            threshold=None,
+        )
+
+        # out: (batch_size, prompt_len + gen_length). Decode only the generated part
+        answers = self.tokenizer.batch_decode(
+            out[:, input_ids.shape[1] :], skip_special_tokens=True
+        )
+
+        logger.info(f"Generated {len(answers)} outputs with {nfe} function evaluations")
+
+        print(answers)
+        return answers
+
+
+class DreamRuntime(DLLMRuntime):
+    """Runtime implementation for Fast-dLLM (DREAM).
+
+    All configuration parameters are inherited from DLLMRuntime.
+    Default values are set for DREAM-specific behavior.
+    """
+
+    model_id: str = "Dream-org/Dream-v0-Instruct-7B"
+    steps: int = 16  # DREAM typically uses fewer steps than LLaDA
+
+    def model_post_init(self, __context):
+        """Pydantic v2 hook called after model initialization."""
+        super().model_post_init(__context)
+        self._check_args()
+        self._install_runtime()
+        self.load_model()
+
+    def _check_args(self) -> None:
+        """Check validity of runtime configuration arguments."""
+        # DREAM doesn't support batching due to issues with block-based generation
+        pass
+
+    def _install_runtime(self) -> None:
+        logger.info(
+            "Fast-dLLM (DREAM) must be installed manually. Follow the instructions in mlenergy/dllm/README.md"
+        )
+
+    def load_model(self) -> None:
+        """
+        Loading DREAM model and tokenizer with block-based generation.
+        """
+
+        device = "cuda"
+        logger.info("Loading DREAM model: %s", self.model_id)
+
+        self.model = (
+            DreamModel.from_pretrained(
+                self.model_id,
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True,
+            )
+            .to(device)
+            .eval()
+        )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_id, trust_remote_code=True
+        )
+
+        # Patch model with block-based generation methods
+        # Modeled after fast-dllm's examples
+        self.model.diffusion_generate = types.MethodType(
+            DreamGenerationMixin.diffusion_generate, self.model
+        )
+        self.model._sample = types.MethodType(DreamGenerationMixin._sample, self.model)
+
+        logger.info("DREAM model loaded successfully")
+
+    def run_one_batch(self, prompts: list[str]) -> list[str]:
+        """Run generation for prompts using DREAM.
+
+        Note: DREAM does not support batching. This method only accepts a single prompt.
+
+        Args:
+            prompts: List of input prompt strings (must have length 1).
+
+        Returns:
+            List of generated text outputs (length 1).
+
+        Raises:
+            ValueError: If prompts list has length > 1.
+        """
+        if len(prompts) > 1:
+            raise ValueError(
+                f"DreamRuntime does not support batching. "
+                f"Received {len(prompts)} prompts, but only batch_size=1 is supported. "
+                f"Please set --workload.batch-size=1 when using DreamRuntime."
+            )
+
+        device = "cuda"
+        prompt = prompts[0]
+
+        m = [{"role": "user", "content": prompt}]
+        inputs = self.tokenizer.apply_chat_template(
+            m, return_tensors="pt", return_dict=True, add_generation_prompt=True
+        )
+
+        input_ids = inputs.input_ids.to(device)
+        attention_mask = inputs.attention_mask.to(device)
+
+        logger.info(f"Input length: {input_ids.shape[1]}")
+
+        output = self.model.diffusion_generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=self.gen_length,
+            time_steps=self.steps,
+            block_size=self.block_length,
+        )
+
+        answer = self.tokenizer.batch_decode(
+            output[:, input_ids.shape[1]:], skip_special_tokens=True
+        )[0]
+
+        logger.info("Generated 1 output")
+
+        return [answer]
 
     def run_batch(self, input_requests: list[str]) -> list[str]:
-        """Run a batch of generation requests using Fast-dLLM.
+        """Run a batch of generation requests using DREAM.
 
         Args:
             input_requests: List of input prompt strings.
@@ -109,16 +280,30 @@ class FastDLLMRuntime(DLLMRuntime):
         Returns:
             List of generated text outputs.
         """
-        
+        return self.run_one_batch(input_requests)
 
 
-def default_fast_dllm_runtime() -> FastDLLMRuntime:
-    """Create default Fast-dLLM runtime configuration."""
-    return FastDLLMRuntime(
+def default_llada_runtime() -> LladaRuntime:
+    """Create default LLaDA runtime configuration."""
+    return LladaRuntime(
         model_id="GSAI-ML/LLaDA-8B-Instruct",
-        device="cuda",
         steps=128,
         gen_length=128,
         block_length=32,
+        mask_id=126336,
         cache_mode="dual",
+        remasking="low_confidence",
+    )
+
+
+def default_dream_runtime() -> DreamRuntime:
+    """Create default DREAM runtime configuration."""
+    return DreamRuntime(
+        model_id="Dream-org/Dream-v0-Instruct-7B",
+        steps=16,
+        gen_length=128,
+        block_length=32,
+        mask_id=126336,
+        cache_mode="dual",
+        remasking="low_confidence",
     )

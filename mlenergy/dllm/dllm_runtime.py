@@ -55,15 +55,6 @@ class DLLMRuntime(BaseModel, abc.ABC):
     tokenizer: object | None = None
 
     @abc.abstractmethod
-    def _install_runtime(self) -> None:
-        pass
-
-    @abc.abstractmethod
-    def _check_args(self) -> None:
-        """Check validity of runtime configuration arguments."""
-        pass
-
-    @abc.abstractmethod
     def load_model(self) -> None:
         """Load the model and tokenizer for the runtime."""
         pass
@@ -91,17 +82,7 @@ class LladaRuntime(DLLMRuntime):
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        self._check_args()
-        self._install_runtime()
         self.load_model()
-
-    def _check_args(self) -> None:
-        return True
-
-    def _install_runtime(self) -> None:
-        logger.info(
-            "Fast-dLLM (LLaDA) must be installed manually. Follow the instructions in mlenergy/dllm/README.md"
-        )
 
     def load_model(self) -> None:
         """
@@ -202,21 +183,8 @@ class DreamRuntime(DLLMRuntime):
     steps: int = 16
 
     def model_post_init(self, __context):
-        """Pydantic v2 hook called after model initialization."""
         super().model_post_init(__context)
-        self._check_args()
-        self._install_runtime()
         self.load_model()
-
-    def _check_args(self) -> None:
-        """Check validity of runtime configuration arguments."""
-        # DREAM doesn't support batching due to issues with block-based generation
-        pass
-
-    def _install_runtime(self) -> None:
-        logger.info(
-            "Fast-dLLM (DREAM) must be installed manually. Follow the instructions in mlenergy/dllm/README.md"
-        )
 
     def load_model(self) -> None:
         """
@@ -298,17 +266,6 @@ class DreamRuntime(DLLMRuntime):
         logger.info("Generated 1 output")
 
         return [answer]
-
-    def run_batch(self, input_requests: list[str]) -> list[str]:
-        """Run a batch of generation requests using DREAM.
-
-        Args:
-            input_requests: List of input prompt strings.
-
-        Returns:
-            List of generated text outputs.
-        """
-        return self.run_one_batch(input_requests)
 
 
 def default_llada_runtime() -> LladaRuntime:

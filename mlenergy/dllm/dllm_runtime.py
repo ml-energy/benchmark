@@ -6,23 +6,22 @@ should be initialized, configured, and used for generation.
 
 from __future__ import annotations
 
-import logging
 import abc
+import logging
 
 import torch
+import types
+from pydantic import BaseModel
 from transformers import AutoTokenizer
+
+from fast_dllm.dream.model.modeling_dream import DreamModel
+from fast_dllm.dream.model.generation_utils_block import DreamGenerationMixin
 from fast_dllm.llada.model.modeling_llada import LLaDAModelLM
 from fast_dllm.llada.generate import (
     generate,
     generate_with_prefix_cache,
     generate_with_dual_cache,
 )
-
-from pydantic import BaseModel
-
-import types
-from fast_dllm.dream.model.modeling_dream import DreamModel
-from fast_dllm.dream.model.generation_utils_block import DreamGenerationMixin
 
 
 logger = logging.getLogger("mlenergy.dllm.benchmark")

@@ -47,3 +47,11 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--numprocesses auto"
+
+[tool.ruff]
+include = ["mlenergy/**/*.py", "tests/**/*.py"]
+exclude = ["**/Fast-dLLM/**"]
+
+[tool.pyright]
+include = ["mlenergy", "tests"]
+exclude = ["**/Fast-dLLM"]

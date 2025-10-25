@@ -3,10 +3,10 @@
 set -ev
 
 if [[ -z $GITHUB_ACTION ]]; then
-  ruff format mlenergy tests
+  ruff format .
 else
-  ruff format --check mlenergy tests
+  ruff format --check .
 fi
 
-ruff check mlenergy tests
-pyright mlenergy tests
+ruff check .
+pyright .

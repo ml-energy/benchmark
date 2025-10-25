@@ -4,34 +4,31 @@ Models the LLM and diffusion benchmark runner, reuses the LMArenaChat workload
 in `mlenergy.llm.workloads`
 """
 
-from dataclasses import asdict
 import json
 import time
 import logging
-
-from pydantic import BaseModel, Field
+from dataclasses import asdict
 from typing import Any, TypeVar, Generic
 from datetime import datetime
 
 import tyro
-from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
+from pydantic import BaseModel, Field
 
 
 from mlenergy.llm.workloads import (
     WorkloadConfig,
 )
-
 from mlenergy.dllm.workloads import (
     LMArenaChatDLLM,
     default_lmarena_chat_dllm,
 )
-
 from mlenergy.dllm.dllm_runtime import (
     DLLMRuntime,
     LladaRuntime,
     DreamRuntime,
     default_llada_runtime,
 )
+from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 
 
 model_ids = ["GSAI-ML/LLaDA-8B-Instruct"]

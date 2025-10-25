@@ -14,9 +14,11 @@
 ## Installation
 We use a [fork](https://github.com/ml-energy/fast-dllm/tree/39749b414f3657f94658a0bc41247f9d33c9668a) of Fast-dLLM that makes the import easier.
 
-To install Fast-dLLM, in the current directory (`mlenergy/dllm/`):
+The fork is available as a submodule. To install it:
 ```
-python install_fast_dllm.py
+git submodule update --init
+cd mlenergy/dllm/Fast-dLLM/
+uv pip install -e .
 ```
 
 In the above installation script, there are also functions that subsitute the import headers of the example applications of Fast-dLLMs, which might be helpful.

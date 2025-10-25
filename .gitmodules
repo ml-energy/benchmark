@@ -1,0 +1,3 @@
+[submodule "mlenergy/dllm/Fast-dLLM"]
+	path = mlenergy/dllm/Fast-dLLM
+	url = https://github.com/ml-energy/fast-dllm

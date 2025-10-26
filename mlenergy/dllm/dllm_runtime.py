@@ -24,7 +24,7 @@ from fast_dllm.llada.generate import (
 )
 
 
-logger = logging.getLogger("mlenergy.dllm.benchmark")
+logger = logging.getLogger(__name__)
 
 
 class DLLMRuntime(BaseModel, abc.ABC):

@@ -33,7 +33,7 @@ from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 
 model_ids = ["GSAI-ML/LLaDA-8B-Instruct"]
 
-logger = logging.getLogger("mlenergy.dllm.benchmark")
+logger = logging.getLogger(__name__)
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)
 DLLMRuntimeT = TypeVar("DLLMRuntimeT", bound=DLLMRuntime)

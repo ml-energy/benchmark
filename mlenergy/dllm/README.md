@@ -24,18 +24,9 @@ In the above installation script, there are also functions that subsitute the im
 ## Usage Examples
 We currently support LLaDA and Dream models. **Dream can only run with batch size of 1.**
 ```
-# LLaDA
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.dllm.benchmark \
-  dllm-runtime:llada-runtime \
+  dllm-runtime:fast-dllm-runtime \
   --dllm-runtime.steps 128 \
-  --dllm-runtime.gen-length 128 \
-  --dllm-runtime.block-length 32 \
-  --dllm-runtime.remasking low_confidence
-
-# Dream
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.dllm.benchmark \
-  dllm-runtime:dream-runtime \
-  --dllm-runtime.steps 16 \
   --dllm-runtime.gen-length 128 \
   --dllm-runtime.block-length 32 \
   --dllm-runtime.remasking low_confidence

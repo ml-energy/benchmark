@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import abc
 import logging
+from typing import Literal
 
 import torch
 import types
@@ -45,10 +46,10 @@ class DLLMRuntime(BaseModel, abc.ABC):
 
     model_id: str
     steps: int = 128
-    gen_length: int = 128
+    gen_length: int = 256
     block_length: int = 32
     cache_mode: str | None = None
-    remasking: str = "low_confidence"
+    remasking: Literal["low_confidence", "random"] = "low_confidence"
 
     model: object | None = None
     tokenizer: object | None = None
@@ -71,22 +72,15 @@ class DLLMRuntime(BaseModel, abc.ABC):
         pass
 
 
-class LladaRuntime(DLLMRuntime):
-    """Runtime implementation for Fast-dLLM (LLaDA).
+class FastDLLMRuntime(DLLMRuntime):
 
-    All configuration parameters are inherited from DLLMRuntime.
-    """
-
-    model_id: str = "GSAI-ML/LLaDA-8B-Instruct"
+    """Runtime implementation for Fast-dLLM."""
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
         self.load_model()
 
     def load_model(self) -> None:
-        """
-        Loading model and tokenizer
-        """
         device = "cuda"
         self.model = (
             LLaDAModelLM.from_pretrained(
@@ -102,6 +96,16 @@ class LladaRuntime(DLLMRuntime):
         )
 
     def run_one_batch(self, prompts: list[str]) -> list[str]:
+        if self.model_id == "GSAI-ML/LLaDA-8B-Instruct":
+            self._run_one_batch_llada(prompts)
+        elif self.model_id == "Dream-org/Dream-v0-Instruct-7B":
+            self._run_one_batch_dream(prompts)
+        else:
+            raise ValueError(f"Unsupported model_id: {self.model_id}")
+
+   
+
+    def _run_one_batch_llada(self, prompts: list[str]) -> list[str]:
         device = "cuda"
 
         formatted_prompts = []
@@ -125,7 +129,7 @@ class LladaRuntime(DLLMRuntime):
 
         answers = []
         if self.cache_mode is None:
-            out, nfe = generate(
+            out, _ = generate(
                 self.model,
                 input_ids,
                 steps=self.steps,
@@ -139,7 +143,7 @@ class LladaRuntime(DLLMRuntime):
                 out[:, input_ids.shape[1] :], skip_special_tokens=True
             )
         elif self.cache_mode == "prefix":
-            out, nfe = generate_with_prefix_cache(
+            out, _ = generate_with_prefix_cache(
                 self.model,
                 input_ids,
                 steps=self.steps,
@@ -152,7 +156,7 @@ class LladaRuntime(DLLMRuntime):
                 out[:, input_ids.shape[1] :], skip_special_tokens=True
             )
         elif self.cache_mode == "dual":
-            out, nfe = generate_with_dual_cache(
+            out, _ = generate_with_dual_cache(
                 self.model,
                 input_ids,
                 steps=self.steps,
@@ -165,67 +169,10 @@ class LladaRuntime(DLLMRuntime):
                 out[:, input_ids.shape[1] :], skip_special_tokens=True
             )
 
-        logger.info(f"Generated {len(answers)} outputs with {nfe} function evaluations")
-
-        print(answers)
         return answers
 
-
-class DreamRuntime(DLLMRuntime):
-    """Runtime implementation for Fast-dLLM (DREAM).
-
-    All configuration parameters are inherited from DLLMRuntime.
-    Default values are set for DREAM-specific behavior.
-    """
-
-    model_id: str = "Dream-org/Dream-v0-Instruct-7B"
-    steps: int = 16
-
-    def model_post_init(self, __context):
-        super().model_post_init(__context)
-        self.load_model()
-
-    def load_model(self) -> None:
-        """
-        Loading DREAM model and tokenizer with block-based generation.
-        """
-
-        device = "cuda"
-        logger.info("Loading DREAM model: %s", self.model_id)
-
-        self.model = (
-            DreamModel.from_pretrained(
-                self.model_id,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-            )
-            .to(device)
-            .eval()
-        )
-
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id, trust_remote_code=True
-        )
-
-        # Patch model with block-based generation methods
-        # Modeled after fast-dllm's examples
-        self.model.diffusion_generate = types.MethodType(
-            DreamGenerationMixin.diffusion_generate, self.model
-        )
-        self.model._sample = types.MethodType(DreamGenerationMixin._sample, self.model)
-
-        logger.info("DREAM model loaded successfully")
-
-    def run_one_batch(self, prompts: list[str]) -> list[str]:
-        """Run generation for prompts using DREAM.
-
-        Note: DREAM does not support batching. This method only accepts a single prompt.
-
-        Args:
-            prompts: List of input prompt strings (must have length 1).
-
-        Returns:
-            List of generated text outputs (length 1).
+    def _run_one_batch_dream(self, prompts: list[str]) -> list[str]:
+        """Note: DREAM does not support batching. This method only accepts a single prompt.
 
         Raises:
             ValueError: If prompts list has length > 1.
@@ -237,6 +184,11 @@ class DreamRuntime(DLLMRuntime):
                 f"Please set --workload.batch-size=1 when using DreamRuntime."
             )
 
+        self.model.diffusion_generate = types.MethodType(
+            DreamGenerationMixin.diffusion_generate, self.model
+        )
+
+        self.model._sample = types.MethodType(DreamGenerationMixin._sample, self.model)
         device = "cuda"
         prompt = prompts[0]
 
@@ -267,23 +219,11 @@ class DreamRuntime(DLLMRuntime):
         return [answer]
 
 
-def default_llada_runtime() -> LladaRuntime:
+def default_dllm_runtime() -> DLLMRuntime:
     """Create default LLaDA runtime configuration."""
-    return LladaRuntime(
+    return FastDLLMRuntime(
         model_id="GSAI-ML/LLaDA-8B-Instruct",
         steps=128,
-        gen_length=128,
-        block_length=32,
-        cache_mode="dual",
-        remasking="low_confidence",
-    )
-
-
-def default_dream_runtime() -> DreamRuntime:
-    """Create default DREAM runtime configuration."""
-    return DreamRuntime(
-        model_id="Dream-org/Dream-v0-Instruct-7B",
-        steps=16,
         gen_length=128,
         block_length=32,
         cache_mode="dual",

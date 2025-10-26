@@ -24,9 +24,8 @@ from mlenergy.dllm.workloads import (
 )
 from mlenergy.dllm.dllm_runtime import (
     DLLMRuntime,
-    LladaRuntime,
-    DreamRuntime,
-    default_llada_runtime,
+    FastDLLMRuntime,
+    default_dllm_runtime,
 )
 from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 
@@ -44,13 +43,13 @@ class DLLMArgs(BaseModel, Generic[WorkloadT, DLLMRuntimeT]):
 
     Attributes:
         workload: Workload configuration for dLLM: {LMArenaChatDLLM}
-        dllm_runtime: Runtime configuration for dLLM: {LladaRuntime, DreamRuntime}
+        dllm_runtime: Runtime configuration for dLLM: {FastDLLMRuntime}
         warmup_iters: Number of warmup iterations.
         benchmark_iters: Number of benchmark iterations.
     """
 
     workload: WorkloadT = Field(default_factory=default_lmarena_chat_dllm)
-    dllm_runtime: DLLMRuntimeT = Field(default_factory=default_llada_runtime)
+    dllm_runtime: DLLMRuntimeT = Field(default_factory=default_dllm_runtime)
     warmup_iters: int = 2
     benchmark_iters: int = 100
 
@@ -225,7 +224,7 @@ if __name__ == "__main__":
     args = tyro.cli(
         DLLMArgs[
             LMArenaChatDLLM,
-            LladaRuntime | DreamRuntime,
+            FastDLLMRuntime,
         ]
     )
 

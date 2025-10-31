@@ -128,7 +128,7 @@ def load_extra_body(
         return {}
 
     with open(extra_body_file) as f:
-          extra_body = json.load(f)
+        extra_body = json.load(f)
 
     logger.info("Extra request body kwargs: %s", extra_body)
 

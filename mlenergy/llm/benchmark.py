@@ -64,7 +64,6 @@ class Args(BaseModel, Generic[WorkloadT]):
 
     Attributes:
         workload: Workload configuration for the benchmark.
-        endpoint_type: Type of API endpoint.
         max_concurrency: Maximum number of concurrent requests. When used together
             with `request_rate`, this may reduce the actual request rate if the
             server is not processing requests fast enough to keep up.
@@ -102,10 +101,6 @@ class Args(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
-    # endpoint_type: Literal["openai", "openai-chat"] = "openai-chat"
-    # temporaily disable openai endpoint, the /v1/completions has different streaming
-    # logic and the ITL counting needs further investigation
-    endpoint_type: Literal["openai-chat"] = "openai-chat"
     max_concurrency: int | None = None
     request_rate: float = float("inf")
     burstiness: float = 1.0
@@ -117,7 +112,7 @@ class Args(BaseModel, Generic[WorkloadT]):
     temperature: float | None = 0.8
 
     # Server configuration
-    server_image: str = "vllm/vllm-openai:v0.10.0"
+    server_image: str = "vllm/vllm-openai:v0.11.1"
 
     # Results configuration
     percentile_metrics: str = "ttft,tpot,itl,e2el"
@@ -355,6 +350,8 @@ class PDRequestTracker(RequestTracker):
         return self.num_prefill_completed
 
 
+# XXX: The /v1/completions API has different streaming
+# logic and the ITL counting needs further investigation
 async def async_request_openai_completions(
     client: aiohttp.ClientSession,
     request_func_input: RequestFuncInput,
@@ -1324,9 +1321,13 @@ def spawn_vllm(
             )
 
         # Load model-specific configs for prefill and decode
-        prefill_config_path = get_vllm_config_path(model_id, gpu_model, workload, "prefill")
+        prefill_config_path = get_vllm_config_path(
+            model_id, gpu_model, workload, "prefill"
+        )
         prefill_env_vars = load_env_vars(model_id, gpu_model, workload, "prefill")
-        decode_config_path = get_vllm_config_path(model_id, gpu_model, workload, "decode")
+        decode_config_path = get_vllm_config_path(
+            model_id, gpu_model, workload, "decode"
+        )
         decode_env_vars = load_env_vars(model_id, gpu_model, workload, "decode")
 
         # KV transfer configs
@@ -1519,7 +1520,9 @@ def spawn_vllm(
     # Monolithic deployment
     elif num_prefills == 0 and num_decodes == 0:
         # Load model-specific config for monolithic deployment
-        monolithic_config_path = get_vllm_config_path(model_id, gpu_model, workload, "monolithic")
+        monolithic_config_path = get_vllm_config_path(
+            model_id, gpu_model, workload, "monolithic"
+        )
         monolithic_env_vars = load_env_vars(model_id, gpu_model, workload, "monolithic")
 
         gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
@@ -1626,7 +1629,7 @@ def main(args: Args) -> None:
     endpoint = {
         "openai": "/v1/completions",
         "openai-chat": "/v1/chat/completions",
-    }[args.endpoint_type]
+    }[args.workload.endpoint_type]
     api_url = f"http://127.0.0.1:{port}{endpoint}"
 
     # Kick off server startup
@@ -1750,7 +1753,7 @@ def main(args: Args) -> None:
             zeus_monitor=zeus_monitor,
             max_num_seqs=args.workload.max_num_seqs,
             workload=args.workload,
-            endpoint_type=args.endpoint_type,
+            endpoint_type=args.workload.endpoint_type,
             api_url=api_url,
             model_id=model_id,
             input_requests=input_requests,
@@ -1771,7 +1774,7 @@ def main(args: Args) -> None:
     # Setup
     current_dt = datetime.now().strftime("%Y%m%d-%H%M%S")
     result_json["date"] = current_dt
-    result_json["endpoint_type"] = args.endpoint_type
+    result_json["endpoint_type"] = args.workload.endpoint_type
     result_json["model_id"] = model_id
     result_json["num_prompts"] = args.workload.num_requests
     result_json["num_prefills"] = args.workload.num_prefills

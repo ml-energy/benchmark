@@ -17,3 +17,4 @@ build/
 
 /run
 /results
+vllm_cache

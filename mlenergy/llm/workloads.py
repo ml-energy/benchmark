@@ -11,6 +11,7 @@ from abc import abstractmethod
 from typing import Literal, TYPE_CHECKING, Self
 from pathlib import Path
 
+import tyro
 from pydantic import BaseModel, model_validator
 from transformers import AutoTokenizer
 
@@ -105,8 +106,12 @@ class WorkloadConfig(BaseModel):
     @cached_property
     def normalized_name(self) -> str:
         """Get a Tyro-normalized name for the workload configuration."""
-        import tyro
         return tyro._strings.hyphen_separated_from_camel_case(self.__class__.__name__)  # type: ignore
+
+    @property
+    def endpoint_type(self) -> Literal["openai", "openai-chat"]:
+        """LLM server endpoint type this workload uses."""
+        return "openai-chat"
 
     def to_path(
         self,
@@ -476,6 +481,15 @@ class SourcegraphFIM(WorkloadConfig):
 
     dataset_path: str = "sourcegraph/context-aware-fim-code-completions"
     dataset_split: str = "train"
+
+    @property
+    def endpoint_type(self) -> Literal["openai", "openai-chat"]:
+        """LLM server endpoint type this workload uses.
+
+        FIM requests are pre-formatted based on the model type and the LLM is
+        expected to exactly continue from the provided prompt.
+        """
+        return "openai"
 
     def to_filename_parts(self) -> list[str]:
         return [

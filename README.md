@@ -51,13 +51,13 @@ python -m mlenergy.llm.benchmark --help
 python -m mlenergy.llm.benchmark workload:image-chat --help
 
 # LLM chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:lm-arena-chat --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 1024 --workload.max-num-seqs 256
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:lm-arena-chat --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 1024 --workload.gpu-model --workload.max-num-seqs 256
 
 # LLM code completion benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:sourcegraph-fim --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 1024 --workload.max-num-seqs 256
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 1024 workload:sourcegraph-fim --workload.base-dir run/llm/sourcegraph-fim/google/codegemma-7b/H100 --workload.model-id google/codegemma-7b --workload.gpu-model --workload.num-requests 1024 --workload.max-num-seqs 256
 
 # LLM problem solving benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 10240 workload:gpqa --workload.base-dir run/llm/gpqa/Qwen/Qwen3-8B/A40 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 256 --workload.gpu-model H100 --workload.max-num-seqs 128
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 10240 workload:gpqa --workload.base-dir run/llm/gpqa/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 256 --workload.gpu-model H100 --workload.max-num-seqs 128
 
 # Multimodal image chat benchmark
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 workload:image-chat --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.num-images 1 --workload.max-num-seqs 64

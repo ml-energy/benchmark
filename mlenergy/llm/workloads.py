@@ -8,12 +8,16 @@ from __future__ import annotations
 import logging
 from functools import cached_property
 from abc import abstractmethod
-from typing import Literal, TYPE_CHECKING, Self
+from typing import Literal, Self
 from pathlib import Path
 
 import tyro
 from pydantic import BaseModel, model_validator
 from transformers import AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_base import BatchEncoding
+from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+from mistral_common.protocol.fim.request import FIMRequest
 
 from mlenergy.constants import DEFAULT_SEED
 from mlenergy.llm.datasets import (
@@ -28,10 +32,31 @@ from mlenergy.llm.datasets import (
     ParetoExpDistributionDataset,
 )
 
-if TYPE_CHECKING:
-    from transformers.tokenization_utils import PreTrainedTokenizer
-
 logger = logging.getLogger(__name__)
+
+
+class CodestralTokenizer(PreTrainedTokenizer):
+    """Custom tokenizer for Codestral-22B-v0.1."""
+
+    def __init__(self) -> None:
+        """Initialize the Codestral tokenizer."""
+        self.name_or_path = "mistralai/Codestral-22B-v0.1"
+        self.tokenizer = MistralTokenizer.from_hf_hub(self.name_or_path)
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(self.name_or_path)
+
+    def encode_fim(self, prefix: str, suffix: str) -> BatchEncoding:
+        """Tokenize the input prefix and suffix."""
+        fim = FIMRequest(prompt=prefix, suffix=suffix)
+        tokenized = self.tokenizer.encode_fim(fim)
+        return BatchEncoding(
+            data={"input_ids": tokenized.tokens, "text": tokenized.text}
+        )
+
+    def __call__(self, *args, **kwargs) -> BatchEncoding:
+        """Delegate to the HuggingFace tokenizer, unless its for FIM."""
+        if "prefix" in kwargs and "suffix" in kwargs:
+            return self.encode_fim(kwargs["prefix"], kwargs["suffix"])
+        return self.hf_tokenizer(*args, **kwargs)
 
 
 class RequestsFile(BaseModel):
@@ -51,6 +76,7 @@ class RequestsFile(BaseModel):
         | AudioChat
         | OmniChat
         | LMArenaChat
+        | SourcegraphFIM
         | GPQA
         | LengthControl
     )
@@ -157,6 +183,9 @@ class WorkloadConfig(BaseModel):
     @cached_property
     def tokenizer(self) -> PreTrainedTokenizer:
         """Get the tokenizer for the model specified in the configuration."""
+        if self.model_id == "mistralai/Codestral-22B-v0.1":
+            return CodestralTokenizer()
+
         return AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
 
     def load_requests(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:

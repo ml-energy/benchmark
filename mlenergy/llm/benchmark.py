@@ -87,6 +87,8 @@ class Args(BaseModel, Generic[WorkloadT]):
         top_k: Top-k sampling parameter.
         min_p: Minimum probability for sampling.
         temperature: Temperature sampling parameter. Greedy decoding if set to 0.0.
+        server_image: Docker image for the vLLM server.
+        just_server: If set, only launch the server without running the benchmark.
         percentile_metrics: Comma-separated list of selected metrics to report
             percentiles. This argument specifies the metrics to report percentiles.
             Allowed metric names are "ttft", "tpot", "itl", and "e2el". E2EL means
@@ -113,6 +115,7 @@ class Args(BaseModel, Generic[WorkloadT]):
 
     # Server configuration
     server_image: str = "vllm/vllm-openai:v0.11.1"
+    just_server: bool = False
 
     # Results configuration
     percentile_metrics: str = "ttft,tpot,itl,e2el"
@@ -148,13 +151,18 @@ class BenchmarkMetrics:
 
 @dataclass
 class RequestFuncInput:
-    """The input for the request function."""
+    """The input for the request function.
+
+    Some models/tasks require pre-tokenized inputs. In that case, `prompt_token_ids`
+    holds the list of token IDs for the prompt, and the completions API will use that.
+    """
 
     prompt: str | list[str]
     api_url: str
     prompt_len: int
     output_len: int | None
     model: str
+    prompt_token_ids: list[int] | None = None
     extra_body: dict | None = None
     multimodal_contents: list[dict] | None = None
     ignore_eos: bool = False
@@ -350,8 +358,6 @@ class PDRequestTracker(RequestTracker):
         return self.num_prefill_completed
 
 
-# XXX: The /v1/completions API has different streaming
-# logic and the ITL counting needs further investigation
 async def async_request_openai_completions(
     client: aiohttp.ClientSession,
     request_func_input: RequestFuncInput,
@@ -386,6 +392,17 @@ async def async_request_openai_completions(
     payload = {
         "model": request_func_input.model,
         "prompt": request_func_input.prompt,
+        "stop": [
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|fim_pad|>",
+            "<|repo_name|>",
+            "<|file_sep|>",
+            "<|file_separator|>",
+            "<|endoftext|>",
+            "<|im_end|>",
+        ],
         "repetition_penalty": 1.1,
         "stream": True,
         "stream_options": {
@@ -393,6 +410,13 @@ async def async_request_openai_completions(
             "continuous_usage_stats": True,
         },
     }
+
+    # Special case for models that require pre-tokenization.
+    # Codestral is an example, because FIM prompts are not tokenized properly by vLLM.
+    if request_func_input.prompt_token_ids is not None:
+        payload["prompt"] = request_func_input.prompt_token_ids
+        # payload["return_token_ids"] = True
+
     # Especially for the Completions API, not setting this will default to 16 tokens.
     # We need to explicitly set it to `None` to disable the limit.
     payload["max_tokens"] = request_func_input.output_len
@@ -832,7 +856,7 @@ async def benchmark(
     max_num_seqs: int,
     workload: WorkloadConfig,
     endpoint_type: str,
-    api_url: str,
+    base_url: str,
     model_id: str,
     input_requests: list[SampleRequest],
     request_rate: float,
@@ -860,50 +884,10 @@ async def benchmark(
         connector=pool,
     )
 
-    logger.info("Starting initial single prompt test run...")
-    test_prompt, test_prompt_len, test_mm_content = (
-        input_requests[0].prompt,
-        input_requests[0].prompt_len,
-        input_requests[0].multimodal_contents,
-    )
-
-    assert test_mm_content is None or isinstance(test_mm_content, list)
-    test_input = RequestFuncInput(
-        model=model_id,
-        prompt=test_prompt if isinstance(test_prompt, str) else test_prompt[0],
-        api_url=api_url,
-        prompt_len=test_prompt_len,
-        output_len=20,
-        multimodal_contents=test_mm_content,
-        ignore_eos=ignore_eos,
-        extra_body=extra_body,
-    )
-
-    test_output = await request_func(
-        client=client,
-        request_func_input=test_input,
-        request_tracker=RequestTracker(8, 100, log=False),
-    )
-    if not test_output.success:
-        raise ValueError(
-            "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}"
-        )
-    else:
-        logger.info("Initial test run completed. Starting warmup...")
-
-    # Warmup
-    await asyncio.gather(
-        *[
-            request_func(
-                client=client,
-                request_func_input=test_input,
-                request_tracker=RequestTracker(8, 100, log=False),
-            )
-            for _ in range(10)
-        ]
-    )
-    logger.info("Warmup completed. Starting benchmark...")
+    api_url = {
+        "openai": f"{base_url}/v1/completions",
+        "openai-chat": f"{base_url}/v1/chat/completions",
+    }[endpoint_type]
 
     # Zeus power monitor
     power_monitor = PowerMonitor(update_period=0.1)
@@ -967,6 +951,7 @@ async def benchmark(
         request_func_input = RequestFuncInput(
             model=model_id,
             prompt=request.prompt,
+            prompt_token_ids=request.prompt_token_ids,
             api_url=api_url,
             prompt_len=request.prompt_len,
             output_len=output_len,
@@ -1263,6 +1248,7 @@ async def benchmark(
         {
             "prompt": output.prompt,
             "output_text": output.output_text,
+            "reasoning_output_text": output.reasoning_output_text,
             "input_len": output.prompt_len,
             "output_len": output_len,
             "latency": output.latency,
@@ -1626,11 +1612,8 @@ def main(args: Args) -> None:
 
     port = 8000 + int(cuda_visible_devices.split(",")[0])
     discovery_port = 30000 + int(cuda_visible_devices.split(",")[0])
-    endpoint = {
-        "openai": "/v1/completions",
-        "openai-chat": "/v1/chat/completions",
-    }[args.workload.endpoint_type]
-    api_url = f"http://127.0.0.1:{port}{endpoint}"
+    base_url = f"http://127.0.0.1:{port}"
+    logger.info("Server URL: %s", base_url)
 
     # Kick off server startup
     logger.info("Spawning vLLM server...")
@@ -1744,6 +1727,13 @@ def main(args: Args) -> None:
             tail_handle.terminate()
             tail_handle.wait()
 
+    if args.just_server:
+        try:
+            input("Press any key to terminate the server and exit...")
+        finally:
+            logger.info("Terminating the server...")
+            return
+
     # Freeze gc to prevent random pauses during benchmarking
     gc.collect()
     gc.freeze()
@@ -1754,7 +1744,7 @@ def main(args: Args) -> None:
             max_num_seqs=args.workload.max_num_seqs,
             workload=args.workload,
             endpoint_type=args.workload.endpoint_type,
-            api_url=api_url,
+            base_url=base_url,
             model_id=model_id,
             input_requests=input_requests,
             request_rate=args.request_rate,
@@ -1820,7 +1810,7 @@ if __name__ == "__main__":
 
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
-    if result_file.exists() and not args.overwrite_results:
+    if result_file.exists() and not args.overwrite_results and not args.just_server:
         print(
             f"Result file {result_file} already exists. Exiting immediately. "
             "Specify --overwrite-results to run the benchmark and overwrite results.",
@@ -1828,27 +1818,35 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     # Set up the logger so that it logs to both console and file
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w"),
-        ],
-    )
+    if args.just_server:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            handlers=[logging.StreamHandler()],
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w"),
+            ],
+        )
 
-    # Explicitly include Zeus PowerMonitor logs
-    zpl = logging.getLogger("zeus.monitor.power")
-    zpl.setLevel(logging.INFO)
-    zpl.propagate = True
-    zpl.handlers.clear()
+        # Explicitly include Zeus PowerMonitor logs
+        zpl = logging.getLogger("zeus.monitor.power")
+        zpl.setLevel(logging.INFO)
+        zpl.propagate = True
+        zpl.handlers.clear()
 
-    # Explicitly include Zeus TemperatureMonitor logs
-    ztl = logging.getLogger("zeus.monitor.temperature")
-    ztl.setLevel(logging.INFO)
-    ztl.propagate = True
-    ztl.handlers.clear()
+        # Explicitly include Zeus TemperatureMonitor logs
+        ztl = logging.getLogger("zeus.monitor.temperature")
+        ztl.setLevel(logging.INFO)
+        ztl.propagate = True
+        ztl.handlers.clear()
 
     try:
         main(args)

@@ -94,8 +94,6 @@ class WorkloadConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_workoad(self) -> Self:
         """Validate the sanity of the workload."""
-        if self.num_requests < 2 * self.max_num_seqs:
-            raise ValueError("There should be at least 2 * max_num_seqs requests.")
         if (
             self.num_prefills is not None
             and self.num_decodes is not None
@@ -103,6 +101,12 @@ class WorkloadConfig(BaseModel):
         ):
             raise ValueError("Invalid prefills and decodes configuration")
         return self
+
+    @cached_property
+    def normalized_name(self) -> str:
+        """Get a Tyro-normalized name for the workload configuration."""
+        import tyro
+        return tyro._strings.hyphen_separated_from_camel_case(self.__class__.__name__)  # type: ignore
 
     def to_path(
         self,
@@ -399,7 +403,7 @@ class LMArenaChat(WorkloadConfig):
 
     def to_filename_parts(self) -> list[str]:
         return [
-            "lmarena_chat",
+            "lm_arena_chat",
             self.gpu_model,
             str(self.num_requests) + "req",
             str(self.seed) + "seed",

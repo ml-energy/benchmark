@@ -43,12 +43,13 @@ from mlenergy.llm.workloads import (
     GPQA,
     ImageChat,
     LMArenaChat,
+    SourcegraphFIM,
     OmniChat,
     VideoChat,
     WorkloadConfig,
     LengthControl,
 )
-from mlenergy.llm.config import get_vllm_config_path, load_env_vars
+from mlenergy.llm.config import get_vllm_config_path, load_env_vars, load_extra_body
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
@@ -169,7 +170,8 @@ class RequestFuncOutput:
     """The output of the request function including metrics."""
 
     prompt: str | list[str] = ""
-    generated_text: str = ""
+    output_text: str = ""
+    reasoning_output_text: str = ""
     success: bool = False
     latency: float = 0.0
     output_tokens: int = 0
@@ -387,8 +389,7 @@ async def async_request_openai_completions(
     payload = {
         "model": request_func_input.model,
         "prompt": request_func_input.prompt,
-        "temperature": 0.0,
-        "repetition_penalty": 1.0,
+        "repetition_penalty": 1.1,
         "stream": True,
         "stream_options": {
             "include_usage": True,
@@ -408,7 +409,7 @@ async def async_request_openai_completions(
     output.prompt = request_func_input.prompt
     output.prompt_len = request_func_input.prompt_len
 
-    generated_text = ""
+    output_text = ""
     st = time.perf_counter()
     most_recent_timestamp = st
     try:
@@ -477,7 +478,7 @@ async def async_request_openai_completions(
                                         output.itl.append(0)
 
                             most_recent_timestamp = timestamp
-                            generated_text += text or ""
+                            output_text += text or ""
                         elif usage := data.get("usage"):
                             output.output_tokens = usage.get("completion_tokens")
                 if first_chunk_received:
@@ -488,7 +489,7 @@ async def async_request_openai_completions(
                         "Never received a valid chunk to calculate TTFT."
                         "This response will be marked as failed!"
                     )
-                output.generated_text = generated_text
+                output.output_text = output_text
                 output.latency = most_recent_timestamp - st
             else:
                 output.error = (await response.text()) or response.reason or ""
@@ -530,7 +531,7 @@ async def async_request_openai_chat_completions(
     payload = {
         "model": request_func_input.model,
         "messages": messages,
-        "temperature": 0.0,
+        "repetition_penalty": 1.1,
         "stream": True,
         "stream_options": {
             "include_usage": True,
@@ -550,7 +551,8 @@ async def async_request_openai_chat_completions(
     output.prompt = request_func_input.prompt
     output.prompt_len = request_func_input.prompt_len
 
-    generated_text = ""
+    output_text = ""
+    reasoning_output_text = ""
     ttft = 0.0
     st = time.perf_counter()
     most_recent_timestamp = st
@@ -580,7 +582,12 @@ async def async_request_openai_chat_completions(
                             continue
 
                         if choices := data.get("choices"):
-                            content = choices[0]["delta"].get("content")
+                            delta = choices[0]["delta"]
+                            content = delta.get("content")
+                            # Reasoning tokens are put in a separate field
+                            # when a reasoning parser is specified.
+                            reasoning_content = delta.get("reasoning_content")
+
                             # First token
                             if ttft == 0.0:
                                 ttft = timestamp - st
@@ -612,13 +619,17 @@ async def async_request_openai_chat_completions(
                                     for _ in range(inc - 1):
                                         output.itl.append(0)
 
-                            generated_text += content or ""
+                            if content is not None:
+                                output_text += content
+                            if reasoning_content is not None:
+                                reasoning_output_text += reasoning_content
                         elif usage := data.get("usage"):
                             output.output_tokens = usage.get("completion_tokens")
 
                         most_recent_timestamp = timestamp
 
-                output.generated_text = generated_text
+                output.output_text = output_text
+                output.reasoning_output_text = reasoning_output_text
                 output.success = True
                 output.latency = most_recent_timestamp - st
             else:
@@ -753,7 +764,8 @@ def calculate_metrics(
                 # Note : this may inflate the output token count slightly
                 output_len = len(
                     tokenizer(
-                        outputs[i].generated_text, add_special_tokens=False
+                        outputs[i].output_text + outputs[i].reasoning_output_text,
+                        add_special_tokens=False,
                     ).input_ids
                 )
             actual_output_lens.append(output_len)
@@ -1253,7 +1265,7 @@ async def benchmark(
     result["results"] = [
         {
             "prompt": output.prompt,
-            "generated_text": output.generated_text,
+            "output_text": output.output_text,
             "input_len": output.prompt_len,
             "output_len": output_len,
             "latency": output.latency,
@@ -1279,6 +1291,7 @@ def spawn_vllm(
     discovery_port: int,
     model_id: str,
     gpu_model: str,
+    workload: str,
     hf_token: str,
     hf_home: str,
     gpu_ids: list[int],
@@ -1311,10 +1324,10 @@ def spawn_vllm(
             )
 
         # Load model-specific configs for prefill and decode
-        prefill_config_path = get_vllm_config_path(model_id, gpu_model, "prefill")
-        prefill_env_vars = load_env_vars(model_id, gpu_model, "prefill")
-        decode_config_path = get_vllm_config_path(model_id, gpu_model, "decode")
-        decode_env_vars = load_env_vars(model_id, gpu_model, "decode")
+        prefill_config_path = get_vllm_config_path(model_id, gpu_model, workload, "prefill")
+        prefill_env_vars = load_env_vars(model_id, gpu_model, workload, "prefill")
+        decode_config_path = get_vllm_config_path(model_id, gpu_model, workload, "decode")
+        decode_env_vars = load_env_vars(model_id, gpu_model, workload, "decode")
 
         # KV transfer configs
         send_type = "GET"
@@ -1400,11 +1413,11 @@ def spawn_vllm(
                     ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
                 ),
                 server_image,
+                model_id,
                 # Use config file - other args will override config values
                 "--config", container_config_path,
                 # Runtime-specific args that override config
                 "--port", str(prefill_http_base_port + i),
-                "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
@@ -1477,9 +1490,9 @@ def spawn_vllm(
                     ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
                 ),
                 server_image,
+                model_id,
                 "--config", container_config_path,
                 "--port", str(decode_http_base_port + i),
-                "--model", model_id,
                 "--tensor-parallel-size", str(len(cur_gpus)),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
@@ -1506,8 +1519,8 @@ def spawn_vllm(
     # Monolithic deployment
     elif num_prefills == 0 and num_decodes == 0:
         # Load model-specific config for monolithic deployment
-        monolithic_config_path = get_vllm_config_path(model_id, gpu_model, "monolithic")
-        monolithic_env_vars = load_env_vars(model_id, gpu_model, "monolithic")
+        monolithic_config_path = get_vllm_config_path(model_id, gpu_model, workload, "monolithic")
+        monolithic_env_vars = load_env_vars(model_id, gpu_model, workload, "monolithic")
 
         gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
         gpu_str = f'"device={gpu_str}"'
@@ -1534,11 +1547,9 @@ def spawn_vllm(
                 ["-v", f"{vllm_cache_dir}:/root/.cache/vllm/torch_compile_cache"] if vllm_cache_dir else []
             ),
             server_image,
-            # Use config file - other args will override config values
+            model_id,
             "--config", container_config_path,
-            # Runtime-specific args that override config
             "--port", str(port),
-            "--model", model_id,
             "--tensor-parallel-size", str(len(gpu_ids)),
             "--max-num-seqs", str(max_num_seqs),
         ]
@@ -1599,15 +1610,6 @@ def main(args: Args) -> None:
 
     set_ulimit()
 
-    # Exit if the result file exists so that the script is idempotent.
-    result_file = args.workload.to_path(of="results")
-    if result_file.exists() and not args.overwrite_results:
-        print(
-            f"Result file {result_file} already exists. Exiting immediately. "
-            "Specify --overwrite-results to run the benchmark and overwrite results.",
-        )
-        return
-
     # Necessary envs
     cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
     hf_token = os.environ["HF_TOKEN"]
@@ -1635,6 +1637,7 @@ def main(args: Args) -> None:
         discovery_port=discovery_port,
         model_id=model_id,
         gpu_model=args.workload.gpu_model,
+        workload=args.workload.normalized_name,
         hf_token=hf_token,
         hf_home=hf_home,
         gpu_ids=[int(gpu_id) for gpu_id in cuda_visible_devices.split(",")],
@@ -1672,6 +1675,13 @@ def main(args: Args) -> None:
 
     if "temperature" not in sampling_params:
         sampling_params["temperature"] = 0.0  # Default to greedy decoding.
+
+    # Read in extra body if specified in the config directory
+    extra_body = load_extra_body(
+        model_id=args.workload.model_id,
+        gpu_model=args.workload.gpu_model,
+        workload=args.workload.normalized_name,
+    )
 
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
@@ -1751,7 +1761,7 @@ def main(args: Args) -> None:
             ignore_eos=args.ignore_eos,
             max_output_tokens=args.max_output_tokens,
             max_concurrency=args.max_concurrency,
-            extra_body=sampling_params,
+            extra_body=extra_body | sampling_params,
         )
     )
 
@@ -1797,6 +1807,7 @@ if __name__ == "__main__":
             | AudioChat
             | OmniChat
             | LMArenaChat
+            | SourcegraphFIM
             | GPQA
             | LengthControl
         ]
@@ -1807,10 +1818,9 @@ if __name__ == "__main__":
     # Exit if the result file exists so that the script is idempotent.
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:
-        logger.info(
-            "Result file %s already exists. Exiting immediately. "
+        print(
+            f"Result file {result_file} already exists. Exiting immediately. "
             "Specify --overwrite-results to run the benchmark and overwrite results.",
-            result_file,
         )
         raise SystemExit(0)
 

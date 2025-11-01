@@ -1364,6 +1364,19 @@ def spawn_vllm(
             # Container path for the config file
             container_config_path = "/vllm_config/prefill.config.yaml"
 
+            # If the config file mentioned DP, we're doing that; otherwise TP.
+            if "data-parallel-size" in prefill_config_path.read_text():
+                parallel_arg = "--data-parallel-size"
+                max_num_seqs_per_replica, rem = divmod(max_num_seqs, len(gpu_ids))
+                if rem != 0:
+                    raise ValueError(
+                        f"For data parallelism, max_num_seqs ({max_num_seqs}) must be "
+                        f"divisible by the number of GPUs ({len(gpu_ids)})."
+                    )
+                max_num_seqs = max_num_seqs_per_replica
+            else:
+                parallel_arg = "--tensor-parallel-size"
+
             # fmt: off
             prefill_kv_transfer_config = {
                 "kv_connector": "P2pNcclConnector",
@@ -1405,7 +1418,7 @@ def spawn_vllm(
                 "--config", container_config_path,
                 # Runtime-specific args that override config
                 "--port", str(prefill_http_base_port + i),
-                "--tensor-parallel-size", str(len(cur_gpus)),
+                parallel_arg, str(len(cur_gpus)),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(prefill_kv_transfer_config),
@@ -1440,6 +1453,19 @@ def spawn_vllm(
 
             # Container path for the config file
             container_config_path = "/vllm_config/decode.config.yaml"
+
+            # If the config file mentioned DP, we're doing that; otherwise TP.
+            if "data-parallel-size" in decode_config_path.read_text():
+                parallel_arg = "--data-parallel-size"
+                max_num_seqs_per_replica, rem = divmod(max_num_seqs, len(gpu_ids))
+                if rem != 0:
+                    raise ValueError(
+                        f"For data parallelism, max_num_seqs ({max_num_seqs}) must be "
+                        f"divisible by the number of GPUs ({len(gpu_ids)})."
+                    )
+                max_num_seqs = max_num_seqs_per_replica
+            else:
+                parallel_arg = "--tensor-parallel-size"
 
             # fmt: off
             decode_kv_transfer_config = {
@@ -1480,7 +1506,7 @@ def spawn_vllm(
                 model_id,
                 "--config", container_config_path,
                 "--port", str(decode_http_base_port + i),
-                "--tensor-parallel-size", str(len(cur_gpus)),
+                parallel_arg, str(len(cur_gpus)),
                 "--trust-remote-code",
                 "--max-num-seqs", str(max_num_seqs),
                 "--kv-transfer-config", json.dumps(decode_kv_transfer_config),
@@ -1511,6 +1537,19 @@ def spawn_vllm(
         )
         monolithic_env_vars = load_env_vars(model_id, gpu_model, workload, "monolithic")
 
+        # If the config file mentioned DP, we're doing that; otherwise TP.
+        if "data-parallel-size" in monolithic_config_path.read_text():
+            parallel_arg = "--data-parallel-size"
+            max_num_seqs_per_replica, rem = divmod(max_num_seqs, len(gpu_ids))
+            if rem != 0:
+                raise ValueError(
+                    f"For data parallelism, max_num_seqs ({max_num_seqs}) must be "
+                    f"divisible by the number of GPUs ({len(gpu_ids)})."
+                )
+            max_num_seqs = max_num_seqs_per_replica
+        else:
+            parallel_arg = "--tensor-parallel-size"
+
         gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
         gpu_str = f'"device={gpu_str}"'
         container_name = f"benchmark-vllm-{''.join(str(gpu_id) for gpu_id in gpu_ids)}"
@@ -1539,7 +1578,7 @@ def spawn_vllm(
             model_id,
             "--config", container_config_path,
             "--port", str(port),
-            "--tensor-parallel-size", str(len(gpu_ids)),
+            parallel_arg, str(len(gpu_ids)),
             "--max-num-seqs", str(max_num_seqs),
         ]
         # fmt: on

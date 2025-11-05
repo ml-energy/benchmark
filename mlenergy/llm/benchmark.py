@@ -49,7 +49,12 @@ from mlenergy.llm.workloads import (
     WorkloadConfig,
     LengthControl,
 )
-from mlenergy.llm.config import get_vllm_config_path, load_env_vars, load_extra_body
+from mlenergy.llm.config import (
+    get_vllm_config_path,
+    load_env_vars,
+    load_extra_body,
+    load_system_prompt,
+)
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
@@ -166,6 +171,7 @@ class RequestFuncInput:
     extra_body: dict | None = None
     multimodal_contents: list[dict] | None = None
     ignore_eos: bool = False
+    system_prompt: str | None = None
 
 
 @dataclass
@@ -389,6 +395,12 @@ async def async_request_openai_completions(
             "not a list of strings."
         )
 
+    if request_func_input.system_prompt:
+        raise ValueError(
+            "OpenAI Completions API does not support system prompt. "
+            "Use OpenAI Chat Completions API instead."
+        )
+
     payload = {
         "model": request_func_input.model,
         "prompt": request_func_input.prompt,
@@ -548,6 +560,12 @@ async def async_request_openai_chat_completions(
             messages.append(
                 {"role": role, "content": [{"type": "text", "text": prompt}]}
             )
+
+    # Prepend system message if system prompt is provided
+    if request_func_input.system_prompt:
+        messages.insert(
+            0, {"role": "system", "content": request_func_input.system_prompt}
+        )
 
     payload = {
         "model": request_func_input.model,
@@ -867,6 +885,7 @@ async def benchmark(
     max_output_tokens: int | Literal["dataset"] | None,
     max_concurrency: int | None,
     extra_body: dict | None,
+    system_prompt: str | None,
 ):
     if endpoint_type in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[endpoint_type]
@@ -958,6 +977,7 @@ async def benchmark(
             multimodal_contents=request.multimodal_contents,
             ignore_eos=ignore_eos,
             extra_body=extra_body,
+            system_prompt=system_prompt,
         )
         tasks.append(
             asyncio.create_task(
@@ -1708,6 +1728,13 @@ def main(args: Args) -> None:
         workload=args.workload.normalized_name,
     )
 
+    # Load system prompt if specified in the config directory
+    system_prompt = load_system_prompt(
+        model_id=args.workload.model_id,
+        gpu_model=args.workload.gpu_model,
+        workload=args.workload.normalized_name,
+    )
+
     # Wait until the /health endpoint returns 200 OK
     health_url = f"http://127.0.0.1:{port}/health"
     logger.info("Waiting for vLLM server to become healthy at %s", health_url)
@@ -1794,6 +1821,7 @@ def main(args: Args) -> None:
             max_output_tokens=args.max_output_tokens,
             max_concurrency=args.max_concurrency,
             extra_body=extra_body | sampling_params,
+            system_prompt=system_prompt,
         )
     )
 

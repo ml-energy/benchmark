@@ -133,3 +133,41 @@ def load_extra_body(
     logger.info("Extra request body kwargs: %s", extra_body)
 
     return extra_body
+
+
+def load_system_prompt(
+    model_id: str,
+    gpu_model: str,
+    workload: str,
+    config_base_dir: Path | str = "configs/vllm",
+) -> str | None:
+    """Load system prompt for a given model, GPU, and workload.
+
+    Args:
+        model_id: Model identifier (e.g., "meta-llama/Llama-3.1-8B-Instruct").
+        gpu_model: GPU model name (e.g., "H100", "A100", "B200").
+        workload: Name of the workload (e.g., "lm-arena-chat").
+        config_base_dir: Base directory for configuration files.
+
+    Returns:
+        System prompt string if file exists, None otherwise.
+    """
+    config_base_path = Path(config_base_dir)
+
+    # Construct path to system prompt file
+    model_config_dir = config_base_path / workload / model_id / gpu_model
+    system_prompt_file = model_config_dir / "system_prompt.txt"
+
+    if not system_prompt_file.exists():
+        logger.info(
+            "No system prompt file found at %s (optional)",
+            system_prompt_file,
+        )
+        return None
+
+    with open(system_prompt_file) as f:
+        system_prompt = f.read().strip()
+
+    logger.info("Loaded system prompt from config dir: %s", system_prompt)
+
+    return system_prompt

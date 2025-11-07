@@ -175,6 +175,7 @@ def flatten_command(command: str) -> str:
     flattened = command.replace("\\\n", " ").replace("\n", " ")
     # Collapse multiple spaces into single spaces
     import re
+
     flattened = re.sub(r"\s+", " ", flattened)
     return flattened.strip()
 
@@ -186,7 +187,9 @@ def generate_pegasus_queues(
 ) -> list[Path]:
     """Generate Pegasus queue.yaml files, one per GPU count."""
     # Organize workloads by GPU count
-    by_gpu_count: dict[int, list[tuple[str, str, ModelWorkload, BenchmarkTemplate]]] = defaultdict(list)
+    by_gpu_count: dict[int, list[tuple[str, str, ModelWorkload, BenchmarkTemplate]]] = (
+        defaultdict(list)
+    )
 
     for dataset, dataset_config in all_workloads.items():
         for gpu_model, gpu_workloads in dataset_config.workloads.items():
@@ -201,7 +204,9 @@ def generate_pegasus_queues(
     for num_gpus, jobs in sorted(by_gpu_count.items()):
         queue_data = []
 
-        for dataset, gpu_model, workload, template in sorted(jobs, key=lambda x: (x[0], x[1], x[2].model_id)):
+        for dataset, gpu_model, workload, template in sorted(
+            jobs, key=lambda x: (x[0], x[1], x[2].model_id)
+        ):
             command = format_command(
                 template.command_template,
                 workload.model_id,
@@ -222,7 +227,9 @@ def generate_pegasus_queues(
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_file, "w") as f:
-            yaml.dump(queue_data, f, default_flow_style=False, sort_keys=False, width=1000)
+            yaml.dump(
+                queue_data, f, default_flow_style=False, sort_keys=False, width=1000
+            )
 
         output_files.append(output_file)
         print(f"Generated {output_file} with {len(queue_data)} job(s)")
@@ -247,7 +254,7 @@ def generate_slurm_script(
     script_lines = [
         "#!/bin/bash",
         "",
-        f"# Slurm script for {dataset} / {workload.model_id} / {gpu_model} / {num_gpus} GPU(s)",
+        f"# Slurm script for {dataset} / {workload.model_id} / {gpu_model} / {num_gpus} GPU{'' if num_gpus == 1 else 's'}",
         "",
     ]
 
@@ -256,6 +263,7 @@ def generate_slurm_script(
     if slurm_config.time_limit:
         script_lines.append(f"#SBATCH --time={slurm_config.time_limit}")
 
+    script_lines.append("#SBATCH --ntasks=1")
     script_lines.append(f"#SBATCH --gpus-per-task={num_gpus}")
 
     if slurm_config.cpus_per_gpu:
@@ -266,12 +274,23 @@ def generate_slurm_script(
     script_lines.extend(
         [
             f"#SBATCH --job-name={dataset}_{model_slug}",
+            f"#SBATCH --output=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.out",
+            f"#SBATCH --error=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.err",
             "",
             "# Environment variables (set these before running sbatch or export before submission)",
             "# export HF_TOKEN=<your_token>",
-            "# export HF_HOME=<your_hf_home>",
             "",
             "set -e",
+            "",
+            "# Change to submission directory",
+            "cd $SLURM_SUBMIT_DIR",
+            "",
+            "# Temporary HF_HOME for this model only.",
+            f"export HF_HOME=$SLURM_SUBMIT_DIR/hf_home/{model_slug}",
+            "mkdir -p $HF_HOME",
+            "",
+            "# Cleanup on exit (success or failure)",
+            "trap \"rm -rf $HF_HOME\" EXIT",
             "",
         ]
     )
@@ -286,13 +305,14 @@ def generate_slurm_script(
 
     # Create for loop over max_num_seqs values
     max_num_seqs_list = " ".join(str(x) for x in workload.max_num_seqs)
-    script_lines.extend([
-        f"for max_num_seqs in {max_num_seqs_list}; do",
-        "  echo \"Running with max-num-seqs=$max_num_seqs\"",
-        f"  {command_template_str}",
-        "done",
-        "",
-    ])
+    script_lines.extend(
+        [
+            f"for max_num_seqs in {max_num_seqs_list}; do",
+            '  echo "Running with max-num-seqs=$max_num_seqs"',
+            f"  {command_template_str}",
+            "done",
+        ]
+    )
 
     with open(output_file, "w") as f:
         f.write("\n".join(script_lines))
@@ -347,10 +367,7 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
         if config.datasets and dataset not in config.datasets:
             continue
 
-        filtered_config = DatasetConfig(
-            template=dataset_config.template,
-            workloads={}
-        )
+        filtered_config = DatasetConfig(template=dataset_config.template, workloads={})
 
         for gpu_model, gpu_workloads in dataset_config.workloads.items():
             if config.gpu_models and gpu_model not in config.gpu_models:
@@ -362,9 +379,13 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
 
     match config.output:
         case Pegasus():
-            output_files = generate_pegasus_queues(filtered_datasets, config.output_dir, config.output)
+            output_files = generate_pegasus_queues(
+                filtered_datasets, config.output_dir, config.output
+            )
         case Slurm():
-            output_files = generate_slurm_scripts(filtered_datasets, config.output_dir, config.output)
+            output_files = generate_slurm_scripts(
+                filtered_datasets, config.output_dir, config.output
+            )
         case _:
             raise ValueError("Unsupported output configuration")
 

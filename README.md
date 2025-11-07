@@ -75,3 +75,11 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m mlenergy.llm.benchmark --overwrit
 # Check the results
 tree run
 ```
+
+- Singularity
+
+Convert into a Singularity image
+
+```bash
+singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
+```

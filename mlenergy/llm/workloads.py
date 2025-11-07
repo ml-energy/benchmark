@@ -552,7 +552,7 @@ class GPQA(WorkloadConfig):
     """Workload for the GPQA dataset."""
 
     dataset_path: str = "Idavidrein/gpqa"
-    dataset_subset: str = "gpqa_extended"
+    dataset_subset: str = "gpqa_diamond"
     dataset_split: str = "train"
 
     def to_filename_parts(self) -> list[str]:

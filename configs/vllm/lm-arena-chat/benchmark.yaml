@@ -1,0 +1,13 @@
+command_template: |
+  python -m mlenergy.llm.benchmark \
+    --server-image vllm/vllm-openai:v0.11.1 \
+    --max-output-tokens 4096 \
+    workload:lm-arena-chat \
+    --workload.base-dir run/llm/lm-arena-chat/{model_id}/{gpu_model} \
+    --workload.model-id {model_id} \
+    --workload.num-requests 1024 \
+    --workload.gpu-model {gpu_model} \
+    --workload.max-num-seqs {max_num_seqs}
+
+sweeps:
+  max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256, 384, 512]

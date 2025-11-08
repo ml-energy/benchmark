@@ -21,7 +21,7 @@ import time
 import warnings
 import traceback
 from collections.abc import AsyncGenerator
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar, TYPE_CHECKING
 from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -32,9 +32,11 @@ import tyro
 import numpy as np
 import requests
 from pydantic import BaseModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.show_env import show_env
+
+if TYPE_CHECKING:
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from mlenergy.llm.datasets import SampleRequest
 from mlenergy.llm.workloads import (

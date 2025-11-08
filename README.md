@@ -60,7 +60,7 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 10240 workload:gpqa --workload.base-dir run/llm/gpqa/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 256 --workload.gpu-model H100 --workload.max-num-seqs 128
 
 # Multimodal image chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 workload:image-chat --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.num-images 1 --workload.max-num-seqs 64
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:image-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/image-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-images 1 --workload.gpu-model H100 --workload.max-num-seqs 64
 
 # Input/Output length control
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 --ignore-eos workload:length-control --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.input-mean 500 --workload.output-mean 300
@@ -82,7 +82,7 @@ configs/vllm/{task}/benchmark.yaml
 
 **Model+GPU-level config:**
 ```
-configs/vllm/{task}/{org}/{model}/{gpu}/
+configs/vllm/{task}/{model_id}/{gpu_model}/
   ├── monolithic.config.yaml
   ├── monolithic.env.yaml
   ├── num_gpus.txt
@@ -101,6 +101,9 @@ command_template: |
 sweep_defaults:
   - max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256]
 ```
+
+In the command template, `{model_id}` and `{gpu_model}` are automatically populated from the directory structure.
+All the keys and only the keys under `sweep_defaults` must be present in the command template.
 
 ### Custom Sweeps (`sweeps.yaml`)
 

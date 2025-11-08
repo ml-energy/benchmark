@@ -154,7 +154,9 @@ def validate_all_placeholders_filled(
         )
 
 
-def compute_cartesian_product(param_group: dict[str, list[Any]]) -> list[dict[str, Any]]:
+def compute_cartesian_product(
+    param_group: dict[str, list[Any]],
+) -> list[dict[str, Any]]:
     """Compute Cartesian product of parameter lists in a single group.
 
     Args:
@@ -181,7 +183,7 @@ def compute_cartesian_product(param_group: dict[str, list[Any]]) -> list[dict[st
 
 
 def compute_sweep_combinations(
-    sweep_config: list[dict[str, list[Any]]]
+    sweep_config: list[dict[str, list[Any]]],
 ) -> list[dict[str, Any]]:
     """Compute all sweep combinations by flattening Cartesian products.
 

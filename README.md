@@ -65,13 +65,6 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 # Input/Output length control
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 --ignore-eos workload:length-control --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.input-mean 500 --workload.output-mean 300
 
-# Prefill-Decode disaggregated serving
-## 3P1D
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m mlenergy.llm.benchmark --overwrite-results --max-output-tokens dataset --ignore-eos --server-image vllm/vllm-openai:v0.10.0 workload:length-control --workload.model-id meta-llama/Llama-3.1-8B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-8B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.num-prefills 3 --workload.num-decodes 1
-
-## TP=4, 1P1D
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m mlenergy.llm.benchmark --overwrite-results --max-output-tokens dataset --server-image vllm/vllm-openai:v0.10.0 workload:gpqa --workload.model-id meta-llama/Llama-3.1-70B-Instruct --workload.base-dir run/llm/meta-llama/Llama-3.1-70B-Instruct --workload.num-requests 200 --workload.max-num-seqs 64 --workload.num-prefills 1 --workload.num-decodes 1
-
 # Check the results
 tree run
 ```
@@ -82,4 +75,30 @@ Convert into a Singularity image
 
 ```bash
 singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
+```
+
+Running benchmarks with Singularity
+
+```bash
+# HF_TOKEN, HF_HOME, and CUDA_VISIBLE_DEVICES are required.
+export HF_TOKEN=<your_hf_token>
+export HF_HOME=<your_hf_home>
+
+# Use --container-runtime singularity and specify the .sif file path
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
+  --container-runtime singularity \
+  --server-image /path/to/vllm.sif \
+  --max-output-tokens 4096 \
+  workload:lm-arena-chat \
+  --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 \
+  --workload.model-id Qwen/Qwen3-8B \
+  --workload.num-requests 1024 \
+  --workload.gpu-model H100 \
+  --workload.max-num-seqs 256
+```
+
+Running vLLM server directly (for testing)
+
+```bash
+singularity exec --nv --env HF_TOKEN=hf_xxx --env PYTHONNOUSERSITE=1 vllm.sif vllm serve Qwen/Qwen3-4B
 ```

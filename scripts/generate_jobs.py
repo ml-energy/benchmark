@@ -10,7 +10,7 @@ import yaml
 import tyro
 import dataclasses
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -290,7 +290,7 @@ def generate_slurm_script(
             "mkdir -p $HF_HOME",
             "",
             "# Cleanup on exit (success or failure)",
-            "trap \"rm -rf $HF_HOME\" EXIT",
+            'trap "rm -rf $HF_HOME" EXIT',
             "",
         ]
     )

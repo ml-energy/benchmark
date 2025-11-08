@@ -3,10 +3,10 @@
 set -ev
 
 if [[ -z $GITHUB_ACTION ]]; then
-  ruff format mlenergy tests
+  ruff format mlenergy tests scripts/generate_jobs.py
 else
-  ruff format --check mlenergy tests
+  ruff format --check mlenergy tests scripts/generate_jobs.py
 fi
 
-ruff check mlenergy tests
-pyright mlenergy tests
+ruff check mlenergy tests scripts/generate_jobs.py
+pyright mlenergy tests scripts/generate_jobs.py

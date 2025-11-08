@@ -856,10 +856,12 @@ class ParetoExpDistributionDataset:
         for _ in range(num_requests):
             # Sample desired input and output lengths using CDF
             random_values = self.rng.random(2)
-            sampled_input_len = np.searchsorted(cdfs["input_tokens"], random_values[0])
+            sampled_input_len = np.searchsorted(
+                cdfs["input_tokens"], random_values[0]
+            ).item()
             sampled_output_len = np.searchsorted(
                 cdfs["output_tokens"], random_values[1]
-            )
+            ).item()
             sampled_input_len = max(1, sampled_input_len)
             sampled_output_len = max(1, sampled_output_len)
 

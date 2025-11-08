@@ -6,20 +6,29 @@ based on benchmark.yaml (per task) and num_gpus.txt (per model & GPU).
 
 from __future__ import annotations
 
+import re
 import yaml
 import tyro
 import dataclasses
 from pathlib import Path
+from typing import Any
 from pydantic import BaseModel
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import product
 
 
 class BenchmarkTemplate(BaseModel):
     """Benchmark template from benchmark.yaml."""
 
     command_template: str
-    sweeps: dict[str, list[int]]
+    sweep_defaults: list[dict[str, list[Any]]]
+
+
+class SweepConfig(BaseModel):
+    """Sweep configuration from sweeps.yaml."""
+
+    sweep: list[dict[str, list[Any]]]
 
 
 class ModelWorkload(BaseModel):
@@ -27,7 +36,7 @@ class ModelWorkload(BaseModel):
 
     model_id: str
     config_dir: Path
-    max_num_seqs: list[int]
+    sweep_combinations: list[dict[str, Any]]
 
 
 @dataclass
@@ -80,6 +89,119 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
 
     gpu_models: list[str] = dataclasses.field(default_factory=list)
     """Filter by specific GPU models"""
+
+
+def extract_template_placeholders(template: str) -> set[str]:
+    """Extract all {placeholder} names from a command template.
+
+    Args:
+        template: Command template string with {placeholder} variables
+
+    Returns:
+        Set of placeholder names (without braces)
+    """
+    return set(re.findall(r"\{(\w+)\}", template))
+
+
+def validate_sweep_keys(
+    sweep_config: list[dict[str, list[Any]]],
+    template: str,
+    config_source: str,
+) -> None:
+    """Validate that sweep parameter keys exist in the command template.
+
+    Args:
+        sweep_config: List of sweep parameter dicts
+        template: Command template string
+        config_source: Description of config source (for error messages)
+    """
+    template_placeholders = extract_template_placeholders(template)
+
+    # Collect all sweep parameter names
+    sweep_params = set()
+    for param_group in sweep_config:
+        sweep_params.update(param_group.keys())
+
+    # Check that all sweep params exist in template
+    missing_in_template = sweep_params - template_placeholders
+    if missing_in_template:
+        raise ValueError(
+            f"{config_source}: Sweep parameters {missing_in_template} "
+            f"not found in command template. Available placeholders: {template_placeholders}"
+        )
+
+
+def validate_all_placeholders_filled(
+    template: str,
+    params: dict[str, Any],
+    config_source: str,
+) -> None:
+    """Validate that all template placeholders will be filled.
+
+    Args:
+        template: Command template string
+        params: Parameters to fill the template
+        config_source: Description of config source (for error messages)
+    """
+    template_placeholders = extract_template_placeholders(template)
+    param_keys = set(params.keys())
+
+    missing_params = template_placeholders - param_keys
+    if missing_params:
+        raise ValueError(
+            f"{config_source}: Template placeholders {missing_params} "
+            f"not provided in parameters. Available params: {param_keys}"
+        )
+
+
+def compute_cartesian_product(param_group: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Compute Cartesian product of parameter lists in a single group.
+
+    Args:
+        param_group: Dict mapping parameter names to lists of values
+
+    Returns:
+        List of parameter combinations (one dict per combination)
+
+    Example:
+        >>> compute_cartesian_product({'a': [1, 2], 'b': [3, 4]})
+        [{'a': 1, 'b': 3}, {'a': 1, 'b': 4}, {'a': 2, 'b': 3}, {'a': 2, 'b': 4}]
+    """
+    if not param_group:
+        return [{}]
+
+    keys = list(param_group.keys())
+    values = [param_group[key] for key in keys]
+
+    combinations = []
+    for value_tuple in product(*values):
+        combinations.append(dict(zip(keys, value_tuple)))
+
+    return combinations
+
+
+def compute_sweep_combinations(
+    sweep_config: list[dict[str, list[Any]]]
+) -> list[dict[str, Any]]:
+    """Compute all sweep combinations by flattening Cartesian products.
+
+    Args:
+        sweep_config: List of parameter group dicts
+
+    Returns:
+        Flattened list of all parameter combinations
+
+    Example:
+        >>> compute_sweep_combinations([
+        ...     {'a': [1, 2], 'b': [3]},
+        ...     {'a': [10], 'b': [30, 40]}
+        ... ])
+        [{'a': 1, 'b': 3}, {'a': 2, 'b': 3}, {'a': 10, 'b': 30}, {'a': 10, 'b': 40}]
+    """
+    all_combinations = []
+    for param_group in sweep_config:
+        all_combinations.extend(compute_cartesian_product(param_group))
+    return all_combinations
 
 
 def load_benchmark_template(dataset_dir: Path) -> BenchmarkTemplate:
@@ -142,11 +264,32 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                     with open(num_gpus_file) as f:
                         gpu_counts = [int(line.strip()) for line in f if line.strip()]
 
+                    # Check for model+GPU-specific sweeps.yaml
+                    sweeps_file = gpu_dir / "sweeps.yaml"
+                    if sweeps_file.exists():
+                        with open(sweeps_file) as f:
+                            sweep_data = yaml.safe_load(f)
+                        sweep_config_obj = SweepConfig(**sweep_data)
+                        sweep_config = sweep_config_obj.sweep
+                        config_source = f"sweeps.yaml in {gpu_dir}"
+                    else:
+                        # Fall back to task-level sweep_defaults
+                        sweep_config = template.sweep_defaults
+                        config_source = f"benchmark.yaml for {dataset}"
+
+                    # Validate sweep configuration
+                    validate_sweep_keys(
+                        sweep_config, template.command_template, config_source
+                    )
+
+                    # Compute all sweep combinations
+                    sweep_combinations = compute_sweep_combinations(sweep_config)
+
                     for num_gpus in gpu_counts:
                         workload = ModelWorkload(
                             model_id=model_id,
                             config_dir=gpu_dir,
-                            max_num_seqs=template.sweeps["max_num_seqs"],
+                            sweep_combinations=sweep_combinations,
                         )
                         dataset_config.workloads[gpu_model][num_gpus].append(workload)
 
@@ -156,12 +299,28 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
 
 
 def format_command(
-    template: str, model_id: str, gpu_model: str, max_num_seqs_placeholder: str
+    template: str,
+    params: dict[str, Any],
+    config_source: str = "",
 ) -> str:
-    """Format command template with model_id and gpu_model."""
-    return template.format(
-        model_id=model_id, gpu_model=gpu_model, max_num_seqs=max_num_seqs_placeholder
-    )
+    """Format command template with all parameters.
+
+    Args:
+        template: Command template string with {placeholder} variables
+        params: Dictionary of all parameter values to substitute
+        config_source: Description of config source (for error messages)
+
+    Returns:
+        Formatted command string
+
+    Raises:
+        ValueError: If any template placeholders are not provided in params
+    """
+    # Validate that all placeholders will be filled
+    if config_source:
+        validate_all_placeholders_filled(template, params, config_source)
+
+    return template.format(**params)
 
 
 def slugify(s: str) -> str:
@@ -207,21 +366,25 @@ def generate_pegasus_queues(
         for dataset, gpu_model, workload, template in sorted(
             jobs, key=lambda x: (x[0], x[1], x[2].model_id)
         ):
-            command = format_command(
-                template.command_template,
-                workload.model_id,
-                gpu_model,
-                max_num_seqs_placeholder="{{ max_num_seqs }}",
-            )
-            # Flatten multiline command to single line
-            command = flatten_command(command)
-
-            queue_data.append(
-                {
-                    "command": [command],
-                    "max_num_seqs": workload.max_num_seqs,
+            # Generate one queue entry per sweep combination
+            for sweep_params in workload.sweep_combinations:
+                # Build full parameter dict
+                params = {
+                    "model_id": workload.model_id,
+                    "gpu_model": gpu_model,
+                    **sweep_params,
                 }
-            )
+
+                # Format command with all parameters
+                command = format_command(
+                    template.command_template,
+                    params,
+                    config_source=f"Pegasus: {dataset}/{workload.model_id}/{gpu_model}",
+                )
+                # Flatten multiline command to single line
+                command = flatten_command(command)
+
+                queue_data.append({"command": [command]})
 
         output_file = output_dir / f"queue_{num_gpus}gpu.yaml"
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -295,24 +458,57 @@ def generate_slurm_script(
         ]
     )
 
-    # Generate command template with $max_num_seqs variable
-    command_template_str = format_command(
+    # Pre-compute all sweep combinations
+    sweep_combinations = workload.sweep_combinations
+
+    if not sweep_combinations:
+        raise ValueError(f"No sweep combinations found for {workload.model_id}")
+
+    # Get parameter names from the first combination (all should have same keys)
+    param_names = list(sweep_combinations[0].keys())
+
+    # Generate readable comment showing combinations
+    script_lines.append("# Sweep combinations (one per line):")
+    for combo in sweep_combinations:
+        combo_str = " ".join(f"{k}={v}" for k, v in combo.items())
+        script_lines.append(f"# {combo_str}")
+    script_lines.append("")
+
+    # Build bash array of combinations
+    script_lines.append("combinations=(")
+    for combo in sweep_combinations:
+        # Each combination as space-separated values
+        values = " ".join(str(combo[k]) for k in param_names)
+        script_lines.append(f'  "{values}"')
+    script_lines.append(")")
+    script_lines.append("")
+
+    # Generate for loop that iterates over combinations
+    read_vars = " ".join(param_names)
+    script_lines.append('for combo in "${combinations[@]}"; do')
+    script_lines.append(f'  read -r {read_vars} <<< "$combo"')
+
+    # Generate echo statement showing current parameter values
+    echo_parts = " ".join(f"{name}=${name}" for name in param_names)
+    script_lines.append(f'  echo "Running with {echo_parts}"')
+
+    # Build parameter dict for command formatting (using bash variables)
+    bash_params = {
+        "model_id": workload.model_id,
+        "gpu_model": gpu_model,
+    }
+    for param_name in param_names:
+        bash_params[param_name] = f"${param_name}"
+
+    # Format command with bash variable references
+    command_str = format_command(
         template.command_template,
-        workload.model_id,
-        gpu_model,
-        max_num_seqs_placeholder="$max_num_seqs",
+        bash_params,
+        config_source=f"Slurm: {dataset}/{workload.model_id}/{gpu_model}",
     )
 
-    # Create for loop over max_num_seqs values
-    max_num_seqs_list = " ".join(str(x) for x in workload.max_num_seqs)
-    script_lines.extend(
-        [
-            f"for max_num_seqs in {max_num_seqs_list}; do",
-            '  echo "Running with max-num-seqs=$max_num_seqs"',
-            f"  {command_template_str}",
-            "done",
-        ]
-    )
+    script_lines.append(f"  {command_str}")
+    script_lines.append("done")
 
     with open(output_file, "w") as f:
         f.write("\n".join(script_lines))

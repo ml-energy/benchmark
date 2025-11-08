@@ -69,6 +69,65 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 tree run
 ```
 
+## Automated Job Generation
+
+Instead of running benchmarks manually, use the config system to generate job scripts automatically.
+
+### Directory Structure
+
+**Task-level config:**
+```
+configs/vllm/{task}/benchmark.yaml
+```
+
+**Model+GPU-level config:**
+```
+configs/vllm/{task}/{org}/{model}/{gpu}/
+  ├── monolithic.config.yaml
+  ├── monolithic.env.yaml
+  ├── num_gpus.txt
+  ├── sweeps.yaml          # [Optional] Override sweep ranges
+  ├── extra_body.json      # [Optional] Additional request parameters
+  └── system_prompt.txt    # [Optional] System prompt for chat models
+```
+
+### Default Sweeps (`benchmark.yaml`)
+
+```yaml
+command_template: |
+  python -m mlenergy.llm.benchmark \
+    --workload.max-num-seqs {max_num_seqs}
+
+sweep_defaults:
+  - max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256]
+```
+
+### Custom Sweeps (`sweeps.yaml`)
+
+Create `sweeps.yaml` in model+GPU dir to override defaults:
+
+```yaml
+# Narrow the range after initial exploration
+sweep:
+  - max_num_seqs: [64, 96, 128, 192, 256]
+```
+
+If `sweeps.yaml` exists, `sweep_defaults` is completely ignored.
+
+### Generate Jobs
+
+```bash
+# Slurm
+python scripts/generate_jobs.py generate-slurm \
+  --output-dir slurm_jobs \
+  --datasets lm-arena-chat \
+  --gpu-models H100
+
+# Pegasus
+python scripts/generate_jobs.py generate-pegasus \
+  --output-dir pegasus_queues
+```
+
 - Singularity
 
 Convert into a Singularity image

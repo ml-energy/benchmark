@@ -7,6 +7,7 @@ command_template: |
     --workload.model-id {model_id} \
     --workload.num-requests 1024 \
     --workload.num-videos 1 \
+    --workload.video-data-dir ${{VIDEO_DATA_DIR:?VIDEO_DATA_DIR not set}} \
     --workload.gpu-model {gpu_model} \
     --workload.max-num-seqs {max_num_seqs}
 

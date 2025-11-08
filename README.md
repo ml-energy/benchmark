@@ -42,9 +42,13 @@ python tests/llm/workloads.py
 - Running the benchmark
 
 ```bash
-# HF_TOKEN, HF_HOME, and CUDA_VISIBLE_DEVICES are required.
+# Required environment variables
 export HF_TOKEN=<your_hf_token>
 export HF_HOME=<your_hf_home>
+
+# MLLM-specific environment variables (set as needed)
+export VIDEO_DATA_DIR=/path/to/llava-video-178k  # For video-chat workload
+export AUDIO_DATA_DIR=/path/to/fsd50k            # For audio-chat workload
 
 # Help and usage
 python -m mlenergy.llm.benchmark --help
@@ -63,10 +67,10 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:image-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/image-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-images 1 --workload.gpu-model H100 --workload.max-num-seqs 64
 
 # Multimodal video chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:video-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/video-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-videos 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.video-data-dir /path/to/llava-video-178k
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:video-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/video-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-videos 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.video-data-dir ${VIDEO_DATA_DIR:?VIDEO_DATA_DIR not set}
 
 # Multimodal audio chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:audio-chat --workload.model-id Qwen/Qwen3-Omni-30B-A3B-Instruct --workload.base-dir run/mllm/audio-chat/Qwen/Qwen3-Omni-30B-A3B-Instruct/H100 --workload.num-requests 1024 --workload.num-audios 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.audio-data-dir /path/to/fsd50k
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:audio-chat --workload.model-id Qwen/Qwen3-Omni-30B-A3B-Instruct --workload.base-dir run/mllm/audio-chat/Qwen/Qwen3-Omni-30B-A3B-Instruct/H100 --workload.num-requests 1024 --workload.num-audios 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.audio-data-dir ${AUDIO_DATA_DIR:?AUDIO_DATA_DIR not set}
 
 # Input/Output length control
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 --ignore-eos workload:length-control --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.input-mean 500 --workload.output-mean 300
@@ -142,6 +146,8 @@ python scripts/generate_jobs.py generate-slurm \
 python scripts/generate_jobs.py generate-pegasus \
   --output-dir pegasus_queues
 ```
+
+**Note**: For MLLM workloads (video-chat, audio-chat), ensure `VIDEO_DATA_DIR` and `AUDIO_DATA_DIR` environment variables are set before running generated jobs, as the benchmark commands use `${VIDEO_DATA_DIR}` and `${AUDIO_DATA_DIR}` bash variable expansion.
 
 ## Container Images
 

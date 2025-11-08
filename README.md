@@ -62,6 +62,12 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm
 # Multimodal image chat benchmark
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:image-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/image-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-images 1 --workload.gpu-model H100 --workload.max-num-seqs 64
 
+# Multimodal video chat benchmark
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:video-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/video-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-videos 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.video-data-dir /path/to/llava-video-178k
+
+# Multimodal audio chat benchmark
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:audio-chat --workload.model-id Qwen/Qwen3-Omni-30B-A3B-Instruct --workload.base-dir run/mllm/audio-chat/Qwen/Qwen3-Omni-30B-A3B-Instruct/H100 --workload.num-requests 1024 --workload.num-audios 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.audio-data-dir /path/to/fsd50k
+
 # Input/Output length control
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 --ignore-eos workload:length-control --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.input-mean 500 --workload.output-mean 300
 
@@ -120,24 +126,43 @@ If `sweeps.yaml` exists, `sweep_defaults` is completely ignored.
 ### Generate Jobs
 
 ```bash
-# Slurm
+# Slurm (LLM tasks)
 python scripts/generate_jobs.py generate-slurm \
   --output-dir slurm_jobs \
-  --datasets lm-arena-chat \
+  --datasets lm-arena-chat gpqa \
   --gpu-models H100
+
+# Slurm (MLLM tasks)
+python scripts/generate_jobs.py generate-slurm \
+  --output-dir slurm_jobs \
+  --datasets image-chat video-chat audio-chat \
+  --gpu-models H100 B200
 
 # Pegasus
 python scripts/generate_jobs.py generate-pegasus \
   --output-dir pegasus_queues
 ```
 
-- Singularity
+## Container Images
 
-Convert into a Singularity image
-
+**LLM tasks**: Use base vLLM image
 ```bash
 singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
 ```
+
+**Audio-chat workload**: Requires vLLM with audio dependencies
+```bash
+# Build using Singularity definition file (recommended for HPC)
+singularity build docker/vllm-audio.sif vllm-audio.def
+
+# Or build from Docker locally and convert
+docker build -f docker/vllm-audio.Dockerfile -t vllm-audio:v0.11.1 .
+singularity build docker/vllm-audio.sif docker-daemon://vllm-audio:v0.11.1
+```
+
+Note: The base vLLM Docker image does not include audio dependencies due to licensing. Use `docker/vllm-audio.def` or `docker/vllm-audio.Dockerfile` in the repository root to build an audio-enabled image.
+
+- Singularity
 
 Running benchmarks with Singularity
 

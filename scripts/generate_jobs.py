@@ -11,7 +11,7 @@ import yaml
 import tyro
 import dataclasses
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel
 from collections import defaultdict
 from dataclasses import dataclass
@@ -93,8 +93,8 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
     gpu_models: list[str] = dataclasses.field(default_factory=list)
     """Filter by specific GPU models"""
 
-    container_runtime: str = "docker"
-    """Container runtime (docker or singularity)"""
+    container_runtime: Literal["docker", "singularity"] = "docker"
+    """Container runtime"""
 
     server_image: str = "vllm/vllm-openai:v0.11.1"
     """Container image path (Docker image or .sif file path)"""
@@ -459,20 +459,26 @@ def generate_slurm_script(
             f"#SBATCH --output=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.out",
             f"#SBATCH --error=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.err",
             "",
-            "# Environment variables (set these before running sbatch or export before submission)",
-            "# export HF_TOKEN=<your_token>",
-            "",
             "set -e",
+            "",
+            "# Ensure required environment variables are set",
+            "if [[ -z \"$HF_HOME\" ]]; then",
+            '  echo "ERROR: HF_HOME environment variable is not set. Please export HF_HOME before running sbatch." >&2',
+            "  exit 1",
+            "fi",
+            "",
+            "if [[ ! -d \"$HF_HOME\" ]]; then",
+            '  echo "ERROR: HF_HOME directory does not exist: $HF_HOME" >&2',
+            "  exit 1",
+            "fi",
+            "",
+            "if [[ -z \"$HF_TOKEN\" ]]; then",
+            '  echo "ERROR: HF_TOKEN environment variable is not set. Please export HF_TOKEN before running sbatch." >&2',
+            "  exit 1",
+            "fi",
             "",
             "# Change to submission directory",
             "cd $SLURM_SUBMIT_DIR",
-            "",
-            "# Temporary HF_HOME for this model only.",
-            f"export HF_HOME=$SLURM_SUBMIT_DIR/hf_home/{model_slug}",
-            "mkdir -p $HF_HOME",
-            "",
-            "# Cleanup on exit (success or failure)",
-            'trap "rm -rf $HF_HOME" EXIT',
             "",
         ]
     )

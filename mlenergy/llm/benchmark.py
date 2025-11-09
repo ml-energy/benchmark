@@ -1050,7 +1050,7 @@ def spawn_vllm(
     This does not wait for the server to be ready.
 
     Args:
-        runtime: Container runtime instance (Docker or Singularity)
+        runtime: Container runtime instance
 
     Returns:
         Cleanup handles for the spawned servers (container names or process handles).
@@ -1105,6 +1105,8 @@ def spawn_vllm(
 
     # Build vLLM command
     vllm_cmd = [
+        "vllm",
+        "serve",
         model_id,
         "--config",
         container_config_path,
@@ -1129,7 +1131,6 @@ def spawn_vllm(
     )
 
     logger.info("Spawning vLLM server with command: %s", " ".join(server_cmd))
-    logger.info("vLLM container name: %s", container_name)
     logger.info("vLLM logs will be written to %s", server_log_filepath)
     server_log_file = open(server_log_filepath, "w")
     process_handle = subprocess.Popen(
@@ -1142,6 +1143,8 @@ def spawn_vllm(
         """Kill the vLLM servers."""
         for cleanup_handle in spawned_cleanup_handles:
             cleanup_handle.cleanup()
+        for cleanup_handle in spawned_cleanup_handles:
+            cleanup_handle.wait()
 
     atexit.register(kill_server)
 

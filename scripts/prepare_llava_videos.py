@@ -5,6 +5,7 @@ HF cache, figure out the snapshot path automatically, then extract each shard
 to <dest_root>.
 
 Example:
+    export HF_HOME=/nfs/hf_cache
     python prepare_llava_videos.py /nfs/llava_video_178k --jobs 12
 """
 
@@ -67,6 +68,9 @@ def main():
 
     pbar.close()
     print(f"Extracted {done}/{len(tar_files)} shards into {dest_root}")
+    print(f"export VIDEO_DATA_DIR={dest_root}")
+
+    print(f"{snapshot_dir} can be safely deleted.")
 
 
 if __name__ == "__main__":

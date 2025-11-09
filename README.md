@@ -1,197 +1,45 @@
 # The ML.ENERGY Benchmark
 
-## Instructions
+Benchmarking framework for measuring energy consumption and performance of Large Language Models (LLMs) and Multimodal LLMs (MLLMs).
 
-- Python setup (using `uv`)
+## Quick Start
 
 ```bash
-# Install the project in a new uv-managed virtual environment
+# Install
+git clone https://github.com/ml-energy/leaderboard.git
+cd leaderboard
 uv sync
-
-# Activate the virtual environment
 source .venv/bin/activate
-```
 
-- Data preparation
-    * We use the audios in [FSD50K](https://zenodo.org/records/4060432) for our audio workload. There are two ways to download the audio files:
-        1. Download them from Zenodo, the original source.
-        ```
-        pip install -q zenodo-get
-        zenodo_get 10.5281/zenodo.4060432
-        zip -F FSD50K.dev_audio.zip --out FSD50K.dev_audio_full.zip
-        unzip FSD50K.dev_audio_full.zip
-        ```
-        2. Download from a [Hugging Face mirror](https://huggingface.co/datasets/Fhrozen/FSD50k) mirror. Note you might encounter rate limits why downloading, and setting your [Hugging Face access token](https://huggingface.co/docs/hub/en/security-tokens) might be helpful
-        ```
-        huggingface-cli download Fhrozen/FSD50k \
-          --repo-type dataset \
-          --include "clips/dev/*"
-        ```
-        After downloading them, specify the path as the `--workload.audio-data-dir` argument.
-    * We use the videos in [lmms-lab/LLaVA-Video-178K](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K/tree/main) for our video workload. You need to extract the source files from the `tar.gz` files. We've prepared a helper script to download the compressed files from Hugging Face Hub and extract the files into a directory ready to use in the video workload. Note The entire dataset is about 1.2TB, and you need twice that space to extract. 
-    ```
-    python3 scripts/prepare_llava_videos.py <output_dir> --jobs 12
-    ```
-    Then specify the video path as the `--workload.video-data-dir` argument.
+# Setup
+export HF_TOKEN="your_huggingface_token"
+export HF_HOME="/path/to/huggingface/cache"
+export CUDA_VISIBLE_DEVICES=0
 
-```bash
-# This assumes the existence of extracted video/audio datasets.
-python tests/llm/workloads.py
-```
-
-- Running the benchmark
-
-```bash
-# Required environment variables
-export HF_TOKEN=<your_hf_token>
-export HF_HOME=<your_hf_home>
-
-# MLLM-specific environment variables (set as needed)
-export VIDEO_DATA_DIR=/path/to/llava-video-178k  # For video-chat workload
-export AUDIO_DATA_DIR=/path/to/fsd50k            # For audio-chat workload
-
-# Help and usage
-python -m mlenergy.llm.benchmark --help
-python -m mlenergy.llm.benchmark workload:image-chat --help
-
-# LLM chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:lm-arena-chat --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 1024 --workload.gpu-model --workload.max-num-seqs 256
-
-# LLM code completion benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 1024 workload:sourcegraph-fim --workload.base-dir run/llm/sourcegraph-fim/google/codegemma-7b/H100 --workload.model-id google/codegemma-7b --workload.gpu-model --workload.num-requests 1024 --workload.max-num-seqs 256
-
-# LLM problem solving benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 10240 workload:gpqa --workload.base-dir run/llm/gpqa/Qwen/Qwen3-8B/H100 --workload.model-id Qwen/Qwen3-8B --workload.num-requests 256 --workload.gpu-model H100 --workload.max-num-seqs 128
-
-# Multimodal image chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:image-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/image-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-images 1 --workload.gpu-model H100 --workload.max-num-seqs 64
-
-# Multimodal video chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:video-chat --workload.model-id Qwen/Qwen3-VL-8B-Instruct --workload.base-dir run/mllm/video-chat/Qwen/Qwen3-VL-8B-Instruct/H100 --workload.num-requests 1024 --workload.num-videos 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.video-data-dir ${VIDEO_DATA_DIR:?VIDEO_DATA_DIR not set}
-
-# Multimodal audio chat benchmark
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.11.1 --max-output-tokens 4096 workload:audio-chat --workload.model-id Qwen/Qwen3-Omni-30B-A3B-Instruct --workload.base-dir run/mllm/audio-chat/Qwen/Qwen3-Omni-30B-A3B-Instruct/H100 --workload.num-requests 1024 --workload.num-audios 1 --workload.gpu-model H100 --workload.max-num-seqs 64 --workload.audio-data-dir ${AUDIO_DATA_DIR:?AUDIO_DATA_DIR not set}
-
-# Input/Output length control
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 --ignore-eos workload:length-control --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.max-num-seqs 64 --workload.input-mean 500 --workload.output-mean 300
-
-# Check the results
-tree run
-```
-
-## Automated Job Generation
-
-Instead of running benchmarks manually, use the config system to generate job scripts automatically.
-
-### Directory Structure
-
-**Task-level config:**
-```
-configs/vllm/{task}/benchmark.yaml
-```
-
-**Model+GPU-level config:**
-```
-configs/vllm/{task}/{model_id}/{gpu_model}/
-  ├── monolithic.config.yaml
-  ├── monolithic.env.yaml
-  ├── num_gpus.txt
-  ├── sweeps.yaml          # [Optional] Override sweep ranges
-  ├── extra_body.json      # [Optional] Additional request parameters
-  └── system_prompt.txt    # [Optional] System prompt for chat models
-```
-
-### Default Sweeps (`benchmark.yaml`)
-
-```yaml
-command_template: |
-  python -m mlenergy.llm.benchmark \
-    --workload.max-num-seqs {max_num_seqs}
-
-sweep_defaults:
-  - max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256]
-```
-
-In the command template, `{model_id}` and `{gpu_model}` are automatically populated from the directory structure.
-All the keys and only the keys under `sweep_defaults` must be present in the command template.
-
-### Custom Sweeps (`sweeps.yaml`)
-
-Create `sweeps.yaml` in model+GPU dir to override defaults:
-
-```yaml
-# Narrow the range after initial exploration
-sweep:
-  - max_num_seqs: [64, 96, 128, 192, 256]
-```
-
-If `sweeps.yaml` exists, `sweep_defaults` is completely ignored.
-
-### Generate Jobs
-
-```bash
-# Slurm (LLM tasks)
-python scripts/generate_jobs.py generate-slurm \
-  --output-dir slurm_jobs \
-  --datasets lm-arena-chat gpqa \
-  --gpu-models H100
-
-# Slurm (MLLM tasks)
-python scripts/generate_jobs.py generate-slurm \
-  --output-dir slurm_jobs \
-  --datasets image-chat video-chat audio-chat \
-  --gpu-models H100 B200
-
-# Pegasus
-python scripts/generate_jobs.py generate-pegasus \
-  --output-dir pegasus_queues
-```
-
-**Note**: For MLLM workloads (video-chat, audio-chat), ensure `VIDEO_DATA_DIR` and `AUDIO_DATA_DIR` environment variables are set before running generated jobs, as the benchmark commands use `${VIDEO_DATA_DIR}` and `${AUDIO_DATA_DIR}` bash variable expansion.
-
-## Container Images
-
-**LLM tasks**: Use base vLLM image
-```bash
-singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
-```
-
-**Audio-chat workload**: Requires vLLM with audio dependencies
-```bash
-# Build using Singularity definition file (recommended for HPC)
-singularity build docker/vllm-audio.sif vllm-audio.def
-
-# Or build from Docker locally and convert
-docker build -f docker/vllm-audio.Dockerfile -t vllm-audio:v0.11.1 .
-singularity build docker/vllm-audio.sif docker-daemon://vllm-audio:v0.11.1
-```
-
-Note: The base vLLM Docker image does not include audio dependencies due to licensing. Use `docker/vllm-audio.def` or `docker/vllm-audio.Dockerfile` in the repository root to build an audio-enabled image.
-
-- Singularity
-
-Running benchmarks with Singularity
-
-```bash
-# HF_TOKEN, HF_HOME, and CUDA_VISIBLE_DEVICES are required.
-export HF_TOKEN=<your_hf_token>
-export HF_HOME=<your_hf_home>
-
-# Use --container-runtime singularity and specify the .sif file path
+# Run
 CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --container-runtime singularity \
-  --server-image /path/to/vllm.sif \
+  --server-image vllm/vllm-openai:v0.11.1 \
   --max-output-tokens 4096 \
   workload:lm-arena-chat \
-  --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 \
   --workload.model-id Qwen/Qwen3-8B \
-  --workload.num-requests 1024 \
+  --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 \
+  --workload.num-requests 128 \
   --workload.gpu-model H100 \
-  --workload.max-num-seqs 256
+  --workload.max-num-seqs 64
 ```
 
-Running vLLM server directly (for testing)
+## Documentation
+
+- **[Overview](docs/overview.md)**: Tasks, datasets, runtime
+- **[Data Preparation](docs/data-preparation.md)**: Dataset download scripts
+- **[Running Benchmarks](docs/running-benchmarks.md)**: Job generation and manual execution
+
+## Development
 
 ```bash
-singularity exec --nv --env HF_TOKEN=hf_xxx --env PYTHONNOUSERSITE=1 vllm.sif vllm serve Qwen/Qwen3-4B
+# Lint and type check
+./scripts/lint.sh
+
+# Test
+pytest
 ```

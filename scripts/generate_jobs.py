@@ -70,6 +70,9 @@ class Slurm:
     mem_per_gpu: str | None = None
     """Memory per GPU (e.g., 80G, 256000M)"""
 
+    account: str | None = None
+    """Slurm account for billing"""
+
 
 @dataclass
 class Generate[OutputConfigT: (Pegasus, Slurm)]:
@@ -425,6 +428,8 @@ def generate_slurm_script(
 
     if slurm_config.partition:
         script_lines.append(f"#SBATCH --partition={slurm_config.partition}")
+    if slurm_config.account:
+        script_lines.append(f"#SBATCH --account={slurm_config.account}")
     if slurm_config.time_limit:
         script_lines.append(f"#SBATCH --time={slurm_config.time_limit}")
 

@@ -24,7 +24,7 @@ if __name__ == "__main__":
     )
 
     dump_multimodal_data = True
-    model_id = "Qwen/Qwen2.5-Omni-7B"
+    model_id = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
     work = ImageChat(
         base_dir=Path("run/mllm/image_chat") / model_id,

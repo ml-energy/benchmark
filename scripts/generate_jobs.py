@@ -93,6 +93,12 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
     gpu_models: list[str] = dataclasses.field(default_factory=list)
     """Filter by specific GPU models"""
 
+    container_runtime: str = "docker"
+    """Container runtime (docker or singularity)"""
+
+    server_image: str = "vllm/vllm-openai:v0.11.1"
+    """Container image path (Docker image or .sif file path)"""
+
 
 def extract_template_placeholders(template: str) -> set[str]:
     """Extract all {placeholder} names from a command template.
@@ -348,6 +354,8 @@ def generate_pegasus_queues(
     all_workloads: dict[str, DatasetConfig],
     output_dir: Path,
     config: Pegasus,
+    container_runtime: str,
+    server_image: str,
 ) -> list[Path]:
     """Generate Pegasus queue.yaml files, one per GPU count."""
     # Organize workloads by GPU count
@@ -377,6 +385,8 @@ def generate_pegasus_queues(
                 params = {
                     "model_id": workload.model_id,
                     "gpu_model": gpu_model,
+                    "container_runtime": container_runtime,
+                    "server_image": server_image,
                     **sweep_params,
                 }
 
@@ -413,6 +423,8 @@ def generate_slurm_script(
     template: BenchmarkTemplate,
     output_dir: Path,
     slurm_config: Slurm,
+    container_runtime: str,
+    server_image: str,
 ) -> Path:
     """Generate a Slurm script for a single model."""
     model_slug = slugify(workload.model_id)
@@ -503,6 +515,8 @@ def generate_slurm_script(
     bash_params = {
         "model_id": workload.model_id,
         "gpu_model": gpu_model,
+        "container_runtime": container_runtime,
+        "server_image": server_image,
     }
     for param_name in param_names:
         bash_params[param_name] = f"${param_name}"
@@ -529,6 +543,8 @@ def generate_slurm_scripts(
     all_workloads: dict[str, DatasetConfig],
     output_dir: Path,
     slurm_config: Slurm,
+    container_runtime: str,
+    server_image: str,
 ) -> list[Path]:
     """Generate Slurm scripts for all workloads."""
     output_files = []
@@ -545,6 +561,8 @@ def generate_slurm_scripts(
                         dataset_config.template,
                         output_dir,
                         slurm_config,
+                        container_runtime,
+                        server_image,
                     )
                     print(f"  Generated {output_file}")
                     output_files.append(output_file)
@@ -582,13 +600,9 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
 
     match config.output:
         case Pegasus():
-            output_files = generate_pegasus_queues(
-                filtered_datasets, config.output_dir, config.output
-            )
+            output_files = generate_pegasus_queues(filtered_datasets, config.output_dir, config.output, config.container_runtime, config.server_image)
         case Slurm():
-            output_files = generate_slurm_scripts(
-                filtered_datasets, config.output_dir, config.output
-            )
+            output_files = generate_slurm_scripts(filtered_datasets, config.output_dir, config.output, config.container_runtime, config.server_image)
         case _:
             raise ValueError("Unsupported output configuration")
 

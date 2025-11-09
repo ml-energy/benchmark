@@ -35,6 +35,43 @@ Configs are in `configs/vllm/{task}/{org}/{model}/{gpu}/`:
 
 See `configs/vllm/{task}/benchmark.yaml` for command templates and default sweeps.
 
+### Templating System
+
+Benchmark commands use a two-level templating system:
+
+**Built-in parameters** (automatically filled from config structure):
+- `{model_id}`: Model identifier from directory structure (e.g., `Qwen/Qwen3-8B`)
+- `{gpu_model}`: GPU type from directory structure (e.g., `H100`)
+
+**Generator-level parameters** (specified when generating jobs):
+- `{container_runtime}`: Container runtime (`docker` or `singularity`)
+- `{server_image}`: Container image path (Docker image or `.sif` file)
+
+**Sweep parameters** (defined in `sweep_defaults` or `sweeps.yaml`):
+- `{max_num_seqs}`: Batch size parameter (example)
+- Any custom parameters you add to sweeps
+
+```yaml
+# sweeps.yaml example
+sweep:
+  - max_num_seqs: [64, 128, 256]
+```
+
+Example generator command with environment-specific parameters:
+
+```bash
+python scripts/generate_jobs.py generate-slurm \
+  --output-dir slurm_jobs/ \
+  --datasets lm-arena-chat \
+  --gpu-models H100 \
+  --container-runtime singularity \
+  --server-image /path/to/vllm.sif \
+  --output.partition project_l \
+  --output.account kdur \
+  --output.cpus-per-gpu 12 \
+  --output.mem-per-gpu 128G
+```
+
 ## Manual Execution
 
 ### LLM Tasks

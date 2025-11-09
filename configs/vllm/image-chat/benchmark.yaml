@@ -1,6 +1,7 @@
 command_template: |
   python -m mlenergy.llm.benchmark \
-    --server-image vllm/vllm-openai:v0.11.1 \
+    --container-runtime {container_runtime} \
+    --server-image {server_image} \
     --max-output-tokens 4096 \
     workload:image-chat \
     --workload.base-dir run/mllm/image-chat/{model_id}/{gpu_model} \

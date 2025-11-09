@@ -600,9 +600,21 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
 
     match config.output:
         case Pegasus():
-            output_files = generate_pegasus_queues(filtered_datasets, config.output_dir, config.output, config.container_runtime, config.server_image)
+            output_files = generate_pegasus_queues(
+                filtered_datasets,
+                config.output_dir,
+                config.output,
+                config.container_runtime,
+                config.server_image,
+            )
         case Slurm():
-            output_files = generate_slurm_scripts(filtered_datasets, config.output_dir, config.output, config.container_runtime, config.server_image)
+            output_files = generate_slurm_scripts(
+                filtered_datasets,
+                config.output_dir,
+                config.output,
+                config.container_runtime,
+                config.server_image,
+            )
         case _:
             raise ValueError("Unsupported output configuration")
 

@@ -147,7 +147,13 @@ class DockerRuntime(ContainerRuntime[DockerCleanupHandle]):
 
 
 class SingularityRuntime(ContainerRuntime[SingularityCleanupHandle]):
-    """Singularity container runtime implementation."""
+    """Singularity container runtime implementation.
+
+    It's important to note that Singularity does not use container names like Docker.
+    Also, the user's home directory is automatically bound inside the container, and
+    the process runs in the foregraound as the current user's account. Therefore,
+    mounts cannot assume the container user's home directory (e.g., `/root/.cache`).
+    """
 
     def build_run_command(
         self,

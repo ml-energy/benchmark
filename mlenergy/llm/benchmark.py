@@ -1085,17 +1085,23 @@ def spawn_vllm(
     container_config_path = "/vllm_config/monolithic.config.yaml"
 
     # Build environment variables
-    env_vars = {"HF_TOKEN": hf_token, **monolithic_env_vars}
+    env_vars = {
+        "HF_TOKEN": hf_token,
+        "HF_HOME": hf_home,
+        **monolithic_env_vars,
+    }
+    if vllm_cache_dir:
+        env_vars["VLLM_CACHE_DIR"] = vllm_cache_dir
 
     # Build bind mounts
+    # Use identity mapping (same path in container as host) to work with both
+    # Docker (root user) and Singularity (runs as user with home mounted)
     bind_mounts = [
         (str(monolithic_config_path), container_config_path, "ro"),
-        (hf_home, "/root/.cache/huggingface", ""),
+        (hf_home, hf_home, ""),
     ]
     if vllm_cache_dir:
-        bind_mounts.append(
-            (vllm_cache_dir, "/root/.cache/vllm/torch_compile_cache", "")
-        )
+        bind_mounts.append((vllm_cache_dir, vllm_cache_dir, ""))
 
     # Build vLLM command
     vllm_cmd = [

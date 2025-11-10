@@ -1189,7 +1189,13 @@ def main(args: Args) -> None:
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
 
-    port = 8000 + int(cuda_visible_devices.split(",")[0])
+    # Port allocation: In Slurm, CUDA_VISIBLE_DEVICES is remapped per job,
+    # so use SLURM_JOB_ID to avoid port conflicts when multiple jobs run on same node
+    base_port = 8000
+    if "SLURM_JOB_ID" in os.environ:
+        port = base_port + int(os.environ["SLURM_JOB_ID"]) % (60000 - base_port)
+    else:
+        port = base_port + int(cuda_visible_devices.split(",")[0])
     base_url = f"http://127.0.0.1:{port}"
     logger.info("Server URL: %s", base_url)
 

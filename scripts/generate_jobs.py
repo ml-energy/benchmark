@@ -49,29 +49,34 @@ class DatasetConfig:
 
 @dataclass
 class Pegasus:
-    """Configuration for Pegasus queue.yaml generation."""
+    """Configuration for Pegasus queue.yaml generation.
 
-    pass
+    Attributes:
+        gpus_per_node: Number of GPUs per node (used to generate hosts_*gpu.yaml files)
+        hostname: Hostname to use in hosts files (default: "localhost")
+    """
+
+    gpus_per_node: int
+    hostname: str = "localhost"
 
 
 @dataclass
 class Slurm:
-    """Slurm-specific configuration options."""
+    """Slurm-specific configuration options.
+
+    Attributes:
+        partition: Slurm partition name
+        account: Slurm account for billing
+        time_limit: Slurm time limit in hours:minutes:seconds (e.g., 48:00:00)
+        cpus_per_gpu: CPUs per GPU for proportional allocation
+        mem_per_gpu: Memory per GPU (e.g., 80G, 256000M)
+    """
 
     partition: str | None = None
-    """Slurm partition name"""
-
-    time_limit: str | None = None
-    """Slurm time limit in hours:minutes:seconds (e.g., 48:00:00)"""
-
-    cpus_per_gpu: int | None = None
-    """CPUs per GPU for proportional allocation"""
-
-    mem_per_gpu: str | None = None
-    """Memory per GPU (e.g., 80G, 256000M)"""
-
     account: str | None = None
-    """Slurm account for billing"""
+    time_limit: str | None = None
+    cpus_per_gpu: int | None = None
+    mem_per_gpu: str | None = None
 
 
 @dataclass
@@ -350,6 +355,55 @@ def flatten_command(command: str) -> str:
     return flattened.strip()
 
 
+def generate_pegasus_hosts(
+    output_dir: Path,
+    hostname: str,
+    gpus_per_node: int,
+    gpu_counts: list[int],
+) -> list[Path]:
+    """Generate hosts_*gpu.yaml files for Pegasus.
+
+    Args:
+        output_dir: Directory to write hosts files
+        hostname: Hostname to use in hosts files
+        gpus_per_node: Total number of GPUs per node
+        gpu_counts: List of GPU counts to generate hosts files for
+
+    Returns:
+        List of generated hosts file paths
+    """
+    output_files = []
+
+    for num_gpus in gpu_counts:
+        # Generate CUDA_VISIBLE_DEVICES assignments
+        # For example, with 8 GPUs per node and 2 GPUs per job:
+        # ["0,1", "2,3", "4,5", "6,7"]
+        cuda_devices = []
+        num_slots = gpus_per_node // num_gpus
+
+        for slot in range(num_slots):
+            start_gpu = slot * num_gpus
+            end_gpu = start_gpu + num_gpus
+            gpu_list = ",".join(str(i) for i in range(start_gpu, end_gpu))
+            cuda_devices.append(gpu_list)
+
+        hosts_data = [
+            {
+                "hostname": [hostname],
+                "cuda_visible_devices": cuda_devices,
+            }
+        ]
+
+        output_file = output_dir / f"hosts_{num_gpus}gpu.yaml"
+        with open(output_file, "w") as f:
+            yaml.dump(hosts_data, f, default_flow_style=False, sort_keys=False)
+
+        output_files.append(output_file)
+        print(f"Generated {output_file} with {len(cuda_devices)} slot(s)")
+
+    return output_files
+
+
 def generate_pegasus_queues(
     all_workloads: dict[str, DatasetConfig],
     output_dir: Path,
@@ -399,6 +453,11 @@ def generate_pegasus_queues(
                 # Flatten multiline command to single line
                 command = flatten_command(command)
 
+                # Prepend CUDA_VISIBLE_DEVICES with Pegasus templating
+                command = (
+                    f"CUDA_VISIBLE_DEVICES={{{{ cuda_visible_devices }}}} {command}"
+                )
+
                 queue_data.append({"command": [command]})
 
         output_file = output_dir / f"queue_{num_gpus}gpu.yaml"
@@ -411,6 +470,13 @@ def generate_pegasus_queues(
 
         output_files.append(output_file)
         print(f"Generated {output_file} with {len(queue_data)} job(s)")
+
+    # Generate hosts files for all GPU counts
+    gpu_counts = sorted(by_gpu_count.keys())
+    hosts_files = generate_pegasus_hosts(
+        output_dir, config.hostname, config.gpus_per_node, gpu_counts
+    )
+    output_files.extend(hosts_files)
 
     return output_files
 
@@ -445,8 +511,7 @@ def generate_slurm_script(
     if slurm_config.time_limit:
         script_lines.append(f"#SBATCH --time={slurm_config.time_limit}")
 
-    script_lines.append("#SBATCH --ntasks=1")
-    script_lines.append(f"#SBATCH --gpus-per-task={num_gpus}")
+    script_lines.append(f"#SBATCH --gres=gpu:{num_gpus}")
 
     if slurm_config.cpus_per_gpu:
         script_lines.append(f"#SBATCH --cpus-per-gpu={slurm_config.cpus_per_gpu}")
@@ -462,17 +527,17 @@ def generate_slurm_script(
             "set -e",
             "",
             "# Ensure required environment variables are set",
-            "if [[ -z \"$HF_HOME\" ]]; then",
+            'if [[ -z "$HF_HOME" ]]; then',
             '  echo "ERROR: HF_HOME environment variable is not set. Please export HF_HOME before running sbatch." >&2',
             "  exit 1",
             "fi",
             "",
-            "if [[ ! -d \"$HF_HOME\" ]]; then",
+            'if [[ ! -d "$HF_HOME" ]]; then',
             '  echo "ERROR: HF_HOME directory does not exist: $HF_HOME" >&2',
             "  exit 1",
             "fi",
             "",
-            "if [[ -z \"$HF_TOKEN\" ]]; then",
+            'if [[ -z "$HF_TOKEN" ]]; then',
             '  echo "ERROR: HF_TOKEN environment variable is not set. Please export HF_TOKEN before running sbatch." >&2',
             "  exit 1",
             "fi",
@@ -482,6 +547,11 @@ def generate_slurm_script(
             "",
         ]
     )
+
+    if container_runtime == "singularity":
+        script_lines.append("# Load Singularity")
+        script_lines.append("module load singularity || true")
+        script_lines.append("")
 
     # Pre-compute all sweep combinations
     sweep_combinations = workload.sweep_combinations

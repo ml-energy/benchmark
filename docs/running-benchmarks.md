@@ -2,27 +2,33 @@
 
 ## Automated Job Generation (Recommended)
 
-Generate batch jobs from configs for systematic benchmarking:
+Generate batch jobs files from configs for systematic benchmarking. The script support Slurm and [Pegasus](https://github.com/jaywonchung/pegasus).
 
 ```bash
 # Slurm
 python scripts/generate_jobs.py generate-slurm \
   --output-dir slurm_jobs/ \
-  --datasets lm-arena-chat gpqa \
-  --gpu-models H100
+  --output.partition gpu \
+  --output.account your_account \
+  --output.cpus-per-gpu 10 \
+  --output.mem-per-gpu 120G \
+  --output.time-limit 1:00:00
 
 # Pegasus
 python scripts/generate_jobs.py generate-pegasus \
-  --output-dir pegasus_queues/
+  --output-dir pegasus_jobs/ \
+  --output.gpus-per-node 8 \
+  --output.hostname localhost
 ```
 
-Submit the generated jobs:
-```bash
-# Slurm
-for job in slurm_jobs/*.sh; do sbatch "$job"; done
+You can generate only a subset of the jobs by specifying filters:
 
-# Pegasus
-pegasus submit pegasus_queues/1gpu.queue --gpus 1
+```bash
+python scripts/generate_jobs.py generate-slurm \
+  --output-dir slurm_jobs/ \
+  --datasets lm-arena-chat gpqa \
+  --gpu-models H100 \
+  ...
 ```
 
 ### Configuration
@@ -57,111 +63,15 @@ sweep:
   - max_num_seqs: [64, 128, 256]
 ```
 
-Example generator command with environment-specific parameters:
+### Container Runtimes
+
+The benchmark supports Docker and Singularity (e.g., for Docker-less HPC environments).
+
+For Singularity, you can build a Singularity image (`.sif` file) from a Docker image:
 
 ```bash
-python scripts/generate_jobs.py generate-slurm \
-  --output-dir slurm_jobs/ \
-  --datasets lm-arena-chat \
-  --gpu-models H100 \
-  --container-runtime singularity \
-  --server-image /path/to/vllm.sif \
-  --output.partition project_l \
-  --output.account kdur \
-  --output.cpus-per-gpu 12 \
-  --output.mem-per-gpu 128G
+singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
 ```
-
-## Manual Execution
-
-### LLM Tasks
-
-**LM Arena Chat**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm/vllm-openai:v0.11.1 \
-  --max-output-tokens 4096 \
-  workload:lm-arena-chat \
-  --workload.model-id Qwen/Qwen3-8B \
-  --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 \
-  --workload.num-requests 1024 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 256
-```
-
-**GPQA**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm/vllm-openai:v0.11.1 \
-  --max-output-tokens 10240 \
-  workload:gpqa \
-  --workload.model-id Qwen/Qwen3-8B \
-  --workload.base-dir run/llm/gpqa/Qwen/Qwen3-8B/H100 \
-  --workload.num-requests 198 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 128
-```
-
-**Sourcegraph FIM**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm/vllm-openai:v0.11.1 \
-  --max-output-tokens 1024 \
-  workload:sourcegraph-fim \
-  --workload.model-id google/codegemma-7b \
-  --workload.base-dir run/llm/sourcegraph-fim/google/codegemma-7b/H100 \
-  --workload.num-requests 1024 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 256
-```
-
-### MLLM Tasks
-
-**Image Chat**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm/vllm-openai:v0.11.1 \
-  --max-output-tokens 4096 \
-  workload:image-chat \
-  --workload.model-id Qwen/Qwen3-VL-8B-Instruct \
-  --workload.base-dir run/mllm/image-chat/Qwen/Qwen3-VL-8B-Instruct/H100 \
-  --workload.num-requests 1024 \
-  --workload.num-images 1 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 64
-```
-
-**Video Chat**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm/vllm-openai:v0.11.1 \
-  --max-output-tokens 4096 \
-  workload:video-chat \
-  --workload.model-id Qwen/Qwen3-VL-8B-Instruct \
-  --workload.base-dir run/mllm/video-chat/Qwen/Qwen3-VL-8B-Instruct/H100 \
-  --workload.num-requests 1024 \
-  --workload.num-videos 1 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 64 \
-  --workload.video-data-dir ${VIDEO_DATA_DIR}
-```
-
-**Audio Chat**:
-```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
-  --server-image vllm-audio:v0.11.1 \
-  --max-output-tokens 4096 \
-  workload:audio-chat \
-  --workload.model-id Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --workload.base-dir run/mllm/audio-chat/Qwen/Qwen3-Omni-30B-A3B-Instruct/H100 \
-  --workload.num-requests 1024 \
-  --workload.num-audios 1 \
-  --workload.gpu-model H100 \
-  --workload.max-num-seqs 64 \
-  --workload.audio-data-dir ${AUDIO_DATA_DIR}
-```
-
-### Using Singularity
 
 Replace `--server-image` with path to `.sif` file and add `--container-runtime singularity`:
 

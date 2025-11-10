@@ -8,11 +8,16 @@ from __future__ import annotations
 import logging
 from functools import cached_property
 from abc import abstractmethod
-from typing import Literal, TYPE_CHECKING, Self
+from typing import Literal
 from pathlib import Path
 
-from pydantic import BaseModel, model_validator
+import tyro
+from pydantic import BaseModel
 from transformers import AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_base import BatchEncoding
+from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+from mistral_common.protocol.fim.request import FIMRequest
 
 from mlenergy.constants import DEFAULT_SEED
 from mlenergy.llm.datasets import (
@@ -27,10 +32,31 @@ from mlenergy.llm.datasets import (
     ParetoExpDistributionDataset,
 )
 
-if TYPE_CHECKING:
-    from transformers.tokenization_utils import PreTrainedTokenizer
-
 logger = logging.getLogger(__name__)
+
+
+class CodestralTokenizer(PreTrainedTokenizer):
+    """Custom tokenizer for Codestral-22B-v0.1."""
+
+    def __init__(self) -> None:
+        """Initialize the Codestral tokenizer."""
+        self.name_or_path = "mistralai/Codestral-22B-v0.1"
+        self.tokenizer = MistralTokenizer.from_hf_hub(self.name_or_path)
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(self.name_or_path)
+
+    def encode_fim(self, prefix: str, suffix: str) -> BatchEncoding:
+        """Tokenize the input prefix and suffix."""
+        fim = FIMRequest(prompt=prefix, suffix=suffix)
+        tokenized = self.tokenizer.encode_fim(fim)
+        return BatchEncoding(
+            data={"input_ids": tokenized.tokens, "text": tokenized.text}
+        )
+
+    def __call__(self, *args, **kwargs) -> BatchEncoding:
+        """Delegate to the HuggingFace tokenizer, unless its for FIM."""
+        if "prefix" in kwargs and "suffix" in kwargs:
+            return self.encode_fim(kwargs["prefix"], kwargs["suffix"])
+        return self.hf_tokenizer(*args, **kwargs)
 
 
 class RequestsFile(BaseModel):
@@ -50,6 +76,7 @@ class RequestsFile(BaseModel):
         | AudioChat
         | OmniChat
         | LMArenaChat
+        | SourcegraphFIM
         | GPQA
         | LengthControl
     )
@@ -72,9 +99,6 @@ class WorkloadConfig(BaseModel):
             load model-specific vLLM configurations.
         max_num_seqs: vLLM maximum number of seuqences config.
         max_num_batched_tokens: vLLM maximum number of batched tokens config.
-        num_prefills: Number of prefill instances for disaggregated serving.
-        num_decodes: Number of decode instances for disaggregated serving.
-        num_prefill_warmups: Number of warmup requests for prefill steady state.
     """
 
     # Input parameters
@@ -87,22 +111,16 @@ class WorkloadConfig(BaseModel):
     gpu_model: str
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
-    num_prefills: int | None = None
-    num_decodes: int | None = None
-    num_prefill_warmups: int = 50
 
-    @model_validator(mode="after")
-    def _validate_workoad(self) -> Self:
-        """Validate the sanity of the workload."""
-        if self.num_requests < 2 * self.max_num_seqs:
-            raise ValueError("There should be at least 2 * max_num_seqs requests.")
-        if (
-            self.num_prefills is not None
-            and self.num_decodes is not None
-            and (self.num_prefills <= 0 or self.num_decodes <= 0)
-        ):
-            raise ValueError("Invalid prefills and decodes configuration")
-        return self
+    @cached_property
+    def normalized_name(self) -> str:
+        """Get a Tyro-normalized name for the workload configuration."""
+        return tyro._strings.hyphen_separated_from_camel_case(self.__class__.__name__)  # type: ignore
+
+    @property
+    def endpoint_type(self) -> Literal["openai", "openai-chat"]:
+        """LLM server endpoint type this workload uses."""
+        return "openai-chat"
 
     def to_path(
         self,
@@ -148,6 +166,9 @@ class WorkloadConfig(BaseModel):
     @cached_property
     def tokenizer(self) -> PreTrainedTokenizer:
         """Get the tokenizer for the model specified in the configuration."""
+        if self.model_id == "mistralai/Codestral-22B-v0.1":
+            return CodestralTokenizer()
+
         return AutoTokenizer.from_pretrained(self.model_id, trust_remote_code=True)
 
     def load_requests(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -219,11 +240,6 @@ class ImageChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -264,11 +280,6 @@ class VideoChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -309,11 +320,6 @@ class AudioChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -363,11 +369,6 @@ class OmniChat(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -399,17 +400,12 @@ class LMArenaChat(WorkloadConfig):
 
     def to_filename_parts(self) -> list[str]:
         return [
-            "lmarena_chat",
+            "lm_arena_chat",
             self.gpu_model,
             str(self.num_requests) + "req",
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -446,11 +442,6 @@ class LengthControl(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -473,6 +464,15 @@ class SourcegraphFIM(WorkloadConfig):
     dataset_path: str = "sourcegraph/context-aware-fim-code-completions"
     dataset_split: str = "train"
 
+    @property
+    def endpoint_type(self) -> Literal["openai", "openai-chat"]:
+        """LLM server endpoint type this workload uses.
+
+        FIM requests are pre-formatted based on the model type and the LLM is
+        expected to exactly continue from the provided prompt.
+        """
+        return "openai"
+
     def to_filename_parts(self) -> list[str]:
         return [
             "sourcegraph_fim",
@@ -481,11 +481,6 @@ class SourcegraphFIM(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:
@@ -505,7 +500,7 @@ class GPQA(WorkloadConfig):
     """Workload for the GPQA dataset."""
 
     dataset_path: str = "Idavidrein/gpqa"
-    dataset_subset: str = "gpqa_extended"
+    dataset_subset: str = "gpqa_diamond"
     dataset_split: str = "train"
 
     def to_filename_parts(self) -> list[str]:
@@ -516,11 +511,6 @@ class GPQA(WorkloadConfig):
             str(self.seed) + "seed",
             str(self.max_num_seqs) + "max_num_seqs",
             str(self.max_num_batched_tokens) + "max_num_batched_tokens",
-            *(
-                [f"{self.num_prefills}p{self.num_decodes}d"]
-                if self.num_prefills and self.num_decodes
-                else []
-            ),
         ]
 
     def sample(self, dump_multimodal_data: bool = False) -> list[SampleRequest]:

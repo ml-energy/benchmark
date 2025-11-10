@@ -8,6 +8,7 @@ files organized by model ID and GPU model.
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 def get_vllm_config_path(
     model_id: str,
     gpu_model: str,
+    workload: str,
     mode: Literal["monolithic", "prefill", "decode"],
     config_base_dir: Path | str = "configs/vllm",
 ) -> Path:
@@ -27,6 +29,7 @@ def get_vllm_config_path(
     Args:
         model_id: Model identifier (e.g., "meta-llama/Llama-3.1-8B-Instruct").
         gpu_model: GPU model name (e.g., "H100", "A100", "B200").
+        workload: Name of the workload (e.g., "lm-arena-chat").
         mode: Deployment mode ("monolithic", "prefill", or "decode").
         config_base_dir: Base directory for configuration files.
 
@@ -40,7 +43,7 @@ def get_vllm_config_path(
 
     # Construct path to config file
     # model_id might contain slashes (e.g., "meta-llama/Llama-3.1-8B-Instruct")
-    model_config_dir = config_base_path / model_id / gpu_model
+    model_config_dir = config_base_path / workload / model_id / gpu_model
     config_file = model_config_dir / f"{mode}.config.yaml"
     config_file = config_file.absolute()
 
@@ -57,6 +60,7 @@ def get_vllm_config_path(
 def load_env_vars(
     model_id: str,
     gpu_model: str,
+    workload: str,
     mode: Literal["monolithic", "prefill", "decode"],
     config_base_dir: Path | str = "configs/vllm",
 ) -> dict[str, str]:
@@ -65,6 +69,7 @@ def load_env_vars(
     Args:
         model_id: Model identifier (e.g., "meta-llama/Llama-3.1-8B-Instruct").
         gpu_model: GPU model name (e.g., "H100", "A100", "B200").
+        workload: Name of the workload (e.g., "lm-arena-chat").
         mode: Deployment mode ("monolithic", "prefill", or "decode").
         config_base_dir: Base directory for configuration files.
 
@@ -74,7 +79,7 @@ def load_env_vars(
     config_base_path = Path(config_base_dir)
 
     # Construct path to env config file
-    model_config_dir = config_base_path / model_id / gpu_model
+    model_config_dir = config_base_path / workload / model_id / gpu_model
     env_config_file = model_config_dir / f"{mode}.env.yaml"
 
     if not env_config_file.exists():
@@ -90,3 +95,79 @@ def load_env_vars(
 
     # Ensure all values are strings
     return {k: str(v) for k, v in env_vars.items()}
+
+
+def load_extra_body(
+    model_id: str,
+    gpu_model: str,
+    workload: str,
+    config_base_dir: Path | str = "configs/vllm",
+) -> dict[str, str]:
+    """Load extra body content for a given model, GPU, and deployment mode.
+
+    Args:
+        model_id: Model identifier (e.g., "meta-llama/Llama-3.1-8B-Instruct").
+        gpu_model: GPU model name (e.g., "H100", "A100", "B200").
+        workload: Name of the workload (e.g., "lm-arena-chat").
+        config_base_dir: Base directory for configuration files.
+
+    Returns:
+        Extra body kwargs as a dictionary. Empty dict if the file doesn't exist.
+    """
+    config_base_path = Path(config_base_dir)
+
+    # Construct path to extra body file
+    model_config_dir = config_base_path / workload / model_id / gpu_model
+    extra_body_file = model_config_dir / "extra_body.json"
+
+    if not extra_body_file.exists():
+        logger.info(
+            "No extra body file found at %s (optional)",
+            extra_body_file,
+        )
+        return {}
+
+    with open(extra_body_file) as f:
+        extra_body = json.load(f)
+
+    logger.info("Extra request body kwargs: %s", extra_body)
+
+    return extra_body
+
+
+def load_system_prompt(
+    model_id: str,
+    gpu_model: str,
+    workload: str,
+    config_base_dir: Path | str = "configs/vllm",
+) -> str | None:
+    """Load system prompt for a given model, GPU, and workload.
+
+    Args:
+        model_id: Model identifier (e.g., "meta-llama/Llama-3.1-8B-Instruct").
+        gpu_model: GPU model name (e.g., "H100", "A100", "B200").
+        workload: Name of the workload (e.g., "lm-arena-chat").
+        config_base_dir: Base directory for configuration files.
+
+    Returns:
+        System prompt string if file exists, None otherwise.
+    """
+    config_base_path = Path(config_base_dir)
+
+    # Construct path to system prompt file
+    model_config_dir = config_base_path / workload / model_id / gpu_model
+    system_prompt_file = model_config_dir / "system_prompt.txt"
+
+    if not system_prompt_file.exists():
+        logger.info(
+            "No system prompt file found at %s (optional)",
+            system_prompt_file,
+        )
+        return None
+
+    with open(system_prompt_file) as f:
+        system_prompt = f.read().strip()
+
+    logger.info("Loaded system prompt from config dir: %s", system_prompt)
+
+    return system_prompt

@@ -38,6 +38,8 @@ class SampleRequest(BaseModel):
     Args:
         prompt: When it's a `str`, it's the input text prompt for the model.
             When it's a `list[str]`, it's the history of a multi-turn conversation.
+        prompt_token_ids: Optional list of token IDs for the prompt. Used for models/tasks that need
+            pre-tokenized inputs.
         completion: The expected output text from the model.
         prompt_len: The length of the prompt in tokens.
         expected_output_len: The expected length of the output in tokens.
@@ -46,6 +48,7 @@ class SampleRequest(BaseModel):
     """
 
     prompt: str | list[str]
+    prompt_token_ids: list[int] | None = None
     completion: str
     prompt_len: int
     expected_output_len: int
@@ -524,8 +527,12 @@ class LMArenaHumanPreferenceDataset:
 
 def render_fim_prompt(
     prefix: str, suffix: str, tokenizer: PreTrainedTokenizerBase
-) -> str:
-    """Render the fill-in-the-middle prompt."""
+) -> tuple[str, list[int] | None]:
+    """Render the fill-in-the-middle prompt.
+
+    Returns:
+        A tuple of (prompt string, optional list of token IDs).
+    """
     model = tokenizer.name_or_path.lower()
 
     if (
@@ -533,18 +540,21 @@ def render_fim_prompt(
         or model.startswith("qwen/qwen3-coder")
         or model.startswith("google/codegemma")
     ):
-        return f"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>"
+        return (
+            f"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>",
+            None,
+        )
 
     if model.startswith("deepseek-ai/deepseek-coder-v2"):
-        return f"<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>"
+        return (
+            f"<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>",
+            None,
+        )
 
     if model.startswith("mistralai/codestral"):
-        # Lazy import for something that is needed for one specific code path
-        from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
-        from mistral_common.protocol.fim.request import FIMRequest
-
-        request = FIMRequest(prompt=prefix, suffix=suffix)
-        return MistralTokenizer.v3().encode_fim(request).text
+        # Special case for Codestral; it'll be mlenergy.llm.workloads.CodestralTokenizer.
+        tokenized = tokenizer(prefix=prefix, suffix=suffix)
+        return (tokenized.text, tokenized.input_ids)
 
     raise NotImplementedError(
         f"Unsupported model {model} for fill-in-the-middle prompt rendering."
@@ -586,14 +596,20 @@ class SourcegraphFIMDataset:
             )
 
             prefix, answer, suffix = item["prefix"], item["middle"], item["suffix"]
-            prompt = render_fim_prompt(prefix, suffix, tokenizer)
+            prompt, input_ids = render_fim_prompt(prefix, suffix, tokenizer)
 
-            prompt_len = len(tokenizer(prompt).input_ids)
             answer_len = len(tokenizer(answer).input_ids)
+
+            # Some tokenizers return a list of token IDs directly (e.g., CodestralTokenizer).
+            if input_ids is None:
+                prompt_len = len(tokenizer(prompt).input_ids)
+            else:
+                prompt_len = len(input_ids)
 
             requests.append(
                 SampleRequest(
                     prompt=prompt,
+                    prompt_token_ids=input_ids,
                     completion=answer,
                     prompt_len=prompt_len,
                     expected_output_len=answer_len,
@@ -840,10 +856,12 @@ class ParetoExpDistributionDataset:
         for _ in range(num_requests):
             # Sample desired input and output lengths using CDF
             random_values = self.rng.random(2)
-            sampled_input_len = np.searchsorted(cdfs["input_tokens"], random_values[0])
+            sampled_input_len = np.searchsorted(
+                cdfs["input_tokens"], random_values[0]
+            ).item()
             sampled_output_len = np.searchsorted(
                 cdfs["output_tokens"], random_values[1]
-            )
+            ).item()
             sampled_input_len = max(1, sampled_input_len)
             sampled_output_len = max(1, sampled_output_len)
 

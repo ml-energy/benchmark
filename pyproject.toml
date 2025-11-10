@@ -30,6 +30,7 @@ dependencies = [
     "msgpack>=1.1.1",
     "pyzmq>=27.0.0",
     "pyyaml>=6.0.2",
+    "protobuf>=6.33.0",
 ]
 
 [tool.setuptools.packages.find]

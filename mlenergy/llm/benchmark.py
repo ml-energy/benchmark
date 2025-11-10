@@ -518,6 +518,10 @@ async def async_request_openai_chat_completions(
                             content = delta.get("content")
                             # Reasoning tokens are put in a separate field
                             # when a reasoning parser is specified.
+                            # XXX(J1): At the moment, many reasoning models do not support
+                            # reasoning parsers, usually because their <think> and </think>
+                            # tokens are not special tokens. So, some model results need to
+                            # be manually parsed.
                             reasoning_content = delta.get("reasoning_content")
 
                             # First token

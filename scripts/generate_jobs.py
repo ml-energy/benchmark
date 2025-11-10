@@ -6,6 +6,7 @@ based on benchmark.yaml (per task) and num_gpus.txt (per model & GPU).
 
 from __future__ import annotations
 
+import json
 import re
 import yaml
 import tyro
@@ -81,28 +82,28 @@ class Slurm:
 
 @dataclass
 class Generate[OutputConfigT: (Pegasus, Slurm)]:
-    """Main configuration for the job generator."""
+    """Main configuration for the job generator.
+
+    Attributes:
+        output_dir: Output directory for generated files
+        output: Output-specific configuration (Pegasus or Slurm)
+        configs_dir: Path to configs directory (default: "configs")
+        datasets: Filter by specific datasets (default: all)
+        gpu_models: Filter by specific GPU models (default: all)
+        container_runtime: Container runtime ("docker" or "singularity", default: "docker")
+        server_image: Container image path (Docker image or .sif file path,
+            default: "vllm/vllm-openai:v0.11.1")
+        override_sweeps: Optional JSON string for global sweep parameters override
+    """
 
     output_dir: Path
-    """Output directory for generated files"""
-
     output: OutputConfigT
-    """Output-specific configuration (Pegasus or Slurm)"""
-
     configs_dir: Path = Path("configs")
-    """Path to configs directory"""
-
     datasets: list[str] = dataclasses.field(default_factory=list)
-    """Filter by specific datasets"""
-
     gpu_models: list[str] = dataclasses.field(default_factory=list)
-    """Filter by specific GPU models"""
-
     container_runtime: Literal["docker", "singularity"] = "docker"
-    """Container runtime"""
-
     server_image: str = "vllm/vllm-openai:v0.11.1"
-    """Container image path (Docker image or .sif file path)"""
+    override_sweeps: str | None = None
 
 
 def extract_template_placeholders(template: str) -> set[str]:
@@ -659,7 +660,7 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
         return
 
     # Apply filters
-    filtered_datasets = {}
+    filtered_datasets: dict[str, DatasetConfig] = {}
     for dataset, dataset_config in datasets.items():
         if config.datasets and dataset not in config.datasets:
             continue
@@ -673,6 +674,16 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
 
         if filtered_config.workloads:
             filtered_datasets[dataset] = filtered_config
+
+    # Apply sweep override if specified
+    if config.override_sweeps:
+        override_params = json.loads(config.override_sweeps)
+        print(f"Overriding all sweeps with: {override_params}")
+        for dataset_config in filtered_datasets.values():
+            for gpu_workloads in dataset_config.workloads.values():
+                for workloads in gpu_workloads.values():
+                    for workload in workloads:
+                        workload.sweep_combinations = [override_params]
 
     match config.output:
         case Pegasus():

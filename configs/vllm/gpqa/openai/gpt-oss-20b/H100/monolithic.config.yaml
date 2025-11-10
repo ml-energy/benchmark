@@ -1,7 +1,7 @@
 compilation-config: '{"cudagraph_mode":"PIECEWISE"}'
 async-scheduling: true
 max-num-batched-tokens: 8192
-max-model-len: 20480
+max-model-len: 51200
 dtype: auto
 trust-remote-code: true
 reasoning-parser: openai_gptoss

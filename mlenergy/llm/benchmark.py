@@ -1232,7 +1232,7 @@ def main(args: Args) -> None:
     )
     logger.info("Started vLLM servers (cleanup handles: %s)", len(cleanup_handles))
 
-    # Zeus
+    # Energy measurement
     buffer = io.StringIO()
     with redirect_stdout(buffer):
         show_env()

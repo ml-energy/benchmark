@@ -89,8 +89,103 @@ CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
 
 ## Results
 
-Results are saved to `{base_dir}/`:
-- `requests.json`: Request data and workload config
-- `results.json`: Benchmark results and metrics
-- `driver_log.txt`: Client logs
-- `server_log.txt`: vLLM server logs
+Results are saved to `{base_dir}`, like `run/`. The hierarchical structure is as follows:
+
+```
+run/
+├── llm/                              # Text-only tasks
+│   └── {task}/                       # e.g., gpqa, lm-arena-chat, sourcegraph-fim
+│       ├── requests/                 # Model-independent request data (shared)
+│       │   └── {dataset_params}/    # e.g., num_requests+100+seed+48105
+│       │       ├── requests.json    # Prompts, completions, multimodal content
+│       │       └── multimodal_dump/ # [Optional] Dumped images/videos/audio
+│       ├── tokenization/            # Model-dependent tokenization data
+│       │   └── {model_id}/          # e.g., Qwen/Qwen3-8B
+│       │       └── {dataset_params}.json  # Token counts and token IDs
+│       └── results/                 # Benchmark results
+│           └── {model_id}/
+│               └── {gpu_model}/     # e.g., H100, B200
+│                   └── {runtime_params}/  # e.g., num_requests+100+seed+48105+max_num_seqs+8+...
+│                       ├── results.json      # Benchmark metrics and outputs
+│                       ├── driver_log.txt    # Driver execution log
+│                       ├── server_log.txt    # vLLM server log
+│                       ├── requests.json@ -> ../../../requests/{dataset_params}/requests.json
+│                       └── tokenization.json@ -> ../../../tokenization/{model_id}/{dataset_params}.json
+│
+└── mllm/                             # Multimodal tasks
+    └── {task}/                       # e.g., image-chat, video-chat, audio-chat
+        └── ...                       # Same structure as llm/
+
+```
+
+### Key Design Principles
+
+1. **Data Deduplication**: `requests.json` is shared across all models and runtime configurations for the same task and dataset parameters, avoiding duplication of potentially large files (especially for video data).
+
+2. **Tokenization Sharing**: Tokenization data is shared across different runtime configurations (e.g., different `max_num_seqs`) but regenerated when the model changes, since tokenization is model-dependent.
+
+3. **Symlinks for Context**: Results directories contain symlinks to the corresponding `requests.json` and `tokenization.json` files, making it easy to understand which data was used without duplicating files.
+
+4. **Hierarchical Organization**:
+   - Task-level: Shared data that depends only on the task and dataset parameters
+   - Model-level: Tokenization that depends on both task and model
+   - Configuration-level: Results that depend on task, model, GPU, and runtime parameters
+
+### File Contents
+
+#### `requests.json`
+Contains model-independent request data:
+```json
+{
+  "data": [
+    {
+      "prompt": "What is the capital of France?",
+      "completion": "The capital of France is Paris.",
+      "multimodal_contents": [],
+      "multimodal_content_paths": []
+    }
+  ],
+  "dataset_params": {
+    "num_requests": 100,
+    "seed": 48105
+  }
+}
+```
+
+#### `tokenization.json`
+Contains model-dependent tokenization data:
+```json
+{
+  "tokenization": [
+    {
+      "prompt_len": 8,
+      "expected_output_len": 7,
+      "prompt_token_ids": [1234, 5678, ...]
+    }
+  ],
+  "model_id": "Qwen/Qwen3-8B"
+}
+```
+
+#### `results.json`
+Contains benchmark results including timing, energy, and generation outputs:
+```json
+{
+  "model_id": "Qwen/Qwen3-8B",
+  "request_rate": 1.0,
+  "results": [
+    {
+      "prompt": "...",
+      "output_text": "...",
+      "input_len": 8,
+      "output_len": 7,
+      "dataset_output_len": 7,
+      "latency": 1.23,
+      "ttft": 0.45,
+      "itl": [0.1, 0.1, ...],
+      "energy": 12.34
+    }
+  ],
+  "metrics": { ... }
+}
+```

@@ -4,7 +4,7 @@ command_template: |
     --server-image {server_image} \
     --max-output-tokens 4096 \
     workload:video-chat \
-    --workload.base-dir run/mllm/video-chat/{model_id}/{gpu_model} \
+    --workload.base-dir run/mllm \
     --workload.model-id {model_id} \
     --workload.num-requests 1024 \
     --workload.num-videos 1 \

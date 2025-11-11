@@ -22,7 +22,7 @@ import warnings
 import traceback
 from collections.abc import AsyncGenerator
 from typing import Any, Generic, Literal, TypeVar, TYPE_CHECKING
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -755,7 +755,6 @@ def calculate_metrics(
 
 
 async def benchmark(
-    zeus_monitor: ZeusMonitor,
     max_num_seqs: int,
     workload: WorkloadConfig,
     endpoint_type: str,
@@ -792,7 +791,8 @@ async def benchmark(
         "openai-chat": f"{base_url}/v1/chat/completions",
     }[endpoint_type]
 
-    # Zeus power monitor
+    # Zeus monitors
+    zeus_monitor = ZeusMonitor()
     power_monitor = PowerMonitor(update_period=0.1)
     temperature_monitor = TemperatureMonitor(update_period=0.5)
 
@@ -846,7 +846,9 @@ async def benchmark(
         request_func_input = RequestFuncInput(
             model=model_id,
             prompt=request.prompt,
-            prompt_token_ids=request.prompt_token_ids,
+            prompt_token_ids=request.prompt_token_ids
+            if workload.use_prompt_token_ids
+            else None,
             api_url=api_url,
             prompt_len=request.prompt_len,
             output_len=output_len,
@@ -1017,16 +1019,18 @@ async def benchmark(
             "reasoning_output_text": output.reasoning_output_text,
             "input_len": output.prompt_len,
             "output_len": output_len,
+            "dataset_output_len": input_req.expected_output_len,
             "latency": output.latency,
             "ttft": output.ttft,
             "itl": output.itl,
             "error": output.error,
             "energy": energy,
         }
-        for output, output_len, energy in zip(
+        for output, output_len, energy, input_req in zip(
             outputs,
             actual_output_lens,
             energy_per_generation,
+            input_requests,
             strict=True,
         )
     ]
@@ -1234,10 +1238,9 @@ def main(args: Args) -> None:
 
     # Energy measurement
     buffer = io.StringIO()
-    with redirect_stdout(buffer):
+    with redirect_stdout(buffer), redirect_stderr(buffer):
         show_env()
-    logger.info("Zeus environment information:\n%s", buffer.getvalue())
-    zeus_monitor = ZeusMonitor()
+    logger.info("Zeus environment:\n%s", buffer.getvalue())
 
     # Load the dataset. On its first time, it'll overlap nicely with vLLM startup.
     input_requests = args.workload.load_requests()
@@ -1322,7 +1325,6 @@ def main(args: Args) -> None:
 
     benchmark_result = asyncio.run(
         benchmark(
-            zeus_monitor=zeus_monitor,
             max_num_seqs=args.workload.max_num_seqs,
             workload=args.workload,
             endpoint_type=args.workload.endpoint_type,
@@ -1402,32 +1404,20 @@ if __name__ == "__main__":
     if args.just_server:
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
+            format="%(asctime)s %(levelname)s [%(name)s:%(lineno)d] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[logging.StreamHandler()],
         )
     else:
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
+            format="%(asctime)s %(levelname)s [%(name)s:%(lineno)d] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[
                 logging.StreamHandler(),
                 logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w"),
             ],
         )
-
-        # Explicitly include Zeus PowerMonitor logs
-        zpl = logging.getLogger("zeus.monitor.power")
-        zpl.setLevel(logging.INFO)
-        zpl.propagate = True
-        zpl.handlers.clear()
-
-        # Explicitly include Zeus TemperatureMonitor logs
-        ztl = logging.getLogger("zeus.monitor.temperature")
-        ztl.setLevel(logging.INFO)
-        ztl.propagate = True
-        ztl.handlers.clear()
 
     try:
         main(args)

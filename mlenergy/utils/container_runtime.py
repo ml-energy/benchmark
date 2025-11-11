@@ -160,12 +160,12 @@ class DockerRuntime(ContainerRuntime):
             else:
                 cmd.extend(["-v", f"{host_path}:{container_path}"])
 
-        # Image
-        cmd.append(image)
-
         # Wipe out entrypiont. This is done because Singularity does not support entrypoints,
         # and thus we asked the user to provide the full command to run inside the container.
         cmd.extend(["--entrypoint", ""])
+
+        # Image
+        cmd.append(image)
 
         # Command
         cmd.extend(command)

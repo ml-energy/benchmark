@@ -13,7 +13,7 @@ import io
 import logging
 import random
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Self, TYPE_CHECKING
 
 import numpy as np
 from scipy import stats
@@ -32,14 +32,44 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DataRequest(BaseModel):
+    """Represents model-independent data for a single inference request.
+
+    Args:
+        prompt: When it's a `str`, it's the input text prompt for the model.
+            When it's a `list[str]`, it's the history of a multi-turn conversation.
+        completion: The expected output text from the model.
+        multimodal_contents: A list of dictionaries containing multimodal content for OpenAI Chat Completion.
+        multimodal_content_paths: A list of paths to the original multimodal data files (empty if not dumped).
+    """
+
+    prompt: str | list[str]
+    completion: str
+    multimodal_contents: list[dict[str, Any]]
+    multimodal_content_paths: list[str] = []
+
+
+class Tokenization(BaseModel):
+    """Represents model-dependent tokenization data for a single request.
+
+    Args:
+        prompt_len: The length of the prompt in tokens.
+        expected_output_len: The expected length of the output in tokens.
+        prompt_token_ids: List of token IDs for the prompt.
+    """
+
+    prompt_len: int
+    expected_output_len: int
+    prompt_token_ids: list[int]
+
+
 class SampleRequest(BaseModel):
     """Represents a single inference request for benchmarking.
 
     Args:
         prompt: When it's a `str`, it's the input text prompt for the model.
             When it's a `list[str]`, it's the history of a multi-turn conversation.
-        prompt_token_ids: Optional list of token IDs for the prompt. Used for models/tasks that need
-            pre-tokenized inputs.
+        prompt_token_ids: List of token IDs for the prompt.
         completion: The expected output text from the model.
         prompt_len: The length of the prompt in tokens.
         expected_output_len: The expected length of the output in tokens.
@@ -48,12 +78,44 @@ class SampleRequest(BaseModel):
     """
 
     prompt: str | list[str]
-    prompt_token_ids: list[int] | None = None
+    prompt_token_ids: list[int]
     completion: str
     prompt_len: int
     expected_output_len: int
     multimodal_contents: list[dict[str, Any]]
     multimodal_content_paths: list[str] = []
+
+    @classmethod
+    def from_data_and_tokenization(
+        cls, data: DataRequest, tokenization: Tokenization
+    ) -> Self:
+        """Create a SampleRequest from DataRequest and Tokenization."""
+        return cls(
+            prompt=data.prompt,
+            completion=data.completion,
+            multimodal_contents=data.multimodal_contents,
+            multimodal_content_paths=data.multimodal_content_paths,
+            prompt_len=tokenization.prompt_len,
+            expected_output_len=tokenization.expected_output_len,
+            prompt_token_ids=tokenization.prompt_token_ids,
+        )
+
+    def to_data_request(self) -> DataRequest:
+        """Extract the model-independent data from this request."""
+        return DataRequest(
+            prompt=self.prompt,
+            completion=self.completion,
+            multimodal_contents=self.multimodal_contents,
+            multimodal_content_paths=self.multimodal_content_paths,
+        )
+
+    def to_tokenization(self) -> Tokenization:
+        """Extract the model-dependent tokenization data from this request."""
+        return Tokenization(
+            prompt_len=self.prompt_len,
+            expected_output_len=self.expected_output_len,
+            prompt_token_ids=self.prompt_token_ids,
+        )
 
 
 def maybe_oversample_requests(
@@ -216,7 +278,8 @@ class VisionArenaDataset:
                     image_path.write_bytes(item["images"][0]["bytes"])
                 image_paths = [str(image_path)] * num_images
 
-            prompt_len = len(tokenizer(prompt).input_ids)
+            prompt_token_ids = tokenizer(prompt).input_ids
+            prompt_len = len(prompt_token_ids)
             expected_output_len = len(tokenizer(model_response).input_ids)
 
             sampled_requests.append(
@@ -225,6 +288,7 @@ class VisionArenaDataset:
                     completion=model_response,
                     prompt_len=prompt_len,
                     expected_output_len=expected_output_len,
+                    prompt_token_ids=prompt_token_ids,
                     multimodal_contents=[mm_content] * num_images,
                     multimodal_content_paths=image_paths,
                 )
@@ -333,6 +397,7 @@ class LLaVAVideoDataset:
                     completion=completion,
                     prompt_len=prompt_len,
                     expected_output_len=completion_len,
+                    prompt_token_ids=prompt_ids,
                     multimodal_contents=[mm_content] * num_videos,
                     multimodal_content_paths=video_paths,
                 )
@@ -409,7 +474,8 @@ class AudioSkillsDataset:
 
             conversations = item["conversations"]
             prompt, completion = conversations[0]["value"], conversations[1]["value"]
-            prompt_len = len(tokenizer(prompt).input_ids)
+            prompt_token_ids = tokenizer(prompt).input_ids
+            prompt_len = len(prompt_token_ids)
             expected_output_len = len(tokenizer(completion).input_ids)
 
             sampled_requests.append(
@@ -418,6 +484,7 @@ class AudioSkillsDataset:
                     completion=completion,
                     prompt_len=prompt_len,
                     expected_output_len=expected_output_len,
+                    prompt_token_ids=prompt_token_ids,
                     multimodal_contents=[mm_content] * num_audio,
                     multimodal_content_paths=audio_paths,
                 )
@@ -502,11 +569,12 @@ class LMArenaHumanPreferenceDataset:
                     break
 
                 messages = []
-                prompt_len = 0
+                prompt_token_ids = []
                 for message in conversation[: 2 * turns + 1]:
                     content = message["content"]
                     messages.append(content)
-                    prompt_len += len(tokenizer(content).input_ids)
+                    prompt_token_ids.extend(tokenizer(content).input_ids)
+                prompt_len = len(prompt_token_ids)
                 completion = conversation[2 * turns + 1]["content"]
                 completion_len = len(tokenizer(completion).input_ids)
 
@@ -516,6 +584,7 @@ class LMArenaHumanPreferenceDataset:
                         completion=completion,
                         prompt_len=prompt_len,
                         expected_output_len=completion_len,
+                        prompt_token_ids=prompt_token_ids,
                         multimodal_contents=[],
                     )
                 )
@@ -602,9 +671,8 @@ class SourcegraphFIMDataset:
 
             # Some tokenizers return a list of token IDs directly (e.g., CodestralTokenizer).
             if input_ids is None:
-                prompt_len = len(tokenizer(prompt).input_ids)
-            else:
-                prompt_len = len(input_ids)
+                input_ids = tokenizer(prompt).input_ids
+            prompt_len = len(input_ids)
 
             requests.append(
                 SampleRequest(
@@ -685,7 +753,8 @@ class GPQADataset:
             answer_letter = choices.index(answer)
             completion = f"({answer_letter}) " + answer
 
-            prompt_len = len(tokenizer(prompt).input_ids)
+            prompt_token_ids = tokenizer(prompt).input_ids
+            prompt_len = len(prompt_token_ids)
             comp_len = len(tokenizer(completion).input_ids)
 
             requests.append(
@@ -694,6 +763,7 @@ class GPQADataset:
                     completion=completion,
                     prompt_len=prompt_len,
                     expected_output_len=comp_len,
+                    prompt_token_ids=prompt_token_ids,
                     multimodal_contents=[],
                 )
             )
@@ -869,7 +939,8 @@ class ParetoExpDistributionDataset:
             prompt = self._generate_random_text_with_length(
                 tokenizer, sampled_input_len
             )
-            actual_prompt_len = len(tokenizer(prompt).input_ids)
+            prompt_token_ids = tokenizer(prompt).input_ids
+            actual_prompt_len = len(prompt_token_ids)
 
             completion = "[This is omitted as only the output length is used]"
 
@@ -879,6 +950,7 @@ class ParetoExpDistributionDataset:
                     completion=completion,
                     prompt_len=actual_prompt_len,
                     expected_output_len=sampled_output_len,
+                    prompt_token_ids=prompt_token_ids,
                     multimodal_contents=[],
                 )
             )

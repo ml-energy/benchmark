@@ -12,9 +12,11 @@ import base64
 import io
 import logging
 import random
+import tempfile
 from pathlib import Path
 from typing import Any, Self, TYPE_CHECKING
 
+import cv2
 import numpy as np
 from scipy import stats
 from PIL import Image
@@ -170,6 +172,126 @@ def process_video_bytes(data: bytes) -> dict[str, Any]:
     }
 
 
+def extract_frames_from_video_file(
+    filepath: Path, num_frames: int
+) -> np.ndarray | None:
+    """Extract frames from video file using OpenCV.
+
+    Replicates vLLM's OpenCVVideoBackend.load_bytes behavior for frame extraction.
+    See: https://github.com/vllm-project/vllm/blob/main/vllm/multimodal/video.py
+
+    Args:
+        filepath: Path to the video file.
+        num_frames: Number of frames to extract. If -1, extract all frames.
+
+    Returns:
+        Numpy array of shape (num_frames, height, width, 3) if successful, None otherwise.
+    """
+    try:
+        # Open video file using OpenCV
+        cap = cv2.VideoCapture(str(filepath))
+        if not cap.isOpened():
+            logger.warning("Could not open video stream for %s", filepath)
+            return None
+
+        total_frames_num = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Resample video to target num_frames
+        num_frames_to_sample = total_frames_num
+        if num_frames > 0:
+            num_frames_to_sample = min(num_frames, total_frames_num)
+        num_frames_to_sample = max(1, num_frames_to_sample)  # at least one sample
+
+        if num_frames_to_sample == total_frames_num:
+            frame_idx = list(range(0, num_frames_to_sample))
+        else:
+            uniform_sampled_frames = np.linspace(
+                0, total_frames_num - 1, num_frames_to_sample, dtype=int
+            )
+            frame_idx = uniform_sampled_frames.tolist()
+
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frames = np.empty((len(frame_idx), height, width, 3), dtype=np.uint8)
+
+        i = 0
+        for idx in range(max(frame_idx) + 1):
+            ok = cap.grab()
+            if not ok:
+                break
+            if idx in frame_idx:
+                ret, frame = cap.retrieve()
+                if ret:
+                    frames[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    i += 1
+
+        cap.release()
+
+        # Check if we got the expected number of frames (like vLLM's assertion)
+        if i != num_frames_to_sample:
+            logger.warning(
+                "Expected reading %d frames from %s, but only loaded %d frames",
+                num_frames_to_sample,
+                filepath,
+                i,
+            )
+            return None
+
+        return frames
+
+    except Exception as e:
+        logger.warning("Error extracting frames from video %s: %s", filepath, e)
+        return None
+
+
+def frames_to_video_bytes(frames: np.ndarray, fps: float = 30.0) -> bytes | None:
+    """Convert numpy frames array to video bytes in MP4 format.
+
+    Args:
+        frames: Numpy array of shape (num_frames, height, width, 3) in RGB format.
+        fps: Frame rate for the output video. Default is 30 fps.
+
+    Returns:
+        Video bytes in MP4 format if successful, None otherwise.
+    """
+    try:
+        _, height, width, _ = frames.shape
+
+        # Create a temporary file for the video
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+
+        try:
+            # Use H.264 codec for MP4 format
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
+            writer = cv2.VideoWriter(tmp_path, fourcc, fps, (width, height))
+
+            if not writer.isOpened():
+                logger.warning("Could not open video writer")
+                return None
+
+            # Write frames (convert RGB to BGR for OpenCV)
+            for frame in frames:
+                bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                writer.write(bgr_frame)
+
+            writer.release()
+
+            # Read the video file as bytes
+            with open(tmp_path, "rb") as f:
+                video_bytes = f.read()
+
+            return video_bytes
+
+        finally:
+            # Clean up temporary file
+            Path(tmp_path).unlink(missing_ok=True)
+
+    except Exception as e:
+        logger.warning("Error converting frames to video: %s", e)
+        return None
+
+
 def process_image(image: dict | Image.Image | str) -> dict[str, Any]:
     """Process a single image input and return a multimedia content dictionary.
 
@@ -308,12 +430,23 @@ class LLaVAVideoDataset:
         dataset_split: str,
         random_seed: int,
         video_data_dir: str,
+        num_frames: int = 32,
     ) -> None:
-        """Initialize the LLaVA Video dataset."""
+        """Initialize the LLaVA Video dataset.
+
+        Args:
+            dataset_path: Path to the HuggingFace dataset.
+            dataset_split: Split to load from the dataset.
+            random_seed: Random seed for reproducible sampling.
+            video_data_dir: Directory containing extracted video files.
+            num_frames: Number of frames to extract from each video for validation.
+                If -1, uses all available frames. Default is 32 (vLLM default).
+        """
         self.dataset_path = dataset_path
         self.dataset_split = dataset_split
         self.random_seed = random_seed
         self.video_data_dir = Path(video_data_dir)
+        self.num_frames = num_frames
         self.data = None
 
     def load_data(self):
@@ -374,14 +507,33 @@ class LLaVAVideoDataset:
                 )
                 continue
 
-            mm_content = process_video_bytes(extracted_path.read_bytes())
+            # Extract frames from video (replicating vLLM's sampling)
+            frames = extract_frames_from_video_file(extracted_path, self.num_frames)
+            if frames is None:
+                logger.warning(
+                    "Could not extract %d frames from video %s. Skipping item.",
+                    self.num_frames,
+                    extracted_path,
+                )
+                continue
+
+            # Convert sampled frames back to video bytes
+            sampled_video_bytes = frames_to_video_bytes(frames)
+            if sampled_video_bytes is None:
+                logger.warning(
+                    "Could not convert frames back to video for %s. Skipping item.",
+                    extracted_path,
+                )
+                continue
+
+            mm_content = process_video_bytes(sampled_video_bytes)
 
             video_paths = []
             if dump_multimodal_dir is not None:
                 video_path: Path = dump_multimodal_dir / mm_data_id
                 if not video_path.exists():
                     video_path.parent.mkdir(parents=True, exist_ok=True)
-                    video_path.write_bytes(extracted_path.read_bytes())
+                    video_path.write_bytes(sampled_video_bytes)
                 video_paths = [str(video_path)] * num_videos
 
             conv = item["conversations"]
@@ -504,6 +656,7 @@ class OmniDataset:
         video_dataset_split: str,
         video_data_dir: str,
         random_seed: int = 0,
+        num_frames: int = 32,
     ) -> None:
         self.random_seed = random_seed
 
@@ -512,6 +665,7 @@ class OmniDataset:
             dataset_split=video_dataset_split,
             random_seed=self.random_seed,
             video_data_dir=video_data_dir,
+            num_frames=num_frames,
         )
 
     def sample(

@@ -251,6 +251,9 @@ class RequestTracker:
         """Notify that a request has finished."""
         self.num_finished += 1
         if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
+            # Start event is set in case something went wrong and everything finished (with errors)
+            # before the steady state even started. This will unblock the main benchmark function.
+            self.start_event.set()
             self.end_event.set()
         if self.log:
             logger.info(
@@ -882,7 +885,9 @@ async def benchmark(
     steady_state_token_end = request_tracker.get_num_generated_tokens()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
-    steady_state_tokens = steady_state_token_end - steady_state_token_begin
+
+    # Prevent division by zero in case there was an error
+    steady_state_tokens = max(steady_state_token_end - steady_state_token_begin, 1)
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
@@ -1023,6 +1028,7 @@ async def benchmark(
             "latency": output.latency,
             "ttft": output.ttft,
             "itl": output.itl,
+            "success": output.success,
             "error": output.error,
             "energy": energy,
         }

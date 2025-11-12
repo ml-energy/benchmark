@@ -321,8 +321,11 @@ class WorkloadConfig(BaseModel):
 
         # Check if both new files exist
         if requests_path.exists() and tokenization_path.exists():
-            logger.info("Loading data from %s", requests_path)
-            logger.info("Loading tokenization from %s", tokenization_path)
+            logger.info(
+                "Loading data from %s and tokenization from %s",
+                requests_path,
+                tokenization_path,
+            )
 
             data_file = DataFile.model_validate_json(requests_path.read_text())
             tokenization_file = TokenizationFile.model_validate_json(
@@ -474,6 +477,7 @@ class VideoChat(WorkloadConfig):
     """Workload configuration for video chat requests."""
 
     num_videos: int
+    num_frames: int = 32
 
     dataset_path: str = "lmms-lab/LLaVA-Video-178K"
     dataset_split: str = "caption"
@@ -485,6 +489,7 @@ class VideoChat(WorkloadConfig):
             "dataset_split": self.dataset_split,
             "num_requests": self.num_requests,
             "num_videos": self.num_videos,
+            "num_frames": self.num_frames,
             "seed": self.seed,
         }
 
@@ -495,6 +500,7 @@ class VideoChat(WorkloadConfig):
             dataset_split=self.dataset_split,
             random_seed=self.seed,
             video_data_dir=self.video_data_dir,
+            num_frames=self.num_frames,
         )
         requests = dataset.sample(
             tokenizer=self.tokenizer,

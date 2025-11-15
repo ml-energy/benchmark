@@ -172,13 +172,11 @@ def process_video_bytes(data: bytes) -> dict[str, Any]:
     }
 
 
-def extract_frames_from_video_file(
-    filepath: Path, num_frames: int
-) -> np.ndarray | None:
+def extract_frames_from_video_file(filepath: Path, num_frames: int) -> np.ndarray | None:
     """Extract frames from video file using OpenCV.
 
     Replicates vLLM's OpenCVVideoBackend.load_bytes behavior for frame extraction.
-    See: https://github.com/vllm-project/vllm/blob/main/vllm/multimodal/video.py
+    See: https://github.com/vllm-project/vllm/blob/df4d3a44/vllm/multimodal/video.py
 
     Args:
         filepath: Path to the video file.
@@ -510,7 +508,7 @@ class LLaVAVideoDataset:
                 )
                 continue
 
-            # Extract frames from video (replicating vLLM's sampling)
+            # Extract frames from video
             frames = extract_frames_from_video_file(extracted_path, self.num_frames)
             if frames is None:
                 logger.warning(

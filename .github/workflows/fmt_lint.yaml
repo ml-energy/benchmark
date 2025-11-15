@@ -24,7 +24,7 @@ on:
 
 # Jobs initiated by previous pushes get cancelled by a new push.
 concurrency:
-  group: ${{ github.ref }}-lint-and-test
+  group: ${{ github.ref }}-format-lint
   cancel-in-progress: true
 
 jobs:
@@ -41,6 +41,6 @@ jobs:
           python-version: "3.12"
           version: "latest"
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --dev
       - name: Check format and lint
         run: uv run bash scripts/lint.sh

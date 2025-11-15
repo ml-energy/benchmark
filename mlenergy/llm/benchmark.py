@@ -373,6 +373,10 @@ async def async_request_openai_completions(
 
                     if chunk != "[DONE]":
                         data = json.loads(chunk)
+                        usage = data.get("usage")
+                        completion_tokens = usage and usage.get("completion_tokens")
+                        if not completion_tokens:
+                            continue
 
                         # NOTE: Some completion API might have a last
                         # usage summary response without a token so we
@@ -387,24 +391,26 @@ async def async_request_openai_completions(
                                 first_chunk_received = True
                                 ttft = time.perf_counter() - st
                                 request_tracker.notify_request_started()
-                                request_tracker.notify_tokens_generated(1)
                                 output.ttft = ttft
+
+                                # Multi-token bundles
+                                inc = completion_tokens - current_completion_tokens
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                # Append zeros for bundled tokens (all tokens in first chunk)
+                                for _ in range(inc):
+                                    output.itl.append(0)
 
                             # Decoding phase
                             else:
-                                usage = data.get("usage")
-                                completion_tokens = usage and usage.get(
-                                    "completion_tokens"
-                                )
                                 output.itl.append(timestamp - most_recent_timestamp)
 
-                                if completion_tokens:
-                                    inc = completion_tokens - current_completion_tokens
-                                    # if inc == 0, below are no-ops
-                                    request_tracker.notify_tokens_generated(inc)
-                                    current_completion_tokens = completion_tokens
-                                    for _ in range(inc - 1):
-                                        output.itl.append(0)
+                                inc = completion_tokens - current_completion_tokens
+                                # if inc == 0, below are no-ops
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                for _ in range(inc - 1):
+                                    output.itl.append(0)
 
                             most_recent_timestamp = timestamp
                             output_text += text or ""
@@ -513,7 +519,7 @@ async def async_request_openai_chat_completions(
                         data = json.loads(chunk)
                         usage = data.get("usage")
                         completion_tokens = usage and usage.get("completion_tokens")
-                        if completion_tokens == 0:
+                        if not completion_tokens:
                             continue
 
                         if choices := data.get("choices"):
@@ -531,20 +537,26 @@ async def async_request_openai_chat_completions(
                             if ttft == 0.0:
                                 ttft = timestamp - st
                                 request_tracker.notify_request_started()
-                                request_tracker.notify_tokens_generated(1)
                                 output.ttft = ttft
+
+                                # Multi-token bundles
+                                inc = completion_tokens - current_completion_tokens
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                # Append zeros for bundled tokens (all tokens in first chunk)
+                                for _ in range(inc):
+                                    output.itl.append(0)
 
                             # Decoding phase
                             else:
                                 output.itl.append(timestamp - most_recent_timestamp)
 
-                                if completion_tokens:
-                                    inc = completion_tokens - current_completion_tokens
-                                    # if inc == 0, below are no-ops
-                                    request_tracker.notify_tokens_generated(inc)
-                                    current_completion_tokens = completion_tokens
-                                    for _ in range(inc - 1):
-                                        output.itl.append(0)
+                                inc = completion_tokens - current_completion_tokens
+                                # if inc == 0, below are no-ops
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                for _ in range(inc - 1):
+                                    output.itl.append(0)
 
                             if content is not None:
                                 output_text += content

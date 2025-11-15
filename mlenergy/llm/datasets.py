@@ -527,6 +527,8 @@ class LLaVAVideoDataset:
                 )
                 continue
 
+            logger.info("Sampled %d frames from video %s", frames.shape[0], extracted_path)
+
             mm_content = process_video_bytes(sampled_video_bytes)
 
             video_paths = []

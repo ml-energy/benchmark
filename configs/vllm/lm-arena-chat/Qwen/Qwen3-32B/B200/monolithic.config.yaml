@@ -3,3 +3,4 @@ max-num-batched-tokens: 8192
 max-model-len: 20480
 dtype: bfloat16
 trust-remote-code: true
+api-server-count: 8

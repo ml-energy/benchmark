@@ -5,3 +5,4 @@ dtype: auto
 trust-remote-code: true
 enable-expert-parallel: true
 data-parallel-size: 0
+api-server-count: 8

@@ -529,10 +529,6 @@ class LLaVAVideoDataset:
                 )
                 continue
 
-            logger.info(
-                "Sampled %d frames from video %s", frames.shape[0], extracted_path
-            )
-
             mm_content = process_video_bytes(sampled_video_bytes)
 
             video_paths = []
@@ -560,6 +556,14 @@ class LLaVAVideoDataset:
                     multimodal_contents=[mm_content] * num_videos,
                     multimodal_content_paths=video_paths,
                 )
+            )
+
+            logger.info(
+                "[%d/%d] Sampled %d frames from video %s",
+                len(sampled_requests),
+                num_requests,
+                frames.shape[0],
+                extracted_path,
             )
 
         maybe_oversample_requests(sampled_requests, num_requests, self.random_seed)

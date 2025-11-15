@@ -641,7 +641,7 @@ def generate_slurm_scripts(
                         container_runtime,
                         server_image,
                     )
-                    print(f"  Generated {output_file}")
+                    print(f"Generated {output_file}")
                     output_files.append(output_file)
 
     return output_files
@@ -706,6 +706,19 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
             raise ValueError("Unsupported output configuration")
 
     print(f"\nGenerated {len(output_files)} output file(s).")
+
+    # Collect unique model IDs for bulk downloading
+    unique_model_ids = set()
+    for dataset_config in filtered_datasets.values():
+        for gpu_workloads in dataset_config.workloads.values():
+            for workloads in gpu_workloads.values():
+                for workload in workloads:
+                    unique_model_ids.add(workload.model_id)
+
+    if unique_model_ids:
+        print(f"\n{len(unique_model_ids)} unique model IDs:")
+        for model_id in sorted(unique_model_ids):
+            print(model_id)
 
 
 if __name__ == "__main__":

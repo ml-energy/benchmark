@@ -465,6 +465,9 @@ class LLaVAVideoDataset:
                         streaming=True,
                     )
                 )
+                logger.info(
+                    "Loading %s split from subset %s", self.dataset_split, subset
+                )
             else:
                 logger.info("Skipping %s (no '%s' split)", subset, self.dataset_split)
 

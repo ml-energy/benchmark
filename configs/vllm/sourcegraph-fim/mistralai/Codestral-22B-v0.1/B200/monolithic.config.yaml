@@ -4,4 +4,3 @@ max-model-len: 8192
 dtype: bfloat16
 trust-remote-code: true
 tokenizer-mode: mistral
-api-server-count: 8

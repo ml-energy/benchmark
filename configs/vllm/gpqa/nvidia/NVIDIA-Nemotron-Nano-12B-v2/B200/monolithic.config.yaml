@@ -4,4 +4,3 @@ max-model-len: 51200
 dtype: bfloat16
 trust-remote-code: true
 mamba-ssm-cache-dtype: float32
-api-server-count: 8

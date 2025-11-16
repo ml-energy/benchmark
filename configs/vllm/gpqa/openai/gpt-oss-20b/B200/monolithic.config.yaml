@@ -5,4 +5,3 @@ max-model-len: 51200
 dtype: auto
 trust-remote-code: true
 reasoning-parser: openai_gptoss
-api-server-count: 8

@@ -4,4 +4,3 @@ max-model-len: 51200
 dtype: bfloat16
 trust-remote-code: true
 reasoning-parser: qwen3
-api-server-count: 8

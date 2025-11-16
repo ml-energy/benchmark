@@ -5,4 +5,3 @@ enable-expert-parallel: true
 dtype: auto
 trust-remote-code: true
 reasoning-parser: qwen3
-api-server-count: 8

@@ -4,4 +4,3 @@ max-model-len: 20480
 enable-expert-parallel: true
 dtype: auto
 trust-remote-code: true
-api-server-count: 8

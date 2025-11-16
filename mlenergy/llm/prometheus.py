@@ -206,11 +206,108 @@ def _get_gauge_value(
         return max(values.values())
 
 
-def calculate_steady_state_avg_stats(
+def _calculate_histogram_percentile(
+    histogram_data: dict[str, Any], percentile: float
+) -> float | None:
+    """Calculate a percentile from Prometheus histogram buckets.
+
+    Args:
+        histogram_data: Dict with "buckets", "sum", and "count" keys from parse_histogram
+        percentile: Percentile to calculate (0-100, e.g., 50 for median, 95 for P95)
+
+    Returns:
+        Percentile value calculated from histogram buckets, or None if cannot be calculated
+    """
+    buckets = histogram_data.get("buckets", {})
+    counts = histogram_data.get("count", {})
+
+    if not buckets or not counts:
+        return None
+
+    # Extract bucket upper bounds and cumulative counts
+    # Buckets have labels like 'engine="0",le="100.0",model_name="..."'
+    bucket_data = []
+    for labels, count in buckets.items():
+        # Extract the 'le' value (upper bound)
+        le_match = re.search(r'le="([^"]+)"', labels)
+        if le_match:
+            le_str = le_match.group(1)
+            if le_str == "+Inf":
+                upper_bound = float("inf")
+            else:
+                upper_bound = float(le_str)
+            bucket_data.append((upper_bound, count))
+
+    if not bucket_data:
+        return None
+
+    # Sort by upper bound
+    bucket_data.sort(key=lambda x: x[0])
+
+    # Get total count
+    total_count = bucket_data[-1][1]  # Last bucket has total count
+    if total_count == 0:
+        return None
+
+    # Find target count for the percentile
+    target_count = total_count * (percentile / 100.0)
+
+    # Find the bucket containing the target percentile
+    prev_upper = 0.0
+    prev_count = 0.0
+
+    for upper_bound, cumulative_count in bucket_data:
+        if cumulative_count >= target_count:
+            # Target percentile is in this bucket
+            if prev_count == cumulative_count:
+                # No values in this bucket, use lower bound
+                return prev_upper
+            # Linear interpolation within bucket
+            bucket_width = upper_bound - prev_upper
+            count_in_bucket = cumulative_count - prev_count
+            fraction = (target_count - prev_count) / count_in_bucket
+            result = prev_upper + fraction * bucket_width
+            return result
+
+        prev_upper = upper_bound
+        prev_count = cumulative_count
+
+    return None
+
+
+def _calculate_histogram_percentiles(
+    histogram_data: dict[str, Any], percentiles: list[float]
+) -> dict[str, float]:
+    """Calculate multiple percentiles from Prometheus histogram buckets.
+
+    Args:
+        histogram_data: Dict with "buckets", "sum", and "count" keys from parse_histogram
+        percentiles: List of percentiles to calculate (e.g., [50, 90, 95, 99])
+
+    Returns:
+        Dict mapping percentile names to values (e.g., {"p50": 1500.0, "p90": 3000.0})
+    """
+    results = {}
+    for percentile in percentiles:
+        value = _calculate_histogram_percentile(histogram_data, percentile)
+        if value is not None:
+            # Format percentile as p50, p90, p95, p99
+            p_name = (
+                f"p{int(percentile)}"
+                if percentile == int(percentile)
+                else f"p{percentile}"
+            )
+            results[p_name] = value
+    return results
+
+
+def calculate_steady_state_stats(
     timeline: list[dict[str, Any]],
     steady_start: float,
     steady_end: float,
     gauge_metric_names: list[str],
+    histogram_metric_names: list[str] | None = None,
+    histogram_percentiles: list[float] | None = None,
 ) -> dict[str, float]:
     """Calculate average metric values during steady state.
 
@@ -219,11 +316,23 @@ def calculate_steady_state_avg_stats(
         steady_start: Steady state start timestamp
         steady_end: Steady state end timestamp
         gauge_metric_names: List of gauge metric names to analyze
+        histogram_metric_names: List of histogram metric names to calculate percentiles for
+        histogram_percentiles: Percentiles to calculate for histograms (default: [50, 90, 95, 99])
 
     Returns:
-        Dict mapping metric names to average values during steady state.
-        Example: {"vllm:num_requests_running": 42.3, "vllm:kv_cache_usage_perc": 0.645}
+        Dict mapping metric names to values during steady state.
+        For gauges: average values.
+        For histograms: percentile values with "_p50", "_p90", etc. suffixes.
+        Example: {
+            "vllm:num_requests_running": 42.3,
+            "vllm:request_prompt_tokens_p50": 1500.0,
+            "vllm:request_prompt_tokens_p90": 2800.0,
+            "vllm:request_prompt_tokens_p95": 3200.0,
+            "vllm:request_prompt_tokens_p99": 4100.0,
+        }
     """
+    if histogram_percentiles is None:
+        histogram_percentiles = [50, 90, 95, 99]
     # Filter timeline to steady state window
     steady_snapshots = [
         snapshot
@@ -244,6 +353,8 @@ def calculate_steady_state_avg_stats(
     )
 
     stats = {}
+
+    # Process gauge metrics
     for gauge_metric_name in gauge_metric_names:
         values = []
         # Special handling for vLLM KV cache bug
@@ -262,5 +373,34 @@ def calculate_steady_state_avg_stats(
             )
         else:
             logger.warning(f"No values found for metric: {gauge_metric_name}")
+
+    # Process histogram metrics (calculate percentiles from final snapshot)
+    if histogram_metric_names:
+        # Use the last snapshot in steady state for histogram metrics
+        # (histograms are cumulative, so we want the final state)
+        if steady_snapshots:
+            final_snapshot = steady_snapshots[-1]
+            for histogram_metric_name in histogram_metric_names:
+                histogram_data = parse_histogram(
+                    final_snapshot["metrics"], histogram_metric_name
+                )
+                percentile_values = _calculate_histogram_percentiles(
+                    histogram_data, histogram_percentiles
+                )
+                if percentile_values:
+                    # Store each percentile with suffix (e.g., "_p50", "_p90")
+                    for p_name, value in percentile_values.items():
+                        stats[f"{histogram_metric_name}_{p_name}"] = value
+
+                    # Log summary
+                    p_str = ", ".join(
+                        f"{p_name}={value:.3f}"
+                        for p_name, value in percentile_values.items()
+                    )
+                    logger.info(f"{histogram_metric_name}: {p_str}")
+                else:
+                    logger.warning(
+                        f"Could not calculate percentiles for histogram: {histogram_metric_name}"
+                    )
 
     return stats

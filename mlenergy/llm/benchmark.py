@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 from mlenergy.llm.datasets import SampleRequest
 from mlenergy.llm.prometheus import (
     PrometheusCollector,
-    calculate_steady_state_avg_stats,
+    calculate_steady_state_stats,
 )
 from mlenergy.llm.workloads import (
     AudioChat,
@@ -1411,13 +1411,19 @@ def main(args: Args) -> None:
     steady_state_end = benchmark_result["timeline"]["steady_state_end_time"]
 
     # Calculate steady state stats for key metrics
-    prometheus_stats = calculate_steady_state_avg_stats(
+    prometheus_stats = calculate_steady_state_stats(
         timeline=prometheus_timeline,
         steady_start=steady_state_start,
         steady_end=steady_state_end,
         gauge_metric_names=[
             "vllm:num_requests_running",
-            # "vllm:kv_cache_usage_perc",
+            # "vllm:kv_cache_usage_perc",  # vLLM bug (PR #28792)
+        ],
+        histogram_metric_names=[
+            "vllm:request_prompt_tokens",
+            "vllm:request_generation_tokens",
+            "vllm:request_prefill_time_seconds",
+            "vllm:request_decode_time_seconds",
         ],
     )
 

@@ -199,6 +199,7 @@ class WorkloadConfig(BaseModel):
             "results",
             "driver_log",
             "server_log",
+            "prometheus",
         ],
         create_dirs: bool = True,
     ) -> Path:
@@ -211,6 +212,7 @@ class WorkloadConfig(BaseModel):
         - results: Benchmark results ({task}/results/{model_id}/{gpu}/{runtime_params}/)
         - driver_log: Driver logs (in results dir)
         - server_log: Server logs (in results dir)
+        - prometheus: Prometheus metrics (in results dir)
         """
         # Build task root from explicit modality and task properties
         # base_dir should be like "run/llm" or "run/mllm"
@@ -241,7 +243,7 @@ class WorkloadConfig(BaseModel):
             )
 
         # Results directory paths
-        elif of in ("results", "driver_log", "server_log"):
+        elif of in ("results", "driver_log", "server_log", "prometheus"):
             result_params = self._result_params()
             result_param_str = "+".join(f"{k}+{v}" for k, v in result_params.items())
             results_dir = (
@@ -259,6 +261,8 @@ class WorkloadConfig(BaseModel):
                     path = results_dir / "driver.log"
                 case "server_log":
                     path = results_dir / "server.log"
+                case "prometheus":
+                    path = results_dir / "prometheus.json"
 
             # Create symlinks to data and tokenization files when setting up results dir
             if create_dirs and not results_dir.exists():

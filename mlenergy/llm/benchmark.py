@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from mlenergy.llm.datasets import SampleRequest
+from mlenergy.llm.prometheus import PrometheusCollector, calculate_steady_state_stats
 from mlenergy.llm.workloads import (
     AudioChat,
     GPQA,
@@ -811,6 +812,15 @@ async def benchmark(
     power_monitor = PowerMonitor(update_period=0.1)
     temperature_monitor = TemperatureMonitor(update_period=0.5)
 
+    # Prometheus metrics collector
+    prometheus_collector = PrometheusCollector(
+        metrics_url=base_url + "/metrics", interval=1.0
+    )
+    prometheus_stop_event = asyncio.Event()
+    prometheus_task = asyncio.create_task(
+        prometheus_collector.collect(prometheus_stop_event)
+    )
+
     logger.info("Traffic request rate: %f req/s", request_rate)
 
     if request_rate == float("inf"):
@@ -911,6 +921,10 @@ async def benchmark(
     benchmark_end_time = time.time()
     benchmark_duration = benchmark_end_time - benchmark_start_time
 
+    # Stop Prometheus collection and get timeline
+    prometheus_stop_event.set()
+    prometheus_timeline = await prometheus_task
+
     power_timeline = power_monitor.get_all_power_timelines(
         start_time=benchmark_start_time,
         end_time=benchmark_end_time,
@@ -984,6 +998,7 @@ async def benchmark(
             "power": power_timeline,
             "temperature": temperature_timeline,
         },
+        "prometheus_timeline": prometheus_timeline,
     }
 
     def process_one_metric(
@@ -1377,6 +1392,43 @@ def main(args: Args) -> None:
     )
     result_json["burstiness"] = args.burstiness
     result_json["max_concurrency"] = args.max_concurrency
+
+    # Process and save Prometheus metrics
+    prometheus_timeline = benchmark_result.pop("prometheus_timeline")
+    steady_state_start = benchmark_result["timeline"]["steady_state_start_time"]
+    steady_state_end = benchmark_result["timeline"]["steady_state_end_time"]
+
+    # Calculate steady state stats for key metrics
+    prometheus_stats = calculate_steady_state_stats(
+        timeline=prometheus_timeline,
+        steady_start=steady_state_start,
+        steady_end=steady_state_end,
+        metric_names=["vllm:num_requests_running", "vllm:kv_cache_usage_perc"],
+    )
+
+    # Prepare Prometheus results
+    prometheus_json = {
+        "collection_interval": 1.0,
+        "steady_state_start_time": steady_state_start,
+        "steady_state_end_time": steady_state_end,
+        "timeline": prometheus_timeline,
+        "steady_state_stats": prometheus_stats,
+    }
+
+    # Save Prometheus metrics to separate file
+    prometheus_file = args.workload.to_path(of="prometheus")
+    with open(prometheus_file, "w", encoding="utf-8") as f:
+        json.dump(prometheus_json, f, indent=2)
+    logger.info(f"Saved Prometheus metrics to {prometheus_file}")
+
+    # Print steady state stats to console
+    if prometheus_stats:
+        logger.info("Steady State Prometheus Metrics:")
+        for metric_name, value in prometheus_stats.items():
+            if metric_name == "vllm:kv_cache_usage_perc":
+                logger.info(f"  {metric_name}: {value:.3f} ({value * 100:.1f}%)")
+            else:
+                logger.info(f"  {metric_name}: {value:.3f}")
 
     # Merge with benchmark result
     result_json = {**result_json, **benchmark_result}

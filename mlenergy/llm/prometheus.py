@@ -40,29 +40,28 @@ class PrometheusCollector:
             f"(interval: {self.interval}s)"
         )
 
-        while not stop_event.is_set():
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        self.metrics_url, timeout=aiohttp.ClientTimeout(total=5.0)
-                    ) as resp:
+        # Create session once and reuse it for all requests
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5.0)
+        ) as session:
+            while not stop_event.is_set():
+                try:
+                    async with session.get(self.metrics_url) as resp:
+                        now = time.time()
                         if resp.status == 200:
                             metrics_text = await resp.text()
-                            snapshot = {
-                                "timestamp": time.time(),
-                                "metrics": metrics_text,
-                            }
+                            snapshot = {"timestamp": now, "metrics": metrics_text}
                             timeline.append(snapshot)
                         else:
                             logger.warning(
                                 f"Failed to fetch metrics: HTTP {resp.status}"
                             )
-            except asyncio.TimeoutError:
-                logger.warning("Timeout fetching Prometheus metrics")
-            except Exception as e:
-                logger.warning(f"Error collecting Prometheus metrics: {e}")
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout fetching Prometheus metrics")
+                except Exception as e:
+                    logger.warning(f"Error collecting Prometheus metrics: {e}")
 
-            await asyncio.sleep(self.interval)
+                await asyncio.sleep(self.interval)
 
         logger.info(
             f"Stopped Prometheus collection. Collected {len(timeline)} snapshots"
@@ -185,7 +184,6 @@ def _get_gauge_value(
         metrics_text: Raw Prometheus metrics text
         metric_name: Name of the gauge metric
         handle_vllm_bug: If True, handle vLLM bug where multiple PID entries exist
-                        by taking the max value across all labels
 
     Returns:
         Single float value, or None if metric not found
@@ -196,7 +194,9 @@ def _get_gauge_value(
 
     if handle_vllm_bug:
         # vLLM bug: Multiple entries per API server replica with different PIDs.
-        # Take the max value (assumes active worker reports non-zero).
+        nonzero_values = [v for v in values.values() if v > 0]
+        if nonzero_values:
+            return sum(nonzero_values) / len(nonzero_values)
         return max(values.values())
     else:
         # If there's only one value, return it
@@ -206,7 +206,7 @@ def _get_gauge_value(
         return max(values.values())
 
 
-def calculate_steady_state_stats(
+def calculate_steady_state_avg_stats(
     timeline: list[dict[str, Any]],
     steady_start: float,
     steady_end: float,

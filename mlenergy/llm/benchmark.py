@@ -39,7 +39,10 @@ if TYPE_CHECKING:
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from mlenergy.llm.datasets import SampleRequest
-from mlenergy.llm.prometheus import PrometheusCollector, calculate_steady_state_stats
+from mlenergy.llm.prometheus import (
+    PrometheusCollector,
+    calculate_steady_state_avg_stats,
+)
 from mlenergy.llm.workloads import (
     AudioChat,
     GPQA,
@@ -1399,7 +1402,7 @@ def main(args: Args) -> None:
     steady_state_end = benchmark_result["timeline"]["steady_state_end_time"]
 
     # Calculate steady state stats for key metrics
-    prometheus_stats = calculate_steady_state_stats(
+    prometheus_stats = calculate_steady_state_avg_stats(
         timeline=prometheus_timeline,
         steady_start=steady_state_start,
         steady_end=steady_state_end,

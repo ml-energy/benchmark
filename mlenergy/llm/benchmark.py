@@ -1415,7 +1415,10 @@ def main(args: Args) -> None:
         timeline=prometheus_timeline,
         steady_start=steady_state_start,
         steady_end=steady_state_end,
-        metric_names=["vllm:num_requests_running", "vllm:kv_cache_usage_perc"],
+        gauge_metric_names=[
+            "vllm:num_requests_running",
+            # "vllm:kv_cache_usage_perc",
+        ],
     )
 
     # Prepare Prometheus results

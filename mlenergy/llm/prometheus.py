@@ -210,7 +210,7 @@ def calculate_steady_state_avg_stats(
     timeline: list[dict[str, Any]],
     steady_start: float,
     steady_end: float,
-    metric_names: list[str],
+    gauge_metric_names: list[str],
 ) -> dict[str, float]:
     """Calculate average metric values during steady state.
 
@@ -218,7 +218,7 @@ def calculate_steady_state_avg_stats(
         timeline: List of metric snapshots with "timestamp" and "metrics" keys
         steady_start: Steady state start timestamp
         steady_end: Steady state end timestamp
-        metric_names: List of gauge metric names to analyze
+        gauge_metric_names: List of gauge metric names to analyze
 
     Returns:
         Dict mapping metric names to average values during steady state.
@@ -244,23 +244,23 @@ def calculate_steady_state_avg_stats(
     )
 
     stats = {}
-    for metric_name in metric_names:
+    for gauge_metric_name in gauge_metric_names:
         values = []
         # Special handling for vLLM KV cache bug
-        handle_bug = metric_name == "vllm:kv_cache_usage_perc"
+        handle_bug = gauge_metric_name == "vllm:kv_cache_usage_perc"
 
         for snapshot in steady_snapshots:
-            value = _get_gauge_value(snapshot["metrics"], metric_name, handle_bug)
+            value = _get_gauge_value(snapshot["metrics"], gauge_metric_name, handle_bug)
             if value is not None:
                 values.append(value)
 
         if values:
             avg_value = sum(values) / len(values)
-            stats[metric_name] = avg_value
+            stats[gauge_metric_name] = avg_value
             logger.info(
-                f"{metric_name}: {avg_value:.3f} (averaged over {len(values)} snapshots)"
+                f"{gauge_metric_name}: {avg_value:.3f} (averaged over {len(values)} snapshots)"
             )
         else:
-            logger.warning(f"No values found for metric: {metric_name}")
+            logger.warning(f"No values found for metric: {gauge_metric_name}")
 
     return stats

@@ -5,3 +5,4 @@ enable-expert-parallel: true
 trust-remote-code: true
 dtype: auto
 reasoning-parser: deepseek_r1
+api-server-count: 3

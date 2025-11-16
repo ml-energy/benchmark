@@ -5,3 +5,4 @@ enable-expert-parallel: true
 dtype: bfloat16
 trust-remote-code: true
 tokenizer-mode: mistral
+api-server-count: 3

@@ -33,6 +33,7 @@ if __name__ == "__main__":
         num_images=2,
         model_id=model_id,
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -47,6 +48,7 @@ if __name__ == "__main__":
         model_id=model_id,
         video_data_dir="/turbo/llava_video_178k",
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -61,6 +63,7 @@ if __name__ == "__main__":
         model_id=model_id,
         audio_data_dir="/turbo/FSD50K.dev_audio",
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests(dump_multimodal_data=dump_multimodal_data)
@@ -87,6 +90,7 @@ if __name__ == "__main__":
         num_requests=100,
         model_id=model_id,
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests()
@@ -100,6 +104,7 @@ if __name__ == "__main__":
         num_requests=100,
         model_id=model_id,
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=64,
     )
     requests = work.load_requests()
@@ -113,6 +118,7 @@ if __name__ == "__main__":
         num_requests=100,
         model_id="meta-llama/Llama-3.1-8B-Instruct",
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests()
@@ -125,6 +131,7 @@ if __name__ == "__main__":
         num_requests=100,
         model_id=model_id,
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests()
@@ -138,6 +145,7 @@ if __name__ == "__main__":
         num_requests=100,
         model_id=model_id,
         gpu_model="H100",
+        num_gpus=1,
         max_num_seqs=32,
     )
     requests = work.load_requests()

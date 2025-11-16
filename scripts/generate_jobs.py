@@ -440,6 +440,7 @@ def generate_pegasus_queues(
                 params = {
                     "model_id": workload.model_id,
                     "gpu_model": gpu_model,
+                    "num_gpus": num_gpus,
                     "container_runtime": container_runtime,
                     "server_image": server_image,
                     **sweep_params,
@@ -554,6 +555,11 @@ def generate_slurm_script(
         script_lines.append("module load singularity || true")
         script_lines.append("")
 
+    # Set CUDA_VISIBLE_DEVICES explicitly, although Slurm usually does this automatically
+    gpu_ids = ",".join(str(i) for i in range(num_gpus))
+    script_lines.append(f"export CUDA_VISIBLE_DEVICES={gpu_ids}")
+    script_lines.append("")
+
     # Pre-compute all sweep combinations
     sweep_combinations = workload.sweep_combinations
 
@@ -592,6 +598,7 @@ def generate_slurm_script(
     bash_params = {
         "model_id": workload.model_id,
         "gpu_model": gpu_model,
+        "num_gpus": num_gpus,
         "container_runtime": container_runtime,
         "server_image": server_image,
     }

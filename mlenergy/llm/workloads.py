@@ -136,6 +136,7 @@ class WorkloadConfig(BaseModel):
 
     # Systems parameters
     gpu_model: str
+    num_gpus: int
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
 
@@ -185,6 +186,7 @@ class WorkloadConfig(BaseModel):
         workload configuration, as this will be used to create unique results directories.
         """
         return {
+            "num_gpus": self.num_gpus,
             "max_num_seqs": self.max_num_seqs,
             "max_num_batched_tokens": self.max_num_batched_tokens,
             **self._dataset_params(),

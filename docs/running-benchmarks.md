@@ -48,6 +48,7 @@ Benchmark commands use a two-level templating system:
 **Built-in parameters** (automatically filled from config structure):
 - `{model_id}`: Model identifier from directory structure (e.g., `Qwen/Qwen3-8B`)
 - `{gpu_model}`: GPU type from directory structure (e.g., `H100`)
+- `{num_gpus}`: Number of GPUs from `num_gpus.txt`
 
 **Generator-level parameters** (specified when generating jobs):
 - `{container_runtime}`: Container runtime (`docker` or `singularity`)

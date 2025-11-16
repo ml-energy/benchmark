@@ -1229,6 +1229,15 @@ def main(args: Args) -> None:
     # Optional envs
     vllm_cache_dir = os.environ.get("VLLM_CACHE_DIR", None)
 
+    # Validate num_gpus matches CUDA_VISIBLE_DEVICES
+    actual_num_gpus = len(cuda_visible_devices.split(","))
+    if args.workload.num_gpus != actual_num_gpus:
+        raise ValueError(
+            f"num_gpus parameter ({args.workload.num_gpus}) does not match "
+            f"CUDA_VISIBLE_DEVICES ({actual_num_gpus} GPUs: {cuda_visible_devices})"
+        )
+    logger.info("Number of GPUs: %d", args.workload.num_gpus)
+
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)

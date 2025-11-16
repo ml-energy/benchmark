@@ -8,6 +8,7 @@ command_template: |
     --workload.model-id {model_id} \
     --workload.num-requests 1024 \
     --workload.gpu-model {gpu_model} \
+    --workload.num-gpus {num_gpus} \
     --workload.max-num-seqs {max_num_seqs}
 
 sweep_defaults:

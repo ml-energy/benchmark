@@ -5,4 +5,5 @@ dtype: bfloat16
 trust-remote-code: true
 tokenizer-mode: mistral
 config-format: mistral
+load-format: mistral
 api-server-count: 3

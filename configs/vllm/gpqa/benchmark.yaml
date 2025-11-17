@@ -2,14 +2,18 @@ command_template: |
   python -m mlenergy.llm.benchmark \
     --container-runtime {container_runtime} \
     --server-image {server_image} \
-    --max-output-tokens 32768 \
+    --max-output-tokens {max_output_tokens} \
     workload:gpqa \
     --workload.base-dir run/llm \
     --workload.model-id {model_id} \
-    --workload.num-requests 198 \
+    --workload.num-requests {num_requests} \
     --workload.gpu-model {gpu_model} \
     --workload.num-gpus {num_gpus} \
     --workload.max-num-seqs {max_num_seqs}
+
+workload_defaults:
+  max_output_tokens: 32768
+  num_requests: 198
 
 sweep_defaults:
   - max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256, 384, 512]

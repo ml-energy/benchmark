@@ -190,7 +190,10 @@ def check_steady_state_duration(result_dir: Path, data: dict) -> Expectation:
         )
     else:
         total_duration = data.get("duration", 0)
-        details = f"Steady state: {steady_duration:.1f}s, Total duration: {total_duration:.1f}s. Increase num_prompts or reduce request_rate."
+        details = (
+            f"Steady state: {steady_duration:.1f}s, Total duration: {total_duration:.1f}s. "
+            "Increase the number of requests."
+        )
         return Expectation(
             "Steady State Duration",
             False,
@@ -443,6 +446,74 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
         )
 
 
+def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
+    """Check if output lengths are consistently hitting max limit.
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether outputs are saturating the max length
+    """
+    max_output_tokens = data.get("max_output_tokens")
+    results = data.get("results", [])
+
+    # Skip check if no max limit or no results
+    if max_output_tokens is None or not results:
+        return Expectation(
+            "Output Length",
+            True,
+            "No max_output_tokens limit set",
+            "warning",
+            "",
+        )
+
+    if not isinstance(max_output_tokens, int):
+        return Expectation(
+            "Output Length",
+            True,
+            f"max_output_tokens is not an integer: {max_output_tokens}",
+            "warning",
+            "",
+        )
+
+    hitting_limit = []
+    for r in results:
+        output_len = r["output_len"]
+        if output_len == max_output_tokens:
+            hitting_limit.append(r)
+        elif output_len > max_output_tokens:
+            print(
+                f"Warning: output_len {output_len} exceeds max_output_tokens {max_output_tokens}"
+            )
+            hitting_limit.append(r)
+
+    saturation_rate = len(hitting_limit) / len(results) if results else 0
+
+    if saturation_rate >= 0.3:
+        details = (
+            f"{len(hitting_limit)}/{len(results)} requests ({saturation_rate:.1%}) "
+            f"hit max_output_tokens={max_output_tokens}.\n"
+            f"This suggests outputs may be truncated. Consider increasing max_output_tokens."
+        )
+        return Expectation(
+            "Output Length",
+            False,
+            f"{saturation_rate:.1%} of outputs hit max limit ({max_output_tokens})",
+            "warning",
+            details,
+        )
+    else:
+        return Expectation(
+            "Output Length",
+            True,
+            f"{saturation_rate:.1%} of outputs hit max limit ({max_output_tokens})",
+            "warning",
+            "",
+        )
+
+
 def get_model_type(result_dir: Path) -> Literal["llm", "mllm", "diffusion"]:
     """Detect model type from directory structure.
 
@@ -509,6 +580,7 @@ def validate_result(result_dir: Path) -> ValidationResult:
                 files_check,
                 check_completion(result_dir, data),
                 check_request_success(result_dir, data),
+                check_output_length_saturation(result_dir, data),
                 check_steady_state_duration(result_dir, data),
                 check_prometheus_collection(result_dir, data),
                 check_metrics_validity(result_dir, data),
@@ -569,7 +641,7 @@ def main():
             print(f"\n{validation.path}")
             for exp in validation.errors:
                 print(f"  [ERROR] {exp.name}: {exp.message}")
-                if exp.details and args.verbose:
+                if exp.details:
                     # Indent details for readability
                     for line in exp.details.split("\n"):
                         print(f"    {line}")

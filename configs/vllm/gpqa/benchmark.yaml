@@ -2,7 +2,7 @@ command_template: |
   python -m mlenergy.llm.benchmark \
     --container-runtime {container_runtime} \
     --server-image {server_image} \
-    --max-output-tokens 40960 \
+    --max-output-tokens 32768 \
     workload:gpqa \
     --workload.base-dir run/llm \
     --workload.model-id {model_id} \

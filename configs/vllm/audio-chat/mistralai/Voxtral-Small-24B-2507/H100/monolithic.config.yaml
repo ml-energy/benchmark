@@ -4,4 +4,5 @@ max-model-len: 20480
 dtype: bfloat16
 trust-remote-code: true
 tokenizer-mode: mistral
+config-format: mistral
 api-server-count: 3

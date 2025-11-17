@@ -24,6 +24,7 @@ class BenchmarkTemplate(BaseModel):
 
     command_template: str
     sweep_defaults: list[dict[str, list[Any]]]
+    workload_defaults: dict[str, Any] = {}
 
 
 class SweepConfig(BaseModel):
@@ -38,6 +39,7 @@ class ModelWorkload(BaseModel):
     model_id: str
     config_dir: Path
     sweep_combinations: list[dict[str, Any]]
+    workload_overrides: dict[str, Any] = {}
 
 
 @dataclass
@@ -294,6 +296,13 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                         sweep_config = template.sweep_defaults
                         config_source = f"benchmark.yaml for {dataset}"
 
+                    # Check for model+GPU-specific workload.yaml
+                    workload_overrides = {}
+                    workload_file = gpu_dir / "workload.yaml"
+                    if workload_file.exists():
+                        with open(workload_file) as f:
+                            workload_overrides = yaml.safe_load(f) or {}
+
                     # Validate sweep configuration
                     validate_sweep_keys(
                         sweep_config, template.command_template, config_source
@@ -307,6 +316,7 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                             model_id=model_id,
                             config_dir=gpu_dir,
                             sweep_combinations=sweep_combinations,
+                            workload_overrides=workload_overrides,
                         )
                         dataset_config.workloads[gpu_model][num_gpus].append(workload)
 
@@ -443,6 +453,8 @@ def generate_pegasus_queues(
                     "num_gpus": num_gpus,
                     "container_runtime": container_runtime,
                     "server_image": server_image,
+                    **template.workload_defaults,
+                    **workload.workload_overrides,
                     **sweep_params,
                 }
 
@@ -601,6 +613,8 @@ def generate_slurm_script(
         "num_gpus": num_gpus,
         "container_runtime": container_runtime,
         "server_image": server_image,
+        **template.workload_defaults,
+        **workload.workload_overrides,
     }
     for param_name in param_names:
         bash_params[param_name] = f"${param_name}"

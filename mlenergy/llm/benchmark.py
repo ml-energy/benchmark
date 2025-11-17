@@ -1404,6 +1404,7 @@ def main(args: Args) -> None:
     )
     result_json["burstiness"] = args.burstiness
     result_json["max_concurrency"] = args.max_concurrency
+    result_json["max_output_tokens"] = args.max_output_tokens
 
     # Process and save Prometheus metrics
     prometheus_timeline = benchmark_result.pop("prometheus_timeline")

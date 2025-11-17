@@ -68,6 +68,7 @@ from mlenergy.utils.container_runtime import (
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+PROMETHEUS_COLLECTOR_INTERVAL_S = 1.0
 
 logger = logging.getLogger("mlenergy.llm.benchmark")
 
@@ -817,7 +818,7 @@ async def benchmark(
 
     # Prometheus metrics collector
     prometheus_collector = PrometheusCollector(
-        metrics_url=base_url + "/metrics", interval=1.0
+        metrics_url=base_url + "/metrics", interval=PROMETHEUS_COLLECTOR_INTERVAL_S
     )
     prometheus_stop_event = asyncio.Event()
     prometheus_task = asyncio.create_task(
@@ -1411,7 +1412,14 @@ def main(args: Args) -> None:
     steady_state_start = benchmark_result["timeline"]["steady_state_start_time"]
     steady_state_end = benchmark_result["timeline"]["steady_state_end_time"]
 
-    # Calculate steady state stats for key metrics
+    # Merge with benchmark result
+    result_json = {**result_json, **benchmark_result}
+
+    # Save to results file
+    with open(result_file, "w", encoding="utf-8") as f:
+        json.dump(result_json, f, indent=2)
+
+    # Prometheus metrics
     prometheus_stats = calculate_steady_state_stats(
         timeline=prometheus_timeline,
         steady_start=steady_state_start,
@@ -1430,34 +1438,24 @@ def main(args: Args) -> None:
 
     # Prepare Prometheus results
     prometheus_json = {
-        "collection_interval": 1.0,
+        "collection_interval": PROMETHEUS_COLLECTOR_INTERVAL_S,
         "steady_state_start_time": steady_state_start,
         "steady_state_end_time": steady_state_end,
-        "timeline": prometheus_timeline,
         "steady_state_stats": prometheus_stats,
+        "timeline": prometheus_timeline,
     }
 
     # Save Prometheus metrics to separate file
     prometheus_file = args.workload.to_path(of="prometheus")
     with open(prometheus_file, "w", encoding="utf-8") as f:
         json.dump(prometheus_json, f, indent=2)
-    logger.info(f"Saved Prometheus metrics to {prometheus_file}")
+    logger.info("Saved Prometheus metrics to %s", prometheus_file)
 
     # Print steady state stats to console
     if prometheus_stats:
-        logger.info("Steady State Prometheus Metrics:")
+        logger.info("Steady state Prometheus Metrics:")
         for metric_name, value in prometheus_stats.items():
-            if metric_name == "vllm:kv_cache_usage_perc":
-                logger.info(f"  {metric_name}: {value:.3f} ({value * 100:.1f}%)")
-            else:
-                logger.info(f"  {metric_name}: {value:.3f}")
-
-    # Merge with benchmark result
-    result_json = {**result_json, **benchmark_result}
-
-    # Save to results file
-    with open(result_file, "w", encoding="utf-8") as f:
-        json.dump(result_json, f, indent=2)
+            logger.info("%-30s: %.3f", metric_name, value)
 
     # Something failed. Treat the whole run as a failure.
     if benchmark_result["completed"] < args.workload.num_requests:

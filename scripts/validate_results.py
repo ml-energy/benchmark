@@ -663,6 +663,8 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
         # Collect metrics
         energy_tok = data.get("steady_state_energy_per_token")
         model_id = data.get("model_id", "unknown")
+        gpu_model = data.get("gpu_model", "unknown")
+        num_gpus = data.get("num_gpus", 0)
         results = data.get("results", [])
 
         if energy_tok is not None and energy_tok > 0:
@@ -684,6 +686,8 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
             by_task[task].append(
                 {
                     "model_id": model_id,
+                    "gpu_model": gpu_model,
+                    "num_gpus": num_gpus,
                     "path": str(result_path),
                     "energy_per_token": energy_tok,
                     "energy_per_request": energy_per_req,
@@ -700,18 +704,24 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
             runs = by_task[task]
 
             print(f"\n{task.upper()}:")
-            print(f"{'Rank':<6} {'Model':<50} {'J/token':<12} {'J/request':<12}")
-            print("-" * 80)
+            print(
+                f"{'Rank':<6} {'Model':<40} {'GPU':<8} {'#GPUs':<7} {'J/token':<12} {'J/request':<12}"
+            )
+            print("-" * 85)
 
             # Sort by energy per token
             ranked = sorted(runs, key=lambda x: x["energy_per_token"])
 
             for i, run in enumerate(ranked, 1):
                 model = run["model_id"]
+                gpu = run["gpu_model"]
+                ngpus = run["num_gpus"]
                 e_tok = run["energy_per_token"]
                 e_req = run["energy_per_request"]
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
-                print(f"{i:<6} {model:<50} {e_tok:<12.4f} {e_req_str:<12}")
+                print(
+                    f"{i:<6} {model:<40} {gpu:<8} {ngpus:<7} {e_tok:<12.4f} {e_req_str:<12}"
+                )
 
 
 def print_aggregate_statistics(validations: list[ValidationResult]):
@@ -779,9 +789,6 @@ def main():
     print(f"[WARN] {len(with_warnings)}")
     print()
 
-    # Print aggregate statistics
-    print_aggregate_statistics(validations)
-
     # Print failed runs
     if failed:
         print("=" * 80)
@@ -829,6 +836,9 @@ def main():
             for exp in validation.expectations:
                 if exp.passed:
                     print(f"  [PASS] {exp.name}: {exp.message}")
+
+    # Print aggregate statistics
+    print_aggregate_statistics(validations)
 
     # Exit with error if any runs failed
     if failed:

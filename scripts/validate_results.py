@@ -22,12 +22,12 @@ class Args:
     """CLI arguments.
 
     Attributes:
-        base_dir: Base directory containing benchmark results.
+        run_dir: Base run directory containing benchmark results.
         verbose: Whether to show details for all runs, not just failed ones.
         workers: Number of parallel workers for validation.
     """
 
-    base_dir: Path = Path("run")
+    run_dir: Path = Path("run")
     verbose: bool = False
     workers: int = 4
 
@@ -759,13 +759,13 @@ def main():
     # This ensures we catch incomplete runs that may be missing results.json
     result_dirs_set = set()
     for pattern in ["results.json", "prometheus.json", "driver.log", "server.log"]:
-        for p in args.base_dir.rglob(pattern):
+        for p in args.run_dir.rglob(pattern):
             result_dirs_set.add(p.parent)
 
     result_dirs = sorted(result_dirs_set)
 
     if not result_dirs:
-        print(f"No result directories found in {args.base_dir}")
+        print(f"No result directories found in {args.run_dir}")
         sys.exit(1)
 
     print(f"Validating {len(result_dirs)} benchmark results...\n")

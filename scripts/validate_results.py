@@ -479,8 +479,10 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
         )
 
     hitting_limit = []
+    output_lengths = []
     for r in results:
         output_len = r["output_len"]
+        output_lengths.append(output_len)
         if output_len == max_output_tokens:
             hitting_limit.append(r)
         elif output_len > max_output_tokens:
@@ -491,16 +493,31 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
 
     saturation_rate = len(hitting_limit) / len(results) if results else 0
 
+    # Calculate statistics
+    output_lengths_sorted = sorted(output_lengths)
+    n = len(output_lengths_sorted)
+    mean = sum(output_lengths) / n if n > 0 else 0
+    p50 = output_lengths_sorted[n // 2] if n > 0 else 0
+    p75 = output_lengths_sorted[int(n * 0.75)] if n > 0 else 0
+    p90 = output_lengths_sorted[int(n * 0.90)] if n > 0 else 0
+    p95 = output_lengths_sorted[int(n * 0.95)] if n > 0 else 0
+    p99 = output_lengths_sorted[int(n * 0.99)] if n > 0 else 0
+    max_len = output_lengths_sorted[-1] if n > 0 else 0
+
+    stats_msg = f"mean={mean:.0f}, p50={p50}, p90={p90}, p99={p99}, max={max_len}"
+
     if saturation_rate >= 0.3:
         details = (
             f"{len(hitting_limit)}/{len(results)} requests ({saturation_rate:.1%}) "
             f"hit max_output_tokens={max_output_tokens}.\n"
+            f"Output length statistics: {stats_msg}\n"
+            f"Percentiles: p75={p75}, p95={p95}\n"
             f"This suggests outputs may be truncated. Consider increasing max_output_tokens."
         )
         return Expectation(
             "Output Length",
             False,
-            f"{saturation_rate:.1%} of outputs hit max limit ({max_output_tokens})",
+            f"{saturation_rate:.1%} hit limit; {stats_msg}",
             "warning",
             details,
         )
@@ -508,7 +525,7 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
         return Expectation(
             "Output Length",
             True,
-            f"{saturation_rate:.1%} of outputs hit max limit ({max_output_tokens})",
+            f"{saturation_rate:.1%} hit limit; {stats_msg}",
             "warning",
             "",
         )

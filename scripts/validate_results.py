@@ -683,11 +683,13 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
 
         # Store for task comparison
         if task and energy_tok is not None and energy_tok > 0:
+            max_num_seqs = data.get("max_num_seqs")
             by_task[task].append(
                 {
                     "model_id": model_id,
                     "gpu_model": gpu_model,
                     "num_gpus": num_gpus,
+                    "max_num_seqs": max_num_seqs,
                     "path": str(result_path),
                     "energy_per_token": energy_tok,
                     "energy_per_request": energy_per_req,
@@ -705,9 +707,9 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
 
             print(f"\n{task.upper()}:")
             print(
-                f"{'Rank':<6} {'Model':<50} {'GPU':<8} {'#GPUs':<7} {'J/token':<12} {'J/request':<12}"
+                f"{'Rank':<6} {'Model':<50} {'GPU':<8} {'#GPUs':<7} {'MaxSeqs':<9} {'J/token':<12} {'J/request':<12}"
             )
-            print("-" * 85)
+            print("-" * 94)
 
             # Sort by energy per token
             ranked = sorted(runs, key=lambda x: x["energy_per_token"])
@@ -716,11 +718,13 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 model = run["model_id"]
                 gpu = run["gpu_model"]
                 ngpus = run["num_gpus"]
+                max_seqs = run["max_num_seqs"]
                 e_tok = run["energy_per_token"]
                 e_req = run["energy_per_request"]
+                max_seqs_str = str(max_seqs) if max_seqs is not None else "N/A"
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
                 print(
-                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {e_tok:<12.4f} {e_req_str:<12}"
+                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {e_req_str:<12}"
                 )
 
 

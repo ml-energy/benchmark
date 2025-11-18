@@ -705,7 +705,7 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
 
             print(f"\n{task.upper()}:")
             print(
-                f"{'Rank':<6} {'Model':<40} {'GPU':<8} {'#GPUs':<7} {'J/token':<12} {'J/request':<12}"
+                f"{'Rank':<6} {'Model':<50} {'GPU':<8} {'#GPUs':<7} {'J/token':<12} {'J/request':<12}"
             )
             print("-" * 85)
 
@@ -720,7 +720,7 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 e_req = run["energy_per_request"]
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
                 print(
-                    f"{i:<6} {model:<40} {gpu:<8} {ngpus:<7} {e_tok:<12.4f} {e_req_str:<12}"
+                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {e_tok:<12.4f} {e_req_str:<12}"
                 )
 
 

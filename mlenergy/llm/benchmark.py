@@ -1397,7 +1397,12 @@ def main(args: Args) -> None:
     result_json["date"] = current_dt
     result_json["endpoint_type"] = args.workload.endpoint_type
     result_json["model_id"] = model_id
+    result_json["seed"] = args.workload.seed
     result_json["num_prompts"] = args.workload.num_requests
+    result_json["gpu_model"] = args.workload.gpu_model
+    result_json["num_gpus"] = args.workload.num_gpus
+    result_json["max_num_seqs"] = args.workload.max_num_seqs
+    result_json["max_num_batched_tokens"] = args.workload.max_num_batched_tokens
 
     # Traffic
     result_json["request_rate"] = (

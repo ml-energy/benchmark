@@ -1431,13 +1431,13 @@ def main(args: Args) -> None:
         steady_end=steady_state_end,
         gauge_metric_names=[
             "vllm:num_requests_running",
-            # "vllm:kv_cache_usage_perc",  # vLLM bug (PR #28792)
+            "vllm:kv_cache_usage_perc",
         ],
         histogram_metric_names=[
             "vllm:request_prompt_tokens",
             "vllm:request_generation_tokens",
             "vllm:request_prefill_time_seconds",
-            "vllm:request_decode_time_seconds",
+            "vllm:inter_token_latency_seconds",
         ],
     )
 

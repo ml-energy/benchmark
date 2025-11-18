@@ -544,7 +544,7 @@ def generate_slurm_script(
             f"#SBATCH --output=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.out",
             f"#SBATCH --error=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.err",
             "",
-            "set -e",
+            "set -v",
             "",
             "# Ensure required environment variables are set",
             'if [[ -z "$HF_HOME" ]]; then',

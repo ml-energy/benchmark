@@ -12,6 +12,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal
 from multiprocessing import Pool
+from collections import defaultdict
 
 import tyro
 
@@ -612,6 +613,135 @@ def validate_result(result_dir: Path) -> ValidationResult:
     return ValidationResult(str(result_dir), expectations)
 
 
+def calc_percentiles(values: list[float]) -> dict[str, float]:
+    """Calculate percentiles for a list of values."""
+    if not values:
+        return {}
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    return {
+        "mean": sum(values) / n,
+        "p25": sorted_vals[int(n * 0.25)],
+        "p50": sorted_vals[int(n * 0.50)],
+        "p90": sorted_vals[int(n * 0.90)],
+        "p95": sorted_vals[int(n * 0.95)],
+        "p99": sorted_vals[int(n * 0.99)],
+        "max": sorted_vals[-1],
+    }
+
+
+def print_llm_mllm_statistics(validations: list[ValidationResult]):
+    """Print aggregate statistics for LLM/MLLM benchmarks."""
+    # Collect metrics from all runs with valid results.json
+    energy_per_token = []
+    energy_per_request = []
+
+    # Group by task for comparison
+    by_task: dict[str, list[dict]] = defaultdict(list)
+
+    for v in validations:
+        result_path = Path(v.path)
+        results_json = result_path / "results.json"
+
+        if not results_json.exists():
+            continue
+
+        try:
+            with open(results_json) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        # Extract task name from path (e.g., run/llm/lm-arena-chat/... or run/mllm/image-chat/...)
+        parts = result_path.parts
+        task = None
+        for i, part in enumerate(parts):
+            if part in ["llm", "mllm"] and i + 1 < len(parts):
+                task = parts[i + 1]
+                break
+
+        # Collect metrics
+        energy_tok = data.get("steady_state_energy_per_token")
+        model_id = data.get("model_id", "unknown")
+        results = data.get("results", [])
+
+        if energy_tok is not None and energy_tok > 0:
+            energy_per_token.append(energy_tok)
+
+        # Calculate energy per request = energy_per_token * avg_output_length
+        energy_per_req = None
+        if energy_tok is not None and energy_tok > 0 and results:
+            output_lengths = [r["output_len"] for r in results]
+            avg_output_len = (
+                sum(output_lengths) / len(output_lengths) if output_lengths else 0
+            )
+            if avg_output_len > 0:
+                energy_per_req = energy_tok * avg_output_len
+                energy_per_request.append(energy_per_req)
+
+        # Store for task comparison
+        if task and energy_tok is not None and energy_tok > 0:
+            by_task[task].append(
+                {
+                    "model_id": model_id,
+                    "path": str(result_path),
+                    "energy_per_token": energy_tok,
+                    "energy_per_request": energy_per_req,
+                }
+            )
+
+    # Print comparison tables by task
+    if by_task:
+        print("\n" + "=" * 80)
+        print("COMPARISON BY TASK")
+        print("=" * 80)
+
+        for task in sorted(by_task.keys()):
+            runs = by_task[task]
+
+            print(f"\n{task.upper()}:")
+            print(f"{'Rank':<6} {'Model':<50} {'J/token':<12} {'J/request':<12}")
+            print("-" * 80)
+
+            # Sort by energy per token
+            ranked = sorted(runs, key=lambda x: x["energy_per_token"])
+
+            for i, run in enumerate(ranked, 1):
+                model = run["model_id"]
+                e_tok = run["energy_per_token"]
+                e_req = run["energy_per_request"]
+                e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
+                print(f"{i:<6} {model:<50} {e_tok:<12.4f} {e_req_str:<12}")
+
+
+def print_aggregate_statistics(validations: list[ValidationResult]):
+    """Print aggregate statistics dispatched by model type."""
+    # Group validations by model type
+    by_model_type: dict[str, list[ValidationResult]] = defaultdict(list)
+
+    for v in validations:
+        try:
+            model_type = get_model_type(Path(v.path))
+            by_model_type[model_type].append(v)
+        except ValueError:
+            # Skip if model type cannot be determined
+            continue
+
+    print("=" * 80)
+    print("AGGREGATE STATISTICS")
+    print("=" * 80)
+
+    # Print statistics for each model type
+    for model_type in sorted(by_model_type.keys()):
+        validations_for_type = by_model_type[model_type]
+
+        if model_type in ["llm", "mllm"]:
+            print(f"\n{'LLM/MLLM Benchmarks':.^80}")
+            print_llm_mllm_statistics(validations_for_type)
+
+    print()
+
+
 def main():
     args = tyro.cli(Args)
 
@@ -648,6 +778,9 @@ def main():
     print(f"[FAIL] {len(failed)} ({len(failed) / len(validations) * 100:.1f}%)")
     print(f"[WARN] {len(with_warnings)}")
     print()
+
+    # Print aggregate statistics
+    print_aggregate_statistics(validations)
 
     # Print failed runs
     if failed:

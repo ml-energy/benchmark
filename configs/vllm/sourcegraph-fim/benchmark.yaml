@@ -4,7 +4,7 @@ command_template: |
     --server-image {server_image} \
     --max-output-tokens {max_output_tokens} \
     workload:sourcegraph-fim \
-    --workload.base-dir run/llm \
+    --workload.base-dir {run_dir}/llm \
     --workload.model-id {model_id} \
     --workload.num-requests {num_requests} \
     --workload.gpu-model {gpu_model} \
@@ -13,6 +13,7 @@ command_template: |
 
 workload_defaults:
   max_output_tokens: 2048
+  run_dir: run
   num_requests: 1024
 
 sweep_defaults:

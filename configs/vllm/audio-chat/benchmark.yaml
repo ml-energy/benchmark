@@ -4,7 +4,7 @@ command_template: |
     --server-image {server_image} \
     --max-output-tokens {max_output_tokens} \
     workload:audio-chat \
-    --workload.base-dir run/mllm \
+    --workload.base-dir {run_dir}/mllm \
     --workload.model-id {model_id} \
     --workload.num-requests {num_requests} \
     --workload.num-audios {num_audios} \
@@ -15,6 +15,7 @@ command_template: |
 
 workload_defaults:
   max_output_tokens: 4096
+  run_dir: run
   num_requests: 1024
   num_audios: 1
 

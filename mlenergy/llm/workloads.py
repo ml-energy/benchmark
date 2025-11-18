@@ -136,6 +136,7 @@ class WorkloadConfig(BaseModel):
 
     # Systems parameters
     gpu_model: str
+    num_gpus: int
     max_num_seqs: int
     max_num_batched_tokens: int | None = None
 
@@ -185,6 +186,7 @@ class WorkloadConfig(BaseModel):
         workload configuration, as this will be used to create unique results directories.
         """
         return {
+            "num_gpus": self.num_gpus,
             "max_num_seqs": self.max_num_seqs,
             "max_num_batched_tokens": self.max_num_batched_tokens,
             **self._dataset_params(),
@@ -199,6 +201,7 @@ class WorkloadConfig(BaseModel):
             "results",
             "driver_log",
             "server_log",
+            "prometheus",
         ],
         create_dirs: bool = True,
     ) -> Path:
@@ -211,6 +214,7 @@ class WorkloadConfig(BaseModel):
         - results: Benchmark results ({task}/results/{model_id}/{gpu}/{runtime_params}/)
         - driver_log: Driver logs (in results dir)
         - server_log: Server logs (in results dir)
+        - prometheus: Prometheus metrics (in results dir)
         """
         # Build task root from explicit modality and task properties
         # base_dir should be like "run/llm" or "run/mllm"
@@ -241,7 +245,7 @@ class WorkloadConfig(BaseModel):
             )
 
         # Results directory paths
-        elif of in ("results", "driver_log", "server_log"):
+        elif of in ("results", "driver_log", "server_log", "prometheus"):
             result_params = self._result_params()
             result_param_str = "+".join(f"{k}+{v}" for k, v in result_params.items())
             results_dir = (
@@ -259,6 +263,8 @@ class WorkloadConfig(BaseModel):
                     path = results_dir / "driver.log"
                 case "server_log":
                     path = results_dir / "server.log"
+                case "prometheus":
+                    path = results_dir / "prometheus.json"
 
             # Create symlinks to data and tokenization files when setting up results dir
             if create_dirs and not results_dir.exists():
@@ -321,8 +327,11 @@ class WorkloadConfig(BaseModel):
 
         # Check if both new files exist
         if requests_path.exists() and tokenization_path.exists():
-            logger.info("Loading data from %s", requests_path)
-            logger.info("Loading tokenization from %s", tokenization_path)
+            logger.info(
+                "Loading data from %s and tokenization from %s",
+                requests_path,
+                tokenization_path,
+            )
 
             data_file = DataFile.model_validate_json(requests_path.read_text())
             tokenization_file = TokenizationFile.model_validate_json(
@@ -474,6 +483,7 @@ class VideoChat(WorkloadConfig):
     """Workload configuration for video chat requests."""
 
     num_videos: int
+    num_frames: int = 32
 
     dataset_path: str = "lmms-lab/LLaVA-Video-178K"
     dataset_split: str = "caption"
@@ -485,6 +495,7 @@ class VideoChat(WorkloadConfig):
             "dataset_split": self.dataset_split,
             "num_requests": self.num_requests,
             "num_videos": self.num_videos,
+            "num_frames": self.num_frames,
             "seed": self.seed,
         }
 
@@ -495,6 +506,7 @@ class VideoChat(WorkloadConfig):
             dataset_split=self.dataset_split,
             random_seed=self.seed,
             video_data_dir=self.video_data_dir,
+            num_frames=self.num_frames,
         )
         requests = dataset.sample(
             tokenizer=self.tokenizer,

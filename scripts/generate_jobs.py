@@ -24,6 +24,7 @@ class BenchmarkTemplate(BaseModel):
 
     command_template: str
     sweep_defaults: list[dict[str, list[Any]]]
+    workload_defaults: dict[str, Any] = {}
 
 
 class SweepConfig(BaseModel):
@@ -38,6 +39,7 @@ class ModelWorkload(BaseModel):
     model_id: str
     config_dir: Path
     sweep_combinations: list[dict[str, Any]]
+    workload_overrides: dict[str, Any] = {}
 
 
 @dataclass
@@ -94,6 +96,7 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
         server_image: Container image path (Docker image or .sif file path,
             default: "vllm/vllm-openai:v0.11.1")
         override_sweeps: Optional JSON string for global sweep parameters override
+        override_workload: Optional JSON string for global workload parameters override
     """
 
     output_dir: Path
@@ -104,6 +107,7 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
     container_runtime: Literal["docker", "singularity"] = "docker"
     server_image: str = "vllm/vllm-openai:v0.11.1"
     override_sweeps: str | None = None
+    override_workload: str | None = None
 
 
 def extract_template_placeholders(template: str) -> set[str]:
@@ -294,6 +298,13 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                         sweep_config = template.sweep_defaults
                         config_source = f"benchmark.yaml for {dataset}"
 
+                    # Check for model+GPU-specific workload.yaml
+                    workload_overrides = {}
+                    workload_file = gpu_dir / "workload.yaml"
+                    if workload_file.exists():
+                        with open(workload_file) as f:
+                            workload_overrides = yaml.safe_load(f) or {}
+
                     # Validate sweep configuration
                     validate_sweep_keys(
                         sweep_config, template.command_template, config_source
@@ -307,6 +318,7 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                             model_id=model_id,
                             config_dir=gpu_dir,
                             sweep_combinations=sweep_combinations,
+                            workload_overrides=workload_overrides,
                         )
                         dataset_config.workloads[gpu_model][num_gpus].append(workload)
 
@@ -411,6 +423,7 @@ def generate_pegasus_queues(
     config: Pegasus,
     container_runtime: str,
     server_image: str,
+    workload_override: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate Pegasus queue.yaml files, one per GPU count."""
     # Organize workloads by GPU count
@@ -440,10 +453,15 @@ def generate_pegasus_queues(
                 params = {
                     "model_id": workload.model_id,
                     "gpu_model": gpu_model,
+                    "num_gpus": num_gpus,
                     "container_runtime": container_runtime,
                     "server_image": server_image,
+                    **template.workload_defaults,
+                    **workload.workload_overrides,
                     **sweep_params,
                 }
+                if workload_override:
+                    params.update(workload_override)
 
                 # Format command with all parameters
                 command = format_command(
@@ -492,6 +510,7 @@ def generate_slurm_script(
     slurm_config: Slurm,
     container_runtime: str,
     server_image: str,
+    workload_override: dict[str, Any] | None = None,
 ) -> Path:
     """Generate a Slurm script for a single model."""
     model_slug = slugify(workload.model_id)
@@ -525,7 +544,7 @@ def generate_slurm_script(
             f"#SBATCH --output=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.out",
             f"#SBATCH --error=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.err",
             "",
-            "set -e",
+            "set -v",
             "",
             "# Ensure required environment variables are set",
             'if [[ -z "$HF_HOME" ]]; then',
@@ -553,6 +572,11 @@ def generate_slurm_script(
         script_lines.append("# Load Singularity")
         script_lines.append("module load singularity || true")
         script_lines.append("")
+
+    # Set CUDA_VISIBLE_DEVICES explicitly, although Slurm usually does this automatically
+    gpu_ids = ",".join(str(i) for i in range(num_gpus))
+    script_lines.append(f"export CUDA_VISIBLE_DEVICES={gpu_ids}")
+    script_lines.append("")
 
     # Pre-compute all sweep combinations
     sweep_combinations = workload.sweep_combinations
@@ -592,9 +616,14 @@ def generate_slurm_script(
     bash_params = {
         "model_id": workload.model_id,
         "gpu_model": gpu_model,
+        "num_gpus": num_gpus,
         "container_runtime": container_runtime,
         "server_image": server_image,
+        **template.workload_defaults,
+        **workload.workload_overrides,
     }
+    if workload_override:
+        bash_params.update(workload_override)
     for param_name in param_names:
         bash_params[param_name] = f"${param_name}"
 
@@ -622,6 +651,7 @@ def generate_slurm_scripts(
     slurm_config: Slurm,
     container_runtime: str,
     server_image: str,
+    workload_override: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate Slurm scripts for all workloads."""
     output_files = []
@@ -640,8 +670,9 @@ def generate_slurm_scripts(
                         slurm_config,
                         container_runtime,
                         server_image,
+                        workload_override,
                     )
-                    print(f"  Generated {output_file}")
+                    print(f"Generated {output_file}")
                     output_files.append(output_file)
 
     return output_files
@@ -685,6 +716,12 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
                     for workload in workloads:
                         workload.sweep_combinations = [override_params]
 
+    # Parse workload override if specified
+    workload_override = None
+    if config.override_workload:
+        workload_override = json.loads(config.override_workload)
+        print(f"Overriding all workload parameters with: {workload_override}")
+
     match config.output:
         case Pegasus():
             output_files = generate_pegasus_queues(
@@ -693,6 +730,7 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
                 config.output,
                 config.container_runtime,
                 config.server_image,
+                workload_override,
             )
         case Slurm():
             output_files = generate_slurm_scripts(
@@ -701,11 +739,25 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
                 config.output,
                 config.container_runtime,
                 config.server_image,
+                workload_override,
             )
         case _:
             raise ValueError("Unsupported output configuration")
 
     print(f"\nGenerated {len(output_files)} output file(s).")
+
+    # Collect unique model IDs for bulk downloading
+    unique_model_ids = set()
+    for dataset_config in filtered_datasets.values():
+        for gpu_workloads in dataset_config.workloads.values():
+            for workloads in gpu_workloads.values():
+                for workload in workloads:
+                    unique_model_ids.add(workload.model_id)
+
+    if unique_model_ids:
+        print(f"\n{len(unique_model_ids)} unique model IDs:")
+        for model_id in sorted(unique_model_ids):
+            print(model_id)
 
 
 if __name__ == "__main__":

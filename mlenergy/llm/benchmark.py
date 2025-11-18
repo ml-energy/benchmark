@@ -39,6 +39,10 @@ if TYPE_CHECKING:
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from mlenergy.llm.datasets import SampleRequest
+from mlenergy.llm.prometheus import (
+    PrometheusCollector,
+    calculate_steady_state_stats,
+)
 from mlenergy.llm.workloads import (
     AudioChat,
     GPQA,
@@ -64,6 +68,7 @@ from mlenergy.utils.container_runtime import (
 )
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+PROMETHEUS_COLLECTOR_INTERVAL_S = 1.0
 
 logger = logging.getLogger("mlenergy.llm.benchmark")
 
@@ -251,6 +256,9 @@ class RequestTracker:
         """Notify that a request has finished."""
         self.num_finished += 1
         if self.num_finished >= self.num_requests - self.max_num_seqs - 1:
+            # Start event is set in case something went wrong and everything finished (with errors)
+            # before the steady state even started. This will unblock the main benchmark function.
+            self.start_event.set()
             self.end_event.set()
         if self.log:
             logger.info(
@@ -370,6 +378,10 @@ async def async_request_openai_completions(
 
                     if chunk != "[DONE]":
                         data = json.loads(chunk)
+                        usage = data.get("usage")
+                        completion_tokens = usage and usage.get("completion_tokens")
+                        if not completion_tokens:
+                            continue
 
                         # NOTE: Some completion API might have a last
                         # usage summary response without a token so we
@@ -384,24 +396,26 @@ async def async_request_openai_completions(
                                 first_chunk_received = True
                                 ttft = time.perf_counter() - st
                                 request_tracker.notify_request_started()
-                                request_tracker.notify_tokens_generated(1)
                                 output.ttft = ttft
+
+                                # Multi-token bundles
+                                inc = completion_tokens - current_completion_tokens
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                # Append zeros for bundled tokens (all tokens in first chunk)
+                                for _ in range(inc):
+                                    output.itl.append(0)
 
                             # Decoding phase
                             else:
-                                usage = data.get("usage")
-                                completion_tokens = usage and usage.get(
-                                    "completion_tokens"
-                                )
                                 output.itl.append(timestamp - most_recent_timestamp)
 
-                                if completion_tokens:
-                                    inc = completion_tokens - current_completion_tokens
-                                    # if inc == 0, below are no-ops
-                                    request_tracker.notify_tokens_generated(inc)
-                                    current_completion_tokens = completion_tokens
-                                    for _ in range(inc - 1):
-                                        output.itl.append(0)
+                                inc = completion_tokens - current_completion_tokens
+                                # if inc == 0, below are no-ops
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                for _ in range(inc - 1):
+                                    output.itl.append(0)
 
                             most_recent_timestamp = timestamp
                             output_text += text or ""
@@ -510,7 +524,7 @@ async def async_request_openai_chat_completions(
                         data = json.loads(chunk)
                         usage = data.get("usage")
                         completion_tokens = usage and usage.get("completion_tokens")
-                        if completion_tokens == 0:
+                        if not completion_tokens:
                             continue
 
                         if choices := data.get("choices"):
@@ -528,20 +542,26 @@ async def async_request_openai_chat_completions(
                             if ttft == 0.0:
                                 ttft = timestamp - st
                                 request_tracker.notify_request_started()
-                                request_tracker.notify_tokens_generated(1)
                                 output.ttft = ttft
+
+                                # Multi-token bundles
+                                inc = completion_tokens - current_completion_tokens
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                # Append zeros for bundled tokens (all tokens in first chunk)
+                                for _ in range(inc):
+                                    output.itl.append(0)
 
                             # Decoding phase
                             else:
                                 output.itl.append(timestamp - most_recent_timestamp)
 
-                                if completion_tokens:
-                                    inc = completion_tokens - current_completion_tokens
-                                    # if inc == 0, below are no-ops
-                                    request_tracker.notify_tokens_generated(inc)
-                                    current_completion_tokens = completion_tokens
-                                    for _ in range(inc - 1):
-                                        output.itl.append(0)
+                                inc = completion_tokens - current_completion_tokens
+                                # if inc == 0, below are no-ops
+                                request_tracker.notify_tokens_generated(inc)
+                                current_completion_tokens = completion_tokens
+                                for _ in range(inc - 1):
+                                    output.itl.append(0)
 
                             if content is not None:
                                 output_text += content
@@ -796,6 +816,15 @@ async def benchmark(
     power_monitor = PowerMonitor(update_period=0.1)
     temperature_monitor = TemperatureMonitor(update_period=0.5)
 
+    # Prometheus metrics collector
+    prometheus_collector = PrometheusCollector(
+        metrics_url=base_url + "/metrics", interval=PROMETHEUS_COLLECTOR_INTERVAL_S
+    )
+    prometheus_stop_event = asyncio.Event()
+    prometheus_task = asyncio.create_task(
+        prometheus_collector.collect(prometheus_stop_event)
+    )
+
     logger.info("Traffic request rate: %f req/s", request_rate)
 
     if request_rate == float("inf"):
@@ -882,7 +911,9 @@ async def benchmark(
     steady_state_token_end = request_tracker.get_num_generated_tokens()
     steady_state_mes = zeus_monitor.end_window("steady_state", sync_execution=False)
     logger.info("Steady state finished.")
-    steady_state_tokens = steady_state_token_end - steady_state_token_begin
+
+    # Prevent division by zero in case there was an error
+    steady_state_tokens = max(steady_state_token_end - steady_state_token_begin, 1)
 
     # Gather the rest of the requests.
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
@@ -893,6 +924,10 @@ async def benchmark(
     entire_mes = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
     benchmark_end_time = time.time()
     benchmark_duration = benchmark_end_time - benchmark_start_time
+
+    # Stop Prometheus collection and get timeline
+    prometheus_stop_event.set()
+    prometheus_timeline = await prometheus_task
 
     power_timeline = power_monitor.get_all_power_timelines(
         start_time=benchmark_start_time,
@@ -967,6 +1002,7 @@ async def benchmark(
             "power": power_timeline,
             "temperature": temperature_timeline,
         },
+        "prometheus_timeline": prometheus_timeline,
     }
 
     def process_one_metric(
@@ -1023,6 +1059,7 @@ async def benchmark(
             "latency": output.latency,
             "ttft": output.ttft,
             "itl": output.itl,
+            "success": output.success,
             "error": output.error,
             "energy": energy,
         }
@@ -1193,6 +1230,15 @@ def main(args: Args) -> None:
     # Optional envs
     vllm_cache_dir = os.environ.get("VLLM_CACHE_DIR", None)
 
+    # Validate num_gpus matches CUDA_VISIBLE_DEVICES
+    actual_num_gpus = len(cuda_visible_devices.split(","))
+    if args.workload.num_gpus != actual_num_gpus:
+        raise ValueError(
+            f"num_gpus parameter ({args.workload.num_gpus}) does not match "
+            f"CUDA_VISIBLE_DEVICES ({actual_num_gpus} GPUs: {cuda_visible_devices})"
+        )
+    logger.info("Number of GPUs: %d", args.workload.num_gpus)
+
     model_id = args.workload.model_id
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
@@ -1351,7 +1397,12 @@ def main(args: Args) -> None:
     result_json["date"] = current_dt
     result_json["endpoint_type"] = args.workload.endpoint_type
     result_json["model_id"] = model_id
+    result_json["seed"] = args.workload.seed
     result_json["num_prompts"] = args.workload.num_requests
+    result_json["gpu_model"] = args.workload.gpu_model
+    result_json["num_gpus"] = args.workload.num_gpus
+    result_json["max_num_seqs"] = args.workload.max_num_seqs
+    result_json["max_num_batched_tokens"] = args.workload.max_num_batched_tokens
 
     # Traffic
     result_json["request_rate"] = (
@@ -1359,6 +1410,12 @@ def main(args: Args) -> None:
     )
     result_json["burstiness"] = args.burstiness
     result_json["max_concurrency"] = args.max_concurrency
+    result_json["max_output_tokens"] = args.max_output_tokens
+
+    # Process and save Prometheus metrics
+    prometheus_timeline = benchmark_result.pop("prometheus_timeline")
+    steady_state_start = benchmark_result["timeline"]["steady_state_start_time"]
+    steady_state_end = benchmark_result["timeline"]["steady_state_end_time"]
 
     # Merge with benchmark result
     result_json = {**result_json, **benchmark_result}
@@ -1366,6 +1423,44 @@ def main(args: Args) -> None:
     # Save to results file
     with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2)
+
+    # Prometheus metrics
+    prometheus_stats = calculate_steady_state_stats(
+        timeline=prometheus_timeline,
+        steady_start=steady_state_start,
+        steady_end=steady_state_end,
+        gauge_metric_names=[
+            "vllm:num_requests_running",
+            "vllm:kv_cache_usage_perc",
+        ],
+        histogram_metric_names=[
+            "vllm:request_prompt_tokens",
+            "vllm:request_generation_tokens",
+            "vllm:request_prefill_time_seconds",
+            "vllm:inter_token_latency_seconds",
+        ],
+    )
+
+    # Prepare Prometheus results
+    prometheus_json = {
+        "collection_interval": PROMETHEUS_COLLECTOR_INTERVAL_S,
+        "steady_state_start_time": steady_state_start,
+        "steady_state_end_time": steady_state_end,
+        "steady_state_stats": prometheus_stats,
+        "timeline": prometheus_timeline,
+    }
+
+    # Save Prometheus metrics to separate file
+    prometheus_file = args.workload.to_path(of="prometheus")
+    with open(prometheus_file, "w", encoding="utf-8") as f:
+        json.dump(prometheus_json, f, indent=2)
+    logger.info("Saved Prometheus metrics to %s", prometheus_file)
+
+    # Print steady state stats to console
+    if prometheus_stats:
+        logger.info("Steady state Prometheus Metrics:")
+        for metric_name, value in prometheus_stats.items():
+            logger.info("%-30s: %.3f", metric_name, value)
 
     # Something failed. Treat the whole run as a failure.
     if benchmark_result["completed"] < args.workload.num_requests:

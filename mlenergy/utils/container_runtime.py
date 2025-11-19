@@ -26,16 +26,17 @@ class CleanupHandle(ABC):
 class DockerCleanupHandle(CleanupHandle):
     """Cleanup handle for Docker containers."""
 
-    def __init__(self, container_name: str) -> None:
+    def __init__(self, container_name: str, docker_cmd: list[str]) -> None:
         """Initialize the cleanup handle."""
         self.container_name = container_name
         self._cleanup_process: subprocess.Popen | None = None
+        self._docker_cmd = docker_cmd
 
     def cleanup(self) -> None:
         """Start cleanup of the container/process (non-blocking)."""
         logger.info(f"Removing Docker container: {self.container_name}")
         self._cleanup_process = subprocess.Popen(
-            ["docker", "rm", "-f", self.container_name],
+            [*self._docker_cmd, "rm", "-f", self.container_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -126,6 +127,14 @@ class ContainerRuntime(ABC):
 class DockerRuntime(ContainerRuntime):
     """Docker container runtime implementation."""
 
+    def __init__(self) -> None:
+        """Initialize the Docker runtime."""
+        try:
+            subprocess.check_call(args=["docker", "ps"])
+            self._docker_cmd = ["docker"]
+        except subprocess.CalledProcessError:
+            self._docker_cmd = ["sudo", "docker"]
+
     def build_run_command(
         self,
         image: str,
@@ -135,7 +144,7 @@ class DockerRuntime(ContainerRuntime):
         bind_mounts: list[tuple[str, str, str]],
         command: list[str],
     ) -> list[str]:
-        cmd = ["docker", "run"]
+        cmd = [*self._docker_cmd, "run"]
 
         # GPU access
         gpu_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
@@ -175,7 +184,7 @@ class DockerRuntime(ContainerRuntime):
     def get_cleanup_handle(
         self, container_name: str, process_handle: subprocess.Popen | None
     ) -> DockerCleanupHandle:
-        return DockerCleanupHandle(container_name)
+        return DockerCleanupHandle(container_name, self._docker_cmd)
 
 
 class SingularityRuntime(ContainerRuntime):

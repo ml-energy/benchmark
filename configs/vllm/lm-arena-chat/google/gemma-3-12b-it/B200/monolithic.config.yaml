@@ -4,3 +4,4 @@ max-model-len: 20480
 dtype: bfloat16
 trust-remote-code: true
 api-server-count: 3
+block-size: 32  # FlashInfer bug

@@ -24,16 +24,6 @@ class BenchmarkTemplate(BaseModel):
 
     command_template: str
     sweep_defaults: list[dict[str, list[Any]]]
-    # Optional: rules to select GPU count and set params per sweep combo
-    # Example:
-    # gpu_selection:
-    #   - where: { batch_size: 1 }
-    #     num_gpus: 1
-    #     set: { ulysses_degree: 1, ring_degree: 1 }
-    #   - where: { batch_size: 4 }
-    #     num_gpus: 8
-    #     set: { ulysses_degree: 4, ring_degree: 2 }
-    gpu_selection: list[dict[str, Any]] | None = None
 
 
 class SweepConfig(BaseModel):
@@ -233,27 +223,6 @@ def compute_sweep_combinations(
     return all_combinations
 
 
-def merge_params_with_gpu_selection(
-    params: dict[str, Any], rules: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Apply gpu_selection rules to params and return merged params with any 'set' values.
-
-    This mirrors the selection used during config scanning so overrides still include
-    required placeholders (e.g., ulysses_degree, ring_degree).
-    """
-    for rule in rules:
-        where = rule.get("where", {}) or {}
-        if all(params.get(k) == v for k, v in where.items()):
-            merged = dict(params)
-            for k, v in (rule.get("set", {}) or {}).items():
-                merged[k] = v
-            # Also include num_gpus in merged for completeness (even if not required)
-            if "num_gpus" in rule:
-                merged["num_gpus"] = int(rule["num_gpus"])
-            return merged
-    raise ValueError(f"No gpu_selection rule matched params: {params}. Please add a default rule.")
-
-
 def load_benchmark_template(dataset_dir: Path) -> BenchmarkTemplate:
     """Load benchmark.yaml template for a dataset."""
     template_file = dataset_dir / "benchmark.yaml"
@@ -284,27 +253,8 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
 
     datasets: dict[str, DatasetConfig] = {}
 
-    def select_gpu_and_update_params(
-        params: dict[str, Any], rules: list[dict[str, Any]]
-    ) -> tuple[int, dict[str, Any]]:
-        """Given params and gpu_selection rules, return (num_gpus, merged_params).
-
-        The first matching rule is applied. A rule matches when all keys in its
-        `where` dict match equal values in params.
-        """
-        for rule in rules:
-            where = rule.get("where", {}) or {}
-            if all(params.get(k) == v for k, v in where.items()):
-                num_gpus = int(rule["num_gpus"])
-                merged = dict(params)
-                for k, v in (rule.get("set", {}) or {}).items():
-                    merged[k] = v
-                return num_gpus, merged
-        raise ValueError(
-            f"No gpu_selection rule matched params: {params}. Please add a default rule."
-        )
-
     for runtime_root in runtime_roots:
+        runtime_name = runtime_root.name
         for dataset_dir in sorted(runtime_root.iterdir()):
             if not dataset_dir.is_dir():
                 continue
@@ -344,16 +294,16 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                                     int(line.strip()) for line in f if line.strip()
                                 ]
                         else:
-                            # When gpu_selection is configured in benchmark.yaml, num_gpus
-                            # is derived from the selection rules, so we can proceed
-                            # without num_gpus.txt. For templates without gpu_selection
-                            # (e.g., vllm), keep the existing behavior and skip.
-                            if template.gpu_selection:
+                            # For xdit/text-to-image we derive num_gpus from
+                            # ulysses_degree * ring_degree instead of num_gpus.txt.
+                            # For all other tasks, keep the existing behavior and skip
+                            # when num_gpus.txt is missing.
+                            if runtime_name == "xdit":
                                 gpu_counts = []
                             else:
                                 print(
                                     f"Warning: {num_gpus_file} not found, skipping "
-                                    f"(no gpu_selection rules in benchmark.yaml)"
+                                    f"(no num_gpus.txt and not xdit/text-to-image)"
                                 )
                                 continue
 
@@ -378,15 +328,24 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                         # Compute all sweep combinations
                         base_combinations = compute_sweep_combinations(sweep_config)
 
-                        # If gpu_selection rules exist, split combinations by per-combo GPU count.
-                        # Otherwise, attach all combinations to each GPU count from num_gpus.txt (vllm behavior).
-                        if template.gpu_selection:
+                        # Attach combinations to GPU counts from num_gpus.txt (vllm behavior),
+                        # or, for xdit/text-to-image, derive num_gpus from ulysses_degree * ring_degree.
+                        # Special case: xdit/text-to-image with degree sweeps.
+                        if runtime_name == "xdit":
                             groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
                             for combo in base_combinations:
-                                num_gpus, merged = select_gpu_and_update_params(
-                                    combo, template.gpu_selection
-                                )
-                                groups[num_gpus].append(merged)
+                                if "ulysses_degree" not in combo or "ring_degree" not in combo:
+                                    raise ValueError(
+                                        "Expected ulysses_degree and ring_degree in sweep "
+                                        "for xdit/text-to-image, but they were not found."
+                                    )
+                                ulysses_degree = int(combo["ulysses_degree"])
+                                ring_degree = int(combo["ring_degree"])
+                                num_gpus = ulysses_degree * ring_degree
+                                combo_with_num = dict(combo)
+                                combo_with_num["num_gpus"] = num_gpus
+                                groups[num_gpus].append(combo_with_num)
+
                             for num_gpus, group_combos in groups.items():
                                 workload = ModelWorkload(
                                     model_id=model_id,
@@ -624,6 +583,33 @@ def generate_slurm_script(
             "",
             "set -e",
             "",
+            "# Change to submission directory",
+            "cd $SLURM_SUBMIT_DIR",
+            "",
+        ]
+    )
+
+    if container_runtime == "singularity":
+        script_lines.append("# Load Singularity")
+        script_lines.append("module load singularity || true")
+        script_lines.append("")
+
+    if "xdit" in workload.config_dir.parts:
+        script_lines.extend(
+            [
+                "# Load Python, CUDA, and GCC",
+                "module load python/3.12.1 && \\",
+                "module load cuda/12.6.3 && \\",
+                "module load gcc",
+                "",
+                "source .venv/bin/activate",
+                "export HF_HOME=/nfs/turbo/coe-SymbioticLab/hfcache",
+                "",
+            ]
+        )
+    
+    script_lines.extend(
+        [
             "# Ensure required environment variables are set",
             'if [[ -z "$HF_HOME" ]]; then',
             '  echo "ERROR: HF_HOME environment variable is not set. Please export HF_HOME before running sbatch." >&2',
@@ -640,16 +626,8 @@ def generate_slurm_script(
             "  exit 1",
             "fi",
             "",
-            "# Change to submission directory",
-            "cd $SLURM_SUBMIT_DIR",
-            "",
         ]
     )
-
-    if container_runtime == "singularity":
-        script_lines.append("# Load Singularity")
-        script_lines.append("module load singularity || true")
-        script_lines.append("")
 
     # Pre-compute all sweep combinations
     sweep_combinations = workload.sweep_combinations
@@ -706,7 +684,10 @@ def generate_slurm_script(
         config_source=f"Slurm: {dataset}/{workload.model_id}/{gpu_model}",
     )
 
-    script_lines.append(f"  {command_str}")
+    # Run command; if it fails (e.g., OOM), log and continue to next combination.
+    script_lines.append(
+        f"  {command_str} || echo 'Combination failed (non-zero exit), continuing to next.' >&2"
+    )
     script_lines.append("done")
 
     with open(output_file, "w") as f:
@@ -780,19 +761,11 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
     if config.override_sweeps:
         override_params = json.loads(config.override_sweeps)
         print(f"Overriding all sweeps with: {override_params}")
-        for dataset, dataset_config in filtered_datasets.items():
-            rules = dataset_config.template.gpu_selection or []
+        for dataset_config in filtered_datasets.values():
             for gpu_workloads in dataset_config.workloads.values():
                 for workloads in gpu_workloads.values():
                     for workload in workloads:
-                        if rules:
-                            try:
-                                merged = merge_params_with_gpu_selection(override_params, rules)
-                            except ValueError as e:
-                                raise ValueError(f"{dataset}: {e}")
-                            workload.sweep_combinations = [merged]
-                        else:
-                            workload.sweep_combinations = [override_params]
+                        workload.sweep_combinations = [override_params]
 
     match config.output:
         case Pegasus():

@@ -1,6 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "mlenergy"
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]
+flash-attn-3 = ["torch"]
 
 [project]
 name = "mlenergy"
@@ -11,16 +19,31 @@ authors = [
     {name = "The ML.ENERGY Initiative"},
 ]
 license = "Apache-2.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "aiohttp>=3.12.14",
     "datasets>=4.0.0",
+    "mistral-common[sentencepiece]>=1.8.2",
     "pillow>=11.3.0",
     "pydantic>=2.11.7",
     "requests>=2.32.4",
     "transformers>=4.53.2",
     "tyro>=0.9.26",
-    "zeus>=0.12.0",
+    "zeus>=0.12.3",
+    "quart>=0.20.0",
+    "msgpack>=1.1.1",
+    "pyzmq>=27.0.0",
+    "pyyaml>=6.0.2",
+    "protobuf>=6.33.0",
+    "opencv-python-headless>=4.11.0.86",
+    "numpy>=2.3.4",
+    "scipy>=1.16.3",
+]
+
+[project.optional-dependencies]
+diffusion = [
+    "diffusers>=0.35.2",
+    "xfuser[flash-attn]==0.4.5",
 ]
 
 [tool.setuptools.packages.find]
@@ -28,6 +51,13 @@ where = ["mlenergy"]
 
 [dependency-groups]
 dev = [
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.3",
     "pyright>=1.1.403",
+    "pytest>=8.4.1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.12.4",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--numprocesses auto"

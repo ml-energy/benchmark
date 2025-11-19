@@ -441,9 +441,9 @@ def main(args: DiffusionArgs) -> None:
         )
         return
 
-    # fix lamdalab segfault error
-    os.environ["NCCL_NET"] = "Socket"
-    os.environ["NCCL_SOCKET_IFNAME"] = "lo"
+    # # fix lamdalab segfault error
+    # os.environ["NCCL_NET"] = "Socket"
+    # os.environ["NCCL_SOCKET_IFNAME"] = "lo"
 
     zeus_monitor = None
     power_monitor = None

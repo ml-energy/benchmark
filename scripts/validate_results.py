@@ -632,25 +632,25 @@ def calc_percentiles(values: list[float]) -> dict[str, float]:
 
 def print_llm_mllm_statistics(validations: list[ValidationResult]):
     """Print aggregate statistics for LLM/MLLM benchmarks."""
-    # Collect metrics from all runs with valid results.json
-    energy_per_token = []
-    energy_per_request = []
-
     # Group by task for comparison
     by_task: dict[str, list[dict]] = defaultdict(list)
 
     for v in validations:
         result_path = Path(v.path)
         results_json = result_path / "results.json"
-
-        if not results_json.exists():
-            continue
+        prometheus_json = result_path / "prometheus.json"
 
         try:
             with open(results_json) as f:
                 data = json.load(f)
         except Exception:
             continue
+
+        try:
+            with open(prometheus_json) as f:
+                prometheus_stats = json.load(f)["steady_state_stats"]
+        except Exception:
+            prometheus_stats = None
 
         # Extract task name from path (e.g., run/llm/lm-arena-chat/... or run/mllm/image-chat/...)
         parts = result_path.parts
@@ -662,13 +662,16 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
 
         # Collect metrics
         energy_tok = data.get("steady_state_energy_per_token")
+        steady_state_duration = data.get("steady_state_duration")
         model_id = data.get("model_id", "unknown")
         gpu_model = data.get("gpu_model", "unknown")
         num_gpus = data.get("num_gpus", 0)
+        median_itl = (
+            prometheus_stats.get("vllm:inter_token_latency_seconds_p50", 0)
+            if prometheus_stats is not None
+            else 0
+        )
         results = data.get("results", [])
-
-        if energy_tok is not None and energy_tok > 0:
-            energy_per_token.append(energy_tok)
 
         # Calculate energy per request = energy_per_token * avg_output_length
         energy_per_req = None
@@ -679,7 +682,6 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
             )
             if avg_output_len > 0:
                 energy_per_req = energy_tok * avg_output_len
-                energy_per_request.append(energy_per_req)
 
         # Store for task comparison
         if task and energy_tok is not None and energy_tok > 0:
@@ -692,6 +694,8 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                     "max_num_seqs": max_num_seqs,
                     "path": str(result_path),
                     "energy_per_token": energy_tok,
+                    "steady_state_duration": steady_state_duration,
+                    "median_itl": median_itl * 1000,
                     "energy_per_request": energy_per_req,
                 }
             )
@@ -707,7 +711,7 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
 
             print(f"\n{task.upper()}:")
             print(
-                f"{'Rank':<6} {'Model':<50} {'GPU':<8} {'#GPUs':<7} {'MaxSeqs':<9} {'J/token':<12} {'J/request':<12}"
+                f"{'Rank':<6} {'Model':<50} {'GPU':<8} {'#GPUs':<7} {'MaxSeqs':<9} {'J/token':<12} {'Steady (s)':<10} {'P50 ITL (ms)':<12} {'J/request':<12}"
             )
             print("-" * 94)
 
@@ -720,11 +724,13 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 ngpus = run["num_gpus"]
                 max_seqs = run["max_num_seqs"]
                 e_tok = run["energy_per_token"]
+                steady_state_duration = run["steady_state_duration"]
+                median_itl = run["median_itl"]
                 e_req = run["energy_per_request"]
                 max_seqs_str = str(max_seqs) if max_seqs is not None else "N/A"
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
                 print(
-                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {e_req_str:<12}"
+                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {steady_state_duration:<10} {median_itl:<12.1f} {e_req_str:<12}"
                 )
 
 

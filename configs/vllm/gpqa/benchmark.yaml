@@ -14,7 +14,11 @@ command_template: |
 workload_defaults:
   max_output_tokens: 32768
   run_dir: run
-  num_requests: 198
 
 sweep_defaults:
-  - max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256, 384, 512]
+  - num_requests: [198]
+    max_num_seqs: [8, 16, 32, 64, 96, 128]
+  - num_requests: [396]
+    max_num_seqs: [192, 256]
+  - num_requests: [594]
+    max_num_seqs: [384, 512]

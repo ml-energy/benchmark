@@ -31,6 +31,8 @@ from pydantic import BaseModel
 from transformers.models.t5 import T5EncoderModel
 from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.show_env import show_env
+import math
+import functools
 
 from xfuser import (
     xFuserArgs,
@@ -51,6 +53,10 @@ from xfuser.core.distributed import (
     get_data_parallel_world_size,
     get_runtime_state,
     is_dp_last_group,
+    get_sp_group,
+    get_sequence_parallel_world_size,
+    get_sequence_parallel_rank,
+    initialize_runtime_state,
 )
 from diffusers.utils import export_to_video
 from diffusers import AutoencoderKLTemporalDecoder
@@ -58,6 +64,9 @@ from diffusers.pipelines.consisid.consisid_utils import (
     prepare_face_models,
     process_face_embeddings_infer,
 )
+from diffusers import WanPipeline, WanImageToVideoPipeline
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from xfuser.model_executor.models.transformers.transformer_wan import xFuserWanAttnProcessor
 
 from mlenergy.diffusion.dataset import DiffusionRequest
 from mlenergy.diffusion.workloads import (
@@ -114,6 +123,17 @@ PIPELINE_CONFIGS = {
     },
     "maxin-cn/Latte-1": {
         "pipeline_class": xFuserLattePipeline,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
+    # Wan 2.1 uses diffusers pipeline directly with xFuser runtime integration
+    "Wan-AI/Wan2.1-T2V-14B-Diffusers": {
+        "pipeline_class": None,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": {
+        "pipeline_class": None,
         "needs_t5": False,
         "dtype": torch.bfloat16,
     },
@@ -193,8 +213,198 @@ def get_model_type_from_id(model_id: str) -> str:
         return "ConsisID"
     elif "Latte" in model_id or "latte" in model_id:
         return "Latte"
+    elif "Wan" in model_id:
+        return "Wan"
     else:
         return "Unknown"
+
+
+def _parallelize_wan_transformer(pipe: Any) -> None:
+    """Patch Wan pipeline transformer for sequence-parallel attention using xFuserWanAttnProcessor."""
+    transformer = pipe.transformer
+    transformer_2 = getattr(pipe, "transformer_2", None)
+
+    def maybe_transformer_2(t2):
+        if t2 is not None:
+            return functools.wraps(t2.__class__.forward)
+        else:
+            return (lambda f: f)
+
+    @functools.wraps(transformer.__class__.forward)
+    @maybe_transformer_2(transformer_2)
+    def new_forward(
+        self,
+        hidden_states,
+        timestep,
+        encoder_hidden_states,
+        encoder_hidden_states_image=None,
+        return_dict=True,
+        attention_kwargs=None,
+    ):
+        if attention_kwargs is not None:
+            attention_kwargs = attention_kwargs.copy()
+            _ = attention_kwargs.pop("scale", 1.0)  # lora scale, unused
+
+        batch_size, num_channels, num_frames, height, width = hidden_states.shape
+        p_t, p_h, p_w = self.config.patch_size
+        post_patch_num_frames = num_frames // p_t
+        post_patch_height = height // p_h
+        post_patch_width = width // p_w
+
+        rotary_emb = self.rope(hidden_states)
+
+        hidden_states = self.patch_embedding(hidden_states)
+        hidden_states = hidden_states.flatten(2).transpose(1, 2)
+
+        # timestep shape: batch_size, or batch_size, seq_len (wan 2.2 ti2v)
+        if timestep.ndim == 2:
+            ts_seq_len = timestep.shape[1]
+            timestep = timestep.flatten()  # batch_size * seq_len
+        else:
+            ts_seq_len = None
+
+        temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
+            timestep, encoder_hidden_states, encoder_hidden_states_image, timestep_seq_len=ts_seq_len
+        )
+        if ts_seq_len is not None:
+            timestep_proj = timestep_proj.unflatten(2, (6, -1))  # batch_size, seq_len, 6, inner_dim
+        else:
+            timestep_proj = timestep_proj.unflatten(1, (6, -1))  # batch_size, 6, inner_dim
+
+        if encoder_hidden_states_image is not None:
+            # Wan2.1: when doing cross attention with image embeddings
+            encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
+        else:
+            # Chunk EHS across sequence-parallel groups
+            encoder_hidden_states = torch.chunk(
+                encoder_hidden_states, get_sequence_parallel_world_size(), dim=-2
+            )[get_sequence_parallel_rank()]
+
+        # Sequence-parallel: pad to multiple of sp world size before chunking
+        max_chunked_sequence_length = int(math.ceil(hidden_states.shape[1] / get_sequence_parallel_world_size())) * get_sequence_parallel_world_size()
+        sequence_pad_amount = max_chunked_sequence_length - hidden_states.shape[1]
+        hidden_states = torch.cat(
+            [
+                hidden_states,
+                torch.zeros(
+                    batch_size,
+                    sequence_pad_amount,
+                    hidden_states.shape[2],
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                ),
+            ],
+            dim=1,
+        )
+        hidden_states = torch.chunk(hidden_states, get_sequence_parallel_world_size(), dim=-2)[
+            get_sequence_parallel_rank()
+        ]
+
+        if ts_seq_len is not None:
+            temb = torch.cat(
+                [
+                    temb,
+                    torch.zeros(
+                        batch_size,
+                        sequence_pad_amount,
+                        temb.shape[2],
+                        device=temb.device,
+                        dtype=temb.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+            timestep_proj = torch.cat(
+                [
+                    timestep_proj,
+                    torch.zeros(
+                        batch_size,
+                        sequence_pad_amount,
+                        timestep_proj.shape[2],
+                        timestep_proj.shape[3],
+                        device=timestep_proj.device,
+                        dtype=timestep_proj.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+            temb = torch.chunk(temb, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
+            timestep_proj = torch.chunk(timestep_proj, get_sequence_parallel_world_size(), dim=1)[
+                get_sequence_parallel_rank()
+            ]
+
+        freqs_cos, freqs_sin = rotary_emb
+
+        def get_rotary_emb_chunk(freqs, sequence_pad_amount):
+            freqs = torch.cat(
+                [
+                    freqs,
+                    torch.zeros(
+                        1, sequence_pad_amount, freqs.shape[2], freqs.shape[3], device=freqs.device, dtype=freqs.dtype
+                    ),
+                ],
+                dim=1,
+            )
+            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
+            return freqs
+
+        freqs_cos = get_rotary_emb_chunk(freqs_cos, sequence_pad_amount)
+        freqs_sin = get_rotary_emb_chunk(freqs_sin, sequence_pad_amount)
+        rotary_emb = (freqs_cos, freqs_sin)
+
+        # Transformer blocks
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            for block in self.blocks:
+                hidden_states = self._gradient_checkpointing_func(
+                    block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                )
+        else:
+            for block in self.blocks:
+                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+
+        # Output norm, projection & unpatchify
+        if temb.ndim == 3:
+            # batch_size, seq_len, inner_dim (wan 2.2 ti2v)
+            shift, scale = (self.scale_shift_table.unsqueeze(0).to(temb.device) + temb.unsqueeze(2)).chunk(2, dim=2)
+            shift = shift.squeeze(2)
+            scale = scale.squeeze(2)
+        else:
+            # batch_size, inner_dim
+            shift, scale = (self.scale_shift_table.to(temb.device) + temb.unsqueeze(1)).chunk(2, dim=1)
+
+        shift = shift.to(hidden_states.device)
+        scale = scale.to(hidden_states.device)
+
+        hidden_states = (self.norm_out(hidden_states.float()) * (1 + scale) + shift).type_as(hidden_states)
+        hidden_states = self.proj_out(hidden_states)
+
+        hidden_states = get_sp_group().all_gather(hidden_states, dim=-2)
+
+        # Remove padding and reshape
+        hidden_states = hidden_states[:, : math.prod([post_patch_num_frames, post_patch_height, post_patch_width]), :]
+        hidden_states = hidden_states.reshape(
+            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
+        )
+        hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
+        output = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+
+        if not return_dict:
+            return (output,)
+
+        return Transformer2DModelOutput(sample=output)
+
+    new_forward_1 = new_forward.__get__(transformer)
+    transformer.forward = new_forward_1
+    for block in transformer.blocks:
+        block.attn1.processor = xFuserWanAttnProcessor()
+        block.attn2.processor = xFuserWanAttnProcessor()
+
+    if transformer_2 is not None:
+        new_forward_2 = new_forward.__get__(transformer_2)
+        transformer_2.forward = new_forward_2
+        for block in transformer_2.blocks:
+            block.attn1.processor = xFuserWanAttnProcessor()
+            block.attn2.processor = xFuserWanAttnProcessor()
 
 
 def ensure_model_downloaded(model_id: str, cache_dir: str | None = None) -> str:
@@ -286,10 +496,20 @@ def setup_pipeline(
     # Add cache args for models that support it
     if get_model_type_from_id(model_id) == "Flux":
         pipeline_kwargs["cache_args"] = cache_args
-    
-    pipe = config["pipeline_class"].from_pretrained(**pipeline_kwargs)
 
-    pipe = pipe.to(f"cuda:{local_rank}")
+    # WAN: use diffusers pipeline with xFuser runtime integration
+    if get_model_type_from_id(model_id) == "Wan":
+        pipe = WanPipeline.from_pretrained(
+            pretrained_model_name_or_path=model_id,
+            torch_dtype=config["dtype"],
+        )
+        pipe.scheduler.config.flow_shift = 12
+        initialize_runtime_state(pipe, engine_config)
+        _parallelize_wan_transformer(pipe)
+        pipe = pipe.to(f"cuda:{local_rank}")
+    else:
+        pipe = config["pipeline_class"].from_pretrained(**pipeline_kwargs)
+        pipe = pipe.to(f"cuda:{local_rank}")
 
     # Attach VAE temporal decoder for Latte video pipeline
     if model_type == "Latte":
@@ -541,7 +761,7 @@ def main(args: DiffusionArgs) -> None:
     # Prepare/warmup pipeline
     model_type = get_model_type_from_id(args.workload.model_id)
     dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
-    if model_type == "CogVideo" or model_type == "Latte":
+    if model_type == "CogVideo" or model_type == "Latte" or model_type == "Wan":
         logger.info(f"Warming up pipeline with 1-step inference")
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup

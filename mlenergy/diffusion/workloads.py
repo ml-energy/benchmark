@@ -88,7 +88,29 @@ MODEL_CONFIGS = {
         "num_frames": 16,
         "fps": 8,
     },
-
+    # https://huggingface.co/tencent/HunyuanVideo
+    "tencent/HunyuanVideo": {
+        "inference_steps": 50,
+        "height": 720,
+        "width": 1280,
+        "num_frames": 129,
+        "fps": 15,
+    },
+    # https://huggingface.co/Wan-AI/Wan2.1-T2V-14B-Diffusers
+    "Wan-AI/Wan2.1-T2V-14B-Diffusers": {
+        "inference_steps": 50,
+        "height": 480,
+        "width": 832,
+        "num_frames": 81,
+        "fps": 15,
+    },
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": {
+        "inference_steps": 50,
+        "height": 480,
+        "width": 832,
+        "num_frames": 81,
+        "fps": 15,
+    },
 }
 
 

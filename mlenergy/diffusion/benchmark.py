@@ -39,6 +39,7 @@ from xfuser import (
     xFuserStableDiffusion3Pipeline,
     xFuserHunyuanDiTPipeline,
     xFuserSanaPipeline,
+    xFuserLattePipeline,
 )
 from xfuser import (
     xFuserCogVideoXPipeline,
@@ -52,6 +53,7 @@ from xfuser.core.distributed import (
     is_dp_last_group,
 )
 from diffusers.utils import export_to_video
+from diffusers import AutoencoderKLTemporalDecoder
 from diffusers.pipelines.consisid.consisid_utils import (
     prepare_face_models,
     process_face_embeddings_infer,
@@ -110,6 +112,11 @@ PIPELINE_CONFIGS = {
         "needs_t5": False,
         "dtype": torch.bfloat16,
     },
+    "maxin-cn/Latte-1": {
+        "pipeline_class": xFuserLattePipeline,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
 }
 
 
@@ -156,7 +163,7 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
-    warmup_iters: int = 0
+    warmup_iters: int = 1
     benchmark_iters: int = 1
 
     # Results configuration
@@ -184,6 +191,8 @@ def get_model_type_from_id(model_id: str) -> str:
         return "CogVideo"
     elif "ConsisID" in model_id or "ConsisID-preview" in model_id:
         return "ConsisID"
+    elif "Latte" in model_id or "latte" in model_id:
+        return "Latte"
     else:
         return "Unknown"
 
@@ -215,6 +224,7 @@ def setup_pipeline(
         raise ValueError(f"Unsupported model_id: {model_id}")
     
     config = PIPELINE_CONFIGS[model_id]
+    model_type = get_model_type_from_id(model_id)
 
     hf_cache_dir = os.environ.get("HF_HOME", None)
     local_model_dir = None
@@ -281,6 +291,15 @@ def setup_pipeline(
 
     pipe = pipe.to(f"cuda:{local_rank}")
 
+    # Attach VAE temporal decoder for Latte video pipeline
+    if model_type == "Latte":
+        vae = AutoencoderKLTemporalDecoder.from_pretrained(
+            model_id,
+            subfolder="vae_temporal_decoder",
+            torch_dtype=config["dtype"],
+        ).to(f"cuda:{local_rank}")
+        pipe.vae = vae
+
     return pipe
 
 
@@ -289,6 +308,7 @@ def get_inference_kwargs(
     args: DiffusionArgs,
 ) -> Any:
     # will use the default max_sequence_length and guidance_scale for each model
+    model_type = get_model_type_from_id(args.workload.model_id)
     inference_kwargs = {
         "prompt": request.prompts,
         "height": args.workload.height,
@@ -300,7 +320,10 @@ def get_inference_kwargs(
     
     # Add video parameters
     if hasattr(args.workload, 'num_frames'):
-        inference_kwargs["num_frames"] = args.workload.num_frames
+        if model_type == "Latte":
+            inference_kwargs["video_length"] = args.workload.num_frames
+        else:
+            inference_kwargs["num_frames"] = args.workload.num_frames
     # if hasattr(args.workload, 'fps'):
     #     inference_kwargs["fps"] = args.workload.fps
     
@@ -517,11 +540,17 @@ def main(args: DiffusionArgs) -> None:
 
     # Prepare/warmup pipeline
     model_type = get_model_type_from_id(args.workload.model_id)
-    if model_type == "CogVideo":
-        logger.info(f"Warming up CogVideoX pipeline with 1-step inference")
+    dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
+    if model_type == "CogVideo" or model_type == "Latte":
+        logger.info(f"Warming up pipeline with 1-step inference")
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup
-        _ = pipe(**warmup_kwargs)
+        if model_type == "Latte":
+            # Ensure inputs and weights run under fp16 autocast to avoid dtype mismatches
+            with torch.autocast(device_type="cuda", dtype=dtype):
+                _ = pipe(**warmup_kwargs)
+        else:
+            _ = pipe(**warmup_kwargs)
     elif model_type == "ConsisID":
         logger.info("ConsisID detected: skipping prepare_run; will warm up via forward call.")
     else:
@@ -530,7 +559,8 @@ def main(args: DiffusionArgs) -> None:
 
     # Warmup iterations with different requests
     logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")
-    output_dir = args.workload.to_path(of="media_outputs")
+    output_kind = "video_outputs" if getattr(args.workload, "num_frames", None) else "image_outputs"
+    output_dir = args.workload.to_path(of=output_kind)
     
     # Prepare face models once for ConsisID
     consisid_face_models = None
@@ -538,7 +568,7 @@ def main(args: DiffusionArgs) -> None:
     if model_type == "ConsisID":
         device = torch.device(f"cuda:{local_rank}")
         model_root = getattr(engine_config.model_config, "model", args.workload.model_id)
-        consisid_face_models = prepare_face_models(model_root, device=device, dtype=torch.bfloat16)
+        consisid_face_models = prepare_face_models(model_root, device=device, dtype=dtype)
         # Precompute face embeddings once and reuse across all iterations
         (
             face_helper_1,
@@ -557,7 +587,7 @@ def main(args: DiffusionArgs) -> None:
             eva_transform_std,
             face_main_model,
             device,
-            torch.bfloat16,
+            dtype,
             img_file_path,
             is_align_face=True,
         )
@@ -581,7 +611,11 @@ def main(args: DiffusionArgs) -> None:
             warmup_output = pipe(**warmup_kwargs)
         else:
             warmup_kwargs = get_inference_kwargs(warmup_request, args)
-            warmup_output = pipe(**warmup_kwargs)
+            if model_type == "Latte":
+                with torch.autocast(device_type="cuda", dtype=dtype):
+                    warmup_output = pipe(**warmup_kwargs)
+            else:
+                warmup_output = pipe(**warmup_kwargs)
 
     # Benchmark iterations with different requests
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
@@ -615,7 +649,11 @@ def main(args: DiffusionArgs) -> None:
         logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
         if zeus_monitor:
             zeus_monitor.begin_window("iteration")
-        benchmark_output = pipe(**benchmark_kwargs)
+        if model_type == "Latte":
+            with torch.autocast(device_type="cuda", dtype=dtype):
+                benchmark_output = pipe(**benchmark_kwargs)
+        else:
+            benchmark_output = pipe(**benchmark_kwargs)
         if zeus_monitor:
             iter_energy_results.append(zeus_monitor.end_window("iteration"))
 

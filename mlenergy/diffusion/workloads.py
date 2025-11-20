@@ -167,7 +167,7 @@ class DiffusionWorkloadConfig(BaseModel):
     def to_path(
         self,
         of: Literal[
-            "requests", "results", "driver_log", "server_log", "image_outputs"
+            "requests", "results", "driver_log", "server_log", "image_outputs", "video_outputs"
         ],
     ) -> Path:
         """Generate a file path based on file type and workload parameters.
@@ -178,6 +178,7 @@ class DiffusionWorkloadConfig(BaseModel):
         - driver_log: Path to the file where logging outputs from the driver are saved.
         - server_log: Path to the file where logging outputs from the server are saved.
         - image_outputs: Path to the directory where generated images are saved.
+        - video_outputs: Path to the directory where generated videos are saved.
         """
         dir = self.base_dir / "+".join(self.to_filename_parts())
 
@@ -192,6 +193,8 @@ class DiffusionWorkloadConfig(BaseModel):
                 append = "server_log.txt"
             case "image_outputs":
                 append = "image_outputs"
+            case "video_outputs":
+                append = "video_outputs"
             case _:
                 raise ValueError(f"Unknown path type: {of}")
 

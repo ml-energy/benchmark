@@ -34,7 +34,7 @@ MODEL_CONFIGS = {
     },
     # https://huggingface.co/docs/diffusers/en/api/pipelines/pixart_sigma
     "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS": {
-        "inference_steps": 100,
+        "inference_steps": 20,
         "height": 1024,
         "width": 1024,
         "num_frames": None,
@@ -70,6 +70,22 @@ MODEL_CONFIGS = {
         "height": 768,
         "width": 1360,
         "num_frames": 81,
+        "fps": 8,
+    },
+    # https://huggingface.co/BestWishYsh/ConsisID-preview
+    "BestWishYsh/ConsisID-preview": {
+        "inference_steps": 50,
+        "height": 480, # Some SP degree may fail because not divisible
+        "width": 720,
+        "num_frames": 49,
+        "fps": 8,
+    },
+    # https://huggingface.co/docs/diffusers/main/en/api/pipelines/latte
+    "maxin-cn/Latte-1": {
+        "inference_steps": 50,
+        "height": 512,
+        "width": 512,
+        "num_frames": 16,
         "fps": 8,
     },
 
@@ -299,6 +315,9 @@ class TextToVideo(DiffusionWorkloadConfig):
     # Video-specific parameters - will use model-specific defaults if not specified
     num_frames: Optional[int] = None
     fps: Optional[int] = None
+
+    # For ConsisID, provide a URL or local path to reference face image
+    img_file_path: Optional[str] = "https://github.com/PKU-YuanGroup/ConsisID/blob/main/asserts/example_images/2.png?raw=true"
     
     @model_validator(mode="after")
     def _validate_video_workload(self) -> Self:

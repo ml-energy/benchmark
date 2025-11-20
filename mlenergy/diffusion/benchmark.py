@@ -42,6 +42,7 @@ from xfuser import (
 )
 from xfuser import (
     xFuserCogVideoXPipeline,
+    xFuserConsisIDPipeline,
 )
 from xfuser.core.distributed import (
     get_world_group,
@@ -51,6 +52,10 @@ from xfuser.core.distributed import (
     is_dp_last_group,
 )
 from diffusers.utils import export_to_video
+from diffusers.pipelines.consisid.consisid_utils import (
+    prepare_face_models,
+    process_face_embeddings_infer,
+)
 
 from mlenergy.diffusion.dataset import DiffusionRequest
 from mlenergy.diffusion.workloads import (
@@ -99,6 +104,12 @@ PIPELINE_CONFIGS = {
         "needs_t5": False,  # CogVideoX uses built-in text encoder, not T5
         "dtype": torch.bfloat16,
     },
+    # ConsisID official repo id; also support local directories detected dynamically
+    "BestWishYsh/ConsisID-preview": {
+        "pipeline_class": xFuserConsisIDPipeline,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
 }
 
 
@@ -145,8 +156,8 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
-    warmup_iters: int = 2
-    benchmark_iters: int = 4
+    warmup_iters: int = 0
+    benchmark_iters: int = 1
 
     # Results configuration
     overwrite_results: bool = False
@@ -171,6 +182,8 @@ def get_model_type_from_id(model_id: str) -> str:
         return "Sana"
     elif "CogVideo" in model_id:
         return "CogVideo"
+    elif "ConsisID" in model_id or "ConsisID-preview" in model_id:
+        return "ConsisID"
     else:
         return "Unknown"
 
@@ -204,10 +217,25 @@ def setup_pipeline(
     config = PIPELINE_CONFIGS[model_id]
 
     hf_cache_dir = os.environ.get("HF_HOME", None)
+    local_model_dir = None
     if local_rank == 0:
-        ensure_model_downloaded(model_id, hf_cache_dir)
+        local_model_dir = ensure_model_downloaded(model_id, hf_cache_dir)
     if torch.distributed.is_initialized():
         torch.distributed.barrier(device_ids=[local_rank])
+    
+    # For ConsisID, use a local directory path for both pipeline and face model utils
+    if get_model_type_from_id(model_id) == "ConsisID":
+        if local_model_dir is None:
+            local_model_dir = ensure_model_downloaded(model_id, hf_cache_dir)
+        engine_config.model_config.model = local_model_dir
+        model_id = local_model_dir
+
+    # For ConsisID, use a local directory path for both pipeline and face model utils
+    if get_model_type_from_id(model_id) == "ConsisID" and local_model_dir is not None:
+        if local_model_dir is None:
+            local_model_dir = ensure_model_downloaded(model_id, hf_cache_dir)
+        engine_config.model_config.model = local_model_dir
+        model_id = local_model_dir
 
     cache_args = {
         "use_teacache": False,
@@ -494,19 +522,66 @@ def main(args: DiffusionArgs) -> None:
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup
         _ = pipe(**warmup_kwargs)
+    elif model_type == "ConsisID":
+        logger.info("ConsisID detected: skipping prepare_run; will warm up via forward call.")
     else:
         logger.info(f"Preparing xFuser pipeline with prepare_run")
         pipe.prepare_run(input_config, steps=args.workload.inference_steps)
 
     # Warmup iterations with different requests
     logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")
-    output_dir = args.workload.to_path(of="image_outputs")
+    output_dir = args.workload.to_path(of="media_outputs")
+    
+    # Prepare face models once for ConsisID
+    consisid_face_models = None
+    consisid_face_inputs = None
+    if model_type == "ConsisID":
+        device = torch.device(f"cuda:{local_rank}")
+        model_root = getattr(engine_config.model_config, "model", args.workload.model_id)
+        consisid_face_models = prepare_face_models(model_root, device=device, dtype=torch.bfloat16)
+        # Precompute face embeddings once and reuse across all iterations
+        (
+            face_helper_1,
+            face_helper_2,
+            face_clip_model,
+            face_main_model,
+            eva_transform_mean,
+            eva_transform_std,
+        ) = consisid_face_models
+        img_file_path = getattr(args.workload, "img_file_path", None)
+        consisid_face_inputs = process_face_embeddings_infer(
+            face_helper_1,
+            face_clip_model,
+            face_helper_2,
+            eva_transform_mean,
+            eva_transform_std,
+            face_main_model,
+            device,
+            torch.bfloat16,
+            img_file_path,
+            is_align_face=True,
+        )
     
     for i in range(args.warmup_iters):
         logger.info(f"Warmup iteration {i+1}/{args.warmup_iters}")
         warmup_request = requests[i]
-        warmup_kwargs = get_inference_kwargs(warmup_request, args)
-        warmup_output = pipe(**warmup_kwargs)
+        if model_type == "ConsisID":
+            # Reuse precomputed ConsisID-specific inputs
+            (id_cond, id_vit_hidden, image, face_kps) = consisid_face_inputs
+            warmup_kwargs = get_inference_kwargs(warmup_request, args)
+            warmup_kwargs.update(
+                {
+                    "image": image,
+                    "id_vit_hidden": id_vit_hidden,
+                    "id_cond": id_cond,
+                    "kps_cond": face_kps,
+                    "use_dynamic_cfg": False,
+                }
+            )
+            warmup_output = pipe(**warmup_kwargs)
+        else:
+            warmup_kwargs = get_inference_kwargs(warmup_request, args)
+            warmup_output = pipe(**warmup_kwargs)
 
     # Benchmark iterations with different requests
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
@@ -521,7 +596,21 @@ def main(args: DiffusionArgs) -> None:
     for i in range(args.benchmark_iters):
         request_idx = args.warmup_iters + i
         benchmark_request = requests[request_idx]
-        benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
+        if model_type == "ConsisID":
+            # Reuse precomputed ConsisID-specific inputs
+            (id_cond, id_vit_hidden, image, face_kps) = consisid_face_inputs
+            benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
+            benchmark_kwargs.update(
+                {
+                    "image": image,
+                    "id_vit_hidden": id_vit_hidden,
+                    "id_cond": id_cond,
+                    "kps_cond": face_kps,
+                    "use_dynamic_cfg": False,
+                }
+            )
+        else:
+            benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
         
         logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
         if zeus_monitor:

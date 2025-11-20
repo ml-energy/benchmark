@@ -282,6 +282,11 @@ class DiffusionWorkloadConfig(BaseModel):
                 requests = [DiffusionRequest(**req_data) for req_data in data]
             else:
                 requests = [DiffusionRequest(**data)]
+            # Ensure model-specific requests.json is also written for this run
+            if local_rank == 0 and not model_request_path.exists():
+                with open(model_request_path, 'w', encoding='utf-8') as f:
+                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved {len(requests)} requests to {model_request_path}")
             return requests
         if model_request_path.exists():
             logger.info(f"Loading cached requests from {model_request_path}")

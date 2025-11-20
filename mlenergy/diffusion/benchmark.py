@@ -33,6 +33,7 @@ from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.show_env import show_env
 import math
 import functools
+from typing import Optional, Dict, Union
 
 from xfuser import (
     xFuserArgs,
@@ -57,6 +58,10 @@ from xfuser.core.distributed import (
     get_sequence_parallel_world_size,
     get_sequence_parallel_rank,
     initialize_runtime_state,
+    get_classifier_free_guidance_world_size,
+    get_classifier_free_guidance_rank,
+    get_cfg_group,
+    get_pipeline_parallel_world_size,
 )
 from diffusers.utils import export_to_video
 from diffusers import AutoencoderKLTemporalDecoder
@@ -67,6 +72,8 @@ from diffusers.pipelines.consisid.consisid_utils import (
 from diffusers import WanPipeline, WanImageToVideoPipeline
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from xfuser.model_executor.models.transformers.transformer_wan import xFuserWanAttnProcessor
+from diffusers import HunyuanVideoPipeline, HunyuanVideoTransformer3DModel
+from diffusers.utils import scale_lora_layers, unscale_lora_layers, USE_PEFT_BACKEND
 
 from mlenergy.diffusion.dataset import DiffusionRequest
 from mlenergy.diffusion.workloads import (
@@ -137,37 +144,13 @@ PIPELINE_CONFIGS = {
         "needs_t5": False,
         "dtype": torch.bfloat16,
     },
+    # HunyuanVideo uses diffusers pipeline with xFuser runtime integration
+    "tencent/HunyuanVideo": {
+        "pipeline_class": None,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,  # follow official example
+    },
 }
-
-
-def _apply_runtime_hotfixes() -> None:
-    """Apply small runtime hotfixes for upstream API changes.
-
-    - Forces diffusers' get_2d_rotary_pos_embed to return torch tensors by
-      overriding the reference used inside xFuser's HunyuanDiT pipeline, avoiding
-      the deprecation error when output_type == 'np' on diffusers >= 0.33.0.
-    """
-    try:
-        # Patch the local reference used by xFuser's HunyuanDiT wrapper module
-        import xfuser.model_executor.pipelines.pipeline_hunyuandit as xf_hun
-        from diffusers.models import embeddings as diff_embeddings
-
-        orig_fn = diff_embeddings.get_2d_rotary_pos_embed
-
-        def _patched_get_2d_rotary_pos_embed(*args, **kwargs):
-            # Ensure modern API path without triggering deprecated numpy return
-            if kwargs.get("output_type") != "pt":
-                kwargs["output_type"] = "pt"
-            result = orig_fn(*args, **kwargs)
-            # Guarantee torch tensors (tuple or single)
-            if isinstance(result, tuple):
-                return tuple(x if torch.is_tensor(x) else torch.as_tensor(x) for x in result)
-            return result if torch.is_tensor(result) else torch.as_tensor(result)
-
-        xf_hun.get_2d_rotary_pos_embed = _patched_get_2d_rotary_pos_embed
-        logger.info("Applied rotary-pos-embed hotfix: forcing output_type='pt'.")
-    except Exception as e:
-        logger.warning("Failed to apply rotary-pos-embed hotfix: %s", e)
 
 
 class DiffusionArgs(BaseModel, Generic[WorkloadT]):
@@ -183,8 +166,8 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     # Workload configuration
     workload: WorkloadT
-    warmup_iters: int = 1
-    benchmark_iters: int = 1
+    warmup_iters: int = 2
+    benchmark_iters: int = 4
 
     # Results configuration
     overwrite_results: bool = False
@@ -215,6 +198,8 @@ def get_model_type_from_id(model_id: str) -> str:
         return "Latte"
     elif "Wan" in model_id:
         return "Wan"
+    elif "HunyuanVideo" in model_id:
+        return "HunyuanVideo"
     else:
         return "Unknown"
 
@@ -407,6 +392,164 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
             block.attn2.processor = xFuserWanAttnProcessor()
 
 
+def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
+    """Patch HunyuanVideo transformer for USP+SP parallel with xFuser attention processor."""
+    transformer = pipe.transformer
+
+    @functools.wraps(transformer.__class__.forward)
+    def new_forward(
+        self,
+        hidden_states: torch.Tensor,
+        timestep: torch.LongTensor,
+        encoder_hidden_states: torch.Tensor,
+        encoder_attention_mask: torch.Tensor,
+        pooled_projections: torch.Tensor,
+        guidance: torch.Tensor = None,
+        attention_kwargs: Optional[Dict[str, Any]] = None,
+        return_dict: bool = True,
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        if attention_kwargs is not None:
+            attention_kwargs = attention_kwargs.copy()
+            lora_scale = attention_kwargs.pop("scale", 1.0)
+        else:
+            lora_scale = 1.0
+
+        if USE_PEFT_BACKEND:
+            scale_lora_layers(self, lora_scale)
+        else:
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logging.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
+
+        batch_size, num_channels, num_frames, height, width = hidden_states.shape
+
+        assert batch_size % get_classifier_free_guidance_world_size() == 0, (
+            f"Cannot split dim 0 of hidden_states ({batch_size}) into "
+            f"{get_classifier_free_guidance_world_size()} parts."
+        )
+
+        p, p_t = self.config.patch_size, self.config.patch_size_t
+        post_patch_num_frames = num_frames // p_t
+        post_patch_height = height // p
+        post_patch_width = width // p
+
+        # 1. RoPE
+        image_rotary_emb = self.rope(hidden_states)
+
+        # 2. Conditional embeddings
+        temb, _ = self.time_text_embed(timestep=timestep, pooled_projection=pooled_projections, guidance=guidance)
+        hidden_states = self.x_embedder(hidden_states)
+        encoder_hidden_states = self.context_embedder(encoder_hidden_states, timestep, encoder_attention_mask)
+
+        hidden_states = hidden_states.reshape(batch_size, post_patch_num_frames, post_patch_height, post_patch_width, -1)
+        hidden_states = hidden_states.flatten(1, 3)
+
+        hidden_states = torch.chunk(hidden_states, get_classifier_free_guidance_world_size(), dim=0)[
+            get_classifier_free_guidance_rank()
+        ]
+        hidden_states = torch.chunk(hidden_states, get_sequence_parallel_world_size(), dim=-2)[
+            get_sequence_parallel_rank()
+        ]
+
+        encoder_attention_mask = encoder_attention_mask.to(torch.bool).any(dim=0)
+        encoder_hidden_states = encoder_hidden_states[:, encoder_attention_mask, :]
+        if encoder_hidden_states.shape[-2] % get_sequence_parallel_world_size() != 0:
+            get_runtime_state().split_text_embed_in_sp = False
+        else:
+            get_runtime_state().split_text_embed_in_sp = True
+
+        encoder_hidden_states = torch.chunk(encoder_hidden_states, get_classifier_free_guidance_world_size(), dim=0)[
+            get_classifier_free_guidance_rank()
+        ]
+        if get_runtime_state().split_text_embed_in_sp:
+            encoder_hidden_states = torch.chunk(
+                encoder_hidden_states, get_sequence_parallel_world_size(), dim=-2
+            )[get_sequence_parallel_rank()]
+
+        freqs_cos, freqs_sin = image_rotary_emb
+
+        def get_rotary_emb_chunk(freqs):
+            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=0)[get_sequence_parallel_rank()]
+            return freqs
+
+        freqs_cos = get_rotary_emb_chunk(freqs_cos)
+        freqs_sin = get_rotary_emb_chunk(freqs_sin)
+        image_rotary_emb = (freqs_cos, freqs_sin)
+
+        # 4. Transformer blocks
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+
+            def create_custom_forward(module, return_dict=None):
+                def custom_forward(*inputs):
+                    if return_dict is not None:
+                        return module(*inputs, return_dict=return_dict)
+                    else:
+                        return module(*inputs)
+
+                return custom_forward
+
+            ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False}
+
+            for block in self.transformer_blocks:
+                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    None,
+                    image_rotary_emb,
+                    **ckpt_kwargs,
+                )
+
+            for block in self.single_transformer_blocks:
+                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    None,
+                    image_rotary_emb,
+                    **ckpt_kwargs,
+                )
+
+        else:
+            for block in self.transformer_blocks:
+                hidden_states, encoder_hidden_states = block(hidden_states, encoder_hidden_states, temb, None, image_rotary_emb)
+
+            for block in self.single_transformer_blocks:
+                hidden_states, encoder_hidden_states = block(hidden_states, encoder_hidden_states, temb, None, image_rotary_emb)
+
+        # 5. Output projection
+        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = self.proj_out(hidden_states)
+
+        hidden_states = get_sp_group().all_gather(hidden_states, dim=-2)
+        hidden_states = get_cfg_group().all_gather(hidden_states, dim=0)
+
+        hidden_states = hidden_states.reshape(
+            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, -1, p_t, p, p
+        )
+
+        hidden_states = hidden_states.permute(0, 4, 1, 5, 2, 6, 3, 7)
+        hidden_states = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+
+        if USE_PEFT_BACKEND:
+            unscale_lora_layers(self, lora_scale)
+
+        if not return_dict:
+            return (hidden_states,)
+
+        return Transformer2DModelOutput(sample=hidden_states)
+
+    new_forward = new_forward.__get__(transformer)
+    transformer.forward = new_forward
+
+    # Set xFuser attention processor
+    from xfuser.model_executor.layers.attention_processor import xFuserHunyuanVideoAttnProcessor2_0
+    assert xFuserHunyuanVideoAttnProcessor2_0 is not None
+    for block in transformer.transformer_blocks + transformer.single_transformer_blocks:
+        block.attn.processor = xFuserHunyuanVideoAttnProcessor2_0()
+
+
 def ensure_model_downloaded(model_id: str, cache_dir: str | None = None) -> str:
     try:
         logger.info(f"Downloading model {model_id}...")
@@ -506,6 +649,31 @@ def setup_pipeline(
         pipe.scheduler.config.flow_shift = 12
         initialize_runtime_state(pipe, engine_config)
         _parallelize_wan_transformer(pipe)
+        pipe = pipe.to(f"cuda:{local_rank}")
+    # HunyuanVideo: use diffusers pipeline with xFuser runtime integration
+    elif get_model_type_from_id(model_id) == "HunyuanVideo":
+        transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+            pretrained_model_name_or_path=model_id,
+            subfolder="transformer",
+            torch_dtype=torch.bfloat16,
+            revision="refs/pr/18",
+        )
+        pipe = HunyuanVideoPipeline.from_pretrained(
+            pretrained_model_name_or_path=model_id,
+            transformer=transformer,
+            torch_dtype=config["dtype"],  # float16
+            revision="refs/pr/18",
+        )
+        initialize_runtime_state(pipe, engine_config)
+        get_runtime_state().set_video_input_parameters(
+            height=args.workload.height,
+            width=args.workload.width,
+            num_frames=getattr(args.workload, "num_frames"),
+            batch_size=args.workload.batch_size,
+            num_inference_steps=args.workload.inference_steps,
+            split_text_embed_in_sp=get_pipeline_parallel_world_size() == 1,
+        )
+        _parallelize_hunyuan_video_transformer(pipe)
         pipe = pipe.to(f"cuda:{local_rank}")
     else:
         pipe = config["pipeline_class"].from_pretrained(**pipeline_kwargs)
@@ -700,9 +868,6 @@ def main(args: DiffusionArgs) -> None:
     logger.info("%s", args)
     assert isinstance(args.workload, DiffusionWorkloadConfig)
 
-    # # Apply runtime hotfixes for compatibility
-    # _apply_runtime_hotfixes()
-
     result_file = args.workload.to_path(of="results")
     if result_file.exists() and not args.overwrite_results:
         logger.info(
@@ -758,10 +923,17 @@ def main(args: DiffusionArgs) -> None:
     logger.info(f"Setting up xFuser pipeline")
     pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
 
+    # Enable VAE tiling and slicing for text-to-video workloads
+    if isinstance(args.workload, TextToVideo):
+        pipe.vae.enable_tiling()
+        logger.info("Enabled VAE tiling for text-to-video pipeline.")
+        pipe.vae.enable_slicing()
+        logger.info("Enabled VAE slicing for text-to-video pipeline.")
+
     # Prepare/warmup pipeline
     model_type = get_model_type_from_id(args.workload.model_id)
     dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
-    if model_type == "CogVideo" or model_type == "Latte" or model_type == "Wan":
+    if model_type == "CogVideo" or model_type == "Latte" or model_type == "Wan" or model_type == "HunyuanVideo":
         logger.info(f"Warming up pipeline with 1-step inference")
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup

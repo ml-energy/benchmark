@@ -7,6 +7,7 @@ command_template: |
     --workload.base-dir {run_dir}/llm \
     --workload.model-id {model_id} \
     --workload.num-requests {num_requests} \
+    --workload.num-request-repeats {num_request_repeats} \
     --workload.gpu-model {gpu_model} \
     --workload.num-gpus {num_gpus} \
     --workload.max-num-seqs {max_num_seqs}

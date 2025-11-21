@@ -1223,8 +1223,95 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 max_seqs_str = str(max_seqs) if max_seqs is not None else "N/A"
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
                 print(
-                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {steady_state_duration:<10} {median_itl:<12.1f} {e_req_str:<12}"
+                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {steady_state_duration:<10.1f} {median_itl:<12.1f} {e_req_str:<12}"
                 )
+
+
+def check_max_num_seqs_coverage(validations: list[ValidationResult]) -> None:
+    """Check if the largest max_num_seqs in each sweep saturates memory enough.
+
+    For each (model, GPU, num_gpus) combination, finds the result with the largest
+    max_num_seqs and checks if its KV cache usage is high enough. If not, adds a
+    warning suggesting to test larger max_num_seqs values.
+
+    Args:
+        validations: List of validation results to analyze. Modified in-place.
+    """
+    # Group results by (model_id, gpu_model, num_gpus)
+    by_config: dict[tuple[str, str, int], list[tuple[ValidationResult, dict]]] = (
+        defaultdict(list)
+    )
+
+    for v in validations:
+        result_path = Path(v.path)
+        results_json = result_path / "results.json"
+
+        # Skip if results.json doesn't exist or failed validation
+        if not results_json.exists():
+            continue
+
+        try:
+            with open(results_json) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        model_id = data.get("model_id")
+        gpu_model = data.get("gpu_model")
+        num_gpus = data.get("num_gpus")
+        max_num_seqs = data.get("max_num_seqs")
+
+        # Skip if required fields are missing
+        if not all([model_id, gpu_model, num_gpus is not None, max_num_seqs]):
+            continue
+
+        key = (model_id, gpu_model, num_gpus)
+        by_config[key].append((v, data))
+
+    # For each configuration, check the largest max_num_seqs
+    for (model_id, gpu_model, num_gpus), runs in by_config.items():
+        # Skip if there's only one run (no sweep)
+        if len(runs) <= 1:
+            continue
+
+        # Find the run with the largest max_num_seqs
+        max_run = max(runs, key=lambda x: x[1].get("max_num_seqs", 0))
+        max_validation, max_data = max_run
+        max_num_seqs = max_data.get("max_num_seqs")
+
+        # Get KV cache usage from prometheus.json
+        prom_path = Path(max_validation.path) / "prometheus.json"
+        if not prom_path.exists():
+            continue
+
+        try:
+            with open(prom_path) as f:
+                prom_data = json.load(f)
+        except Exception:
+            continue
+
+        steady_stats = prom_data.get("steady_state_stats", {})
+        avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
+
+        if avg_kv_cache_raw is None:
+            continue
+
+        avg_kv_cache = avg_kv_cache_raw * 100  # Convert to percentage
+
+        # If KV cache usage is below threshold (e.g., 80%), suggest testing larger values
+        # Using 80% as threshold - below this, memory isn't saturated enough
+        if avg_kv_cache < 80:
+            warning = Expectation(
+                "Max Num Seqs Coverage",
+                False,
+                f"Largest max_num_seqs={max_num_seqs} only reaches {avg_kv_cache:.1f}% KV cache",
+                "warning",
+                f"Model: {model_id}, GPU: {gpu_model}, Num GPUs: {num_gpus}\n"
+                f"The largest max_num_seqs value ({max_num_seqs}) in this sweep only achieves "
+                f"{avg_kv_cache:.1f}% KV cache utilization.\n"
+                "Consider adding larger max_num_seqs values.",
+            )
+            max_validation.expectations.append(warning)
 
 
 def print_aggregate_statistics(validations: list[ValidationResult]):
@@ -1276,6 +1363,9 @@ def main():
     # Validate all results in parallel
     with Pool(processes=args.workers) as pool:
         validations = pool.map(validate_result, result_dirs)
+
+    # Perform cross-result validation checks
+    check_max_num_seqs_coverage(validations)
 
     # Categorize results
     passed = [v for v in validations if v.passed]

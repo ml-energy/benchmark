@@ -447,6 +447,270 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
         )
 
 
+# GPU TDP (Thermal Design Power) values in Watts
+GPU_TDP_MAP = {
+    "H100": 700,  # H100 SXM5
+    "H100-PCIe": 350,  # H100 PCIe
+    "H100-PCIE": 350,  # Alternative naming
+    "A100": 400,  # A100 SXM4
+    "A100-PCIe": 250,  # A100 PCIe
+    "A100-PCIE": 250,  # Alternative naming
+    "A100-SXM4": 400,
+    "L40S": 350,
+    "L40": 300,
+    "A40": 300,
+    "A30": 165,
+    "V100": 300,  # V100 SXM2
+    "V100-PCIe": 250,  # V100 PCIe
+    "V100-PCIE": 250,
+    "T4": 70,
+    "RTX 4090": 450,
+    "RTX 3090": 350,
+    "RTX A6000": 300,
+}
+
+
+def get_gpu_tdp(gpu_model: str) -> float | None:
+    """Get TDP for a GPU model.
+
+    Args:
+        gpu_model: GPU model name from results
+
+    Returns:
+        TDP in Watts, or None if unknown
+    """
+    # Normalize the model name by removing common prefixes and spaces
+    normalized = gpu_model.upper().replace("NVIDIA ", "").replace("TESLA ", "").strip()
+
+    # Try direct lookup first
+    if normalized in GPU_TDP_MAP:
+        return GPU_TDP_MAP[normalized]
+
+    # Try partial match
+    for key, tdp in GPU_TDP_MAP.items():
+        if key in normalized or normalized in key:
+            return tdp
+
+    return None
+
+
+def check_power_range(result_dir: Path, data: dict) -> Expectation:
+    """Check if power consumption is within reasonable bounds (100W to TDP).
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether power readings are within acceptable range
+    """
+    gpu_model = data.get("gpu_model", "unknown")
+    num_gpus = data.get("num_gpus", 1)
+    power_timeline = data.get("power", {})
+
+    if not power_timeline:
+        return Expectation(
+            "Power Range",
+            True,
+            "No power data to validate",
+            "warning",
+            "Power timeline not found in results.json",
+        )
+
+    # Get TDP for this GPU
+    tdp = get_gpu_tdp(gpu_model)
+    if tdp is None:
+        return Expectation(
+            "Power Range",
+            True,
+            f"Unknown GPU model: {gpu_model}",
+            "warning",
+            "Cannot validate power without known TDP. Add GPU model to GPU_TDP_MAP.",
+        )
+
+    # Collect all power readings across all GPUs
+    all_power_readings = []
+    issues = []
+
+    for gpu_id, timeline in power_timeline.items():
+        if not timeline:
+            continue
+
+        for entry in timeline:
+            # Timeline format: [[timestamp, power], ...]
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                power = entry[1]
+            else:
+                continue
+
+            all_power_readings.append(power)
+
+            # Check if power is below minimum (100W suggests measurement error or idle)
+            if power < 100:
+                issues.append(f"GPU {gpu_id}: {power:.1f}W < 100W (too low)")
+            # Check if power exceeds TDP (with 10% tolerance for spikes)
+            elif power > tdp * 1.1:
+                issues.append(f"GPU {gpu_id}: {power:.1f}W > {tdp}W TDP")
+
+    if not all_power_readings:
+        return Expectation(
+            "Power Range",
+            False,
+            "No power readings found",
+            "error",
+            "Power timeline exists but contains no valid readings",
+        )
+
+    # Calculate statistics
+    avg_power = sum(all_power_readings) / len(all_power_readings)
+    max_power = max(all_power_readings)
+    min_power = min(all_power_readings)
+
+    # Count how many readings are out of range
+    out_of_range = sum(1 for p in all_power_readings if p < 100 or p > tdp * 1.1)
+    out_of_range_pct = out_of_range / len(all_power_readings)
+
+    # Pass if <5% of readings are out of range
+    if out_of_range_pct < 0.05:
+        return Expectation(
+            "Power Range",
+            True,
+            f"avg={avg_power:.0f}W, range=[{min_power:.0f}, {max_power:.0f}]W, TDP={tdp}W",
+            "warning",
+            "",
+        )
+    else:
+        details_parts = [
+            f"Power readings for {gpu_model} (TDP={tdp}W):",
+            f"  Average: {avg_power:.1f}W",
+            f"  Range: [{min_power:.1f}W, {max_power:.1f}W]",
+            f"  Out of range: {out_of_range}/{len(all_power_readings)} ({out_of_range_pct:.1%})",
+            f"  Expected range: [100W, {tdp}W] (with 10% tolerance for spikes)",
+        ]
+
+        if issues:
+            details_parts.append("\nSample issues:")
+            for issue in issues[:5]:
+                details_parts.append(f"  - {issue}")
+            if len(issues) > 5:
+                details_parts.append(f"  ... and {len(issues) - 5} more")
+
+        details_parts.append("\nCheck if power monitoring is configured correctly.")
+        details = "\n".join(details_parts)
+
+        return Expectation(
+            "Power Range",
+            False,
+            f"{out_of_range_pct:.1%} readings out of range [100W, {tdp}W]",
+            "warning",
+            details,
+        )
+
+
+def check_temperature_range(result_dir: Path, data: dict) -> Expectation:
+    """Check if GPU temperatures are within reasonable bounds.
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether temperatures are within acceptable range
+    """
+    temperature_timeline = data.get("temperature", {})
+
+    if not temperature_timeline:
+        return Expectation(
+            "Temperature Range",
+            True,
+            "No temperature data to validate",
+            "warning",
+            "Temperature timeline not found in results.json",
+        )
+
+    # Reasonable temperature bounds for GPUs under sustained load
+    MIN_TEMP = 20  # °C - Below this suggests sensor error
+    MAX_TEMP = 95  # °C - Most datacenter GPUs throttle before this
+
+    # Collect all temperature readings across all GPUs
+    all_temp_readings = []
+    issues = []
+
+    for gpu_id, timeline in temperature_timeline.items():
+        if not timeline:
+            continue
+
+        for entry in timeline:
+            # Timeline format: [[timestamp, temperature], ...]
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                temp = entry[1]
+            else:
+                continue
+
+            all_temp_readings.append(temp)
+
+            # Check if temperature is below minimum (sensor error)
+            if temp < MIN_TEMP:
+                issues.append(f"GPU {gpu_id}: {temp:.1f}°C < {MIN_TEMP}°C (sensor error?)")
+            # Check if temperature exceeds maximum (thermal throttling likely)
+            elif temp > MAX_TEMP:
+                issues.append(f"GPU {gpu_id}: {temp:.1f}°C > {MAX_TEMP}°C (throttling risk)")
+
+    if not all_temp_readings:
+        return Expectation(
+            "Temperature Range",
+            False,
+            "No temperature readings found",
+            "error",
+            "Temperature timeline exists but contains no valid readings",
+        )
+
+    # Calculate statistics
+    avg_temp = sum(all_temp_readings) / len(all_temp_readings)
+    max_temp = max(all_temp_readings)
+    min_temp = min(all_temp_readings)
+
+    # Count how many readings are out of range
+    out_of_range = sum(1 for t in all_temp_readings if t < MIN_TEMP or t > MAX_TEMP)
+    out_of_range_pct = out_of_range / len(all_temp_readings)
+
+    # Fail if >5% of readings are out of range
+    if out_of_range_pct >= 0.05:
+        details_parts = [
+            f"Temperature readings outside acceptable range:",
+            f"  Average: {avg_temp:.1f}°C",
+            f"  Range: [{min_temp:.1f}°C, {max_temp:.1f}°C]",
+            f"  Out of range: {out_of_range}/{len(all_temp_readings)} ({out_of_range_pct:.1%})",
+            f"  Expected range: [{MIN_TEMP}°C, {MAX_TEMP}°C]",
+        ]
+
+        if issues:
+            details_parts.append("\nSample issues:")
+            for issue in issues[:5]:
+                details_parts.append(f"  - {issue}")
+            if len(issues) > 5:
+                details_parts.append(f"  ... and {len(issues) - 5} more")
+
+        details_parts.append("\nCheck GPU cooling and ensure no thermal throttling.")
+        details = "\n".join(details_parts)
+
+        return Expectation(
+            "Temperature Range",
+            False,
+            f"{out_of_range_pct:.1%} readings out of range [{MIN_TEMP}°C, {MAX_TEMP}°C]",
+            "error",
+            details,
+        )
+    else:
+        return Expectation(
+            "Temperature Range",
+            True,
+            f"avg={avg_temp:.0f}°C, range=[{min_temp:.0f}, {max_temp:.0f}]°C",
+            "warning",
+            "",
+        )
+
+
 def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
     """Check if output lengths are consistently hitting max limit.
 
@@ -602,6 +866,8 @@ def validate_result(result_dir: Path) -> ValidationResult:
                 check_steady_state_duration(result_dir, data),
                 check_prometheus_collection(result_dir, data),
                 check_metrics_validity(result_dir, data),
+                check_power_range(result_dir, data),
+                check_temperature_range(result_dir, data),
                 check_no_crashes(result_dir, data),
             ]
         )

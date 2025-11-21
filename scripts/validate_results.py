@@ -526,7 +526,7 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
             "Steady-state batch size:",
             f"  - Average: {avg_batch_size:.1f}",
             f"  - max_num_seqs: {max_num_seqs}",
-            f"  - Utilization: {utilization_ratio:.1%}",
+            f"  - average batch size / max_num_seqs: {utilization_ratio:.1%}",
             "",
         ]
 
@@ -539,8 +539,8 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
             # If memory is high, this explains the saturation
             if avg_kv_cache > 85:
                 details_parts.append(
-                    f"High KV cache usage ({avg_kv_cache:.1f}%) indicates memory saturation is limiting batch size."
-                    "This is expected behavior."
+                    f"High KV cache usage ({avg_kv_cache:.1f}%) indicates memory saturation is limiting batch size. "
+                    "It is likely that this max_num_seqs setting can be excluded as it is not achievable."
                 )
             else:
                 details_parts.append(

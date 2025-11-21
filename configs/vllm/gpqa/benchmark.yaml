@@ -23,6 +23,4 @@ sweep_defaults:
   - num_request_repeats: [2]
     max_num_seqs: [192, 256]
   - num_request_repeats: [3]
-    max_num_seqs: [384]
-  - num_request_repeats: [4]
-    max_num_seqs: [512]
+    max_num_seqs: [384, 512]

@@ -111,8 +111,27 @@ def check_files_present(result_dir: Path) -> Expectation:
 
 def check_completion(result_dir: Path, data: dict) -> Expectation:
     """Check if all requests completed."""
-    completed = data.get("completed", 0)
-    num_prompts = data.get("num_prompts", 0)
+    completed = data.get("completed")
+    num_prompts = data.get("num_prompts")
+
+    # Fail if required fields are missing
+    if completed is None:
+        return Expectation(
+            "Completion",
+            False,
+            "completed not in results.json",
+            "error",
+            "completed field is required in results.json",
+        )
+
+    if num_prompts is None:
+        return Expectation(
+            "Completion",
+            False,
+            "num_prompts not in results.json",
+            "error",
+            "num_prompts field is required in results.json",
+        )
 
     if completed == num_prompts:
         return Expectation(
@@ -179,7 +198,17 @@ def check_request_success(result_dir: Path, data: dict) -> Expectation:
 
 def check_steady_state_duration(result_dir: Path, data: dict) -> Expectation:
     """Check if steady-state duration is at least 30 seconds."""
-    steady_duration = data.get("steady_state_duration", 0)
+    steady_duration = data.get("steady_state_duration")
+
+    # Fail if required field is missing
+    if steady_duration is None:
+        return Expectation(
+            "Steady State Duration",
+            False,
+            "steady_state_duration not in results.json",
+            "error",
+            "steady_state_duration field is required in results.json",
+        )
 
     if steady_duration >= 30:
         return Expectation(
@@ -227,12 +256,58 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
             "error",
         )
 
-    timeline = prom_data.get("timeline", [])
-    duration = data.get("duration", 0)
-    steady_duration = data.get("steady_state_duration", 0)
+    timeline = prom_data.get("timeline")
+    duration = data.get("duration")
+    steady_duration = data.get("steady_state_duration")
 
     steady_start = prom_data.get("steady_state_start_time")
     steady_end = prom_data.get("steady_state_end_time")
+
+    # Fail if required fields are missing
+    if duration is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "duration not in results.json",
+            "error",
+            "duration field is required for Prometheus collection validation",
+        )
+
+    if steady_duration is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_duration not in results.json",
+            "error",
+            "steady_state_duration field is required for Prometheus collection validation",
+        )
+
+    if timeline is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "timeline not in prometheus.json",
+            "error",
+            "timeline field is required in prometheus.json",
+        )
+
+    if steady_start is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_start_time not in prometheus.json",
+            "error",
+            "steady_state_start_time field is required in prometheus.json",
+        )
+
+    if steady_end is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_end_time not in prometheus.json",
+            "error",
+            "steady_state_end_time field is required in prometheus.json",
+        )
 
     if duration == 0:
         return Expectation(
@@ -240,6 +315,7 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
             False,
             "Duration is zero",
             "error",
+            "duration must be greater than 0",
         )
 
     # Check total duration collection rate
@@ -247,30 +323,24 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
     actual_total = len(timeline)
     ratio_total = actual_total / expected_total if expected_total > 0 else 0
 
-    # Check steady-state collection rate if we have timing info
-    ratio_steady = None
-    actual_steady = 0
-    expected_steady = 0
-    if steady_start is not None and steady_end is not None and timeline:
-        # Count timeline entries within steady-state window
-        steady_entries = [
-            e for e in timeline if steady_start <= e.get("timestamp", 0) <= steady_end
-        ]
-        expected_steady = int(steady_duration)
-        actual_steady = len(steady_entries)
-        ratio_steady = actual_steady / expected_steady if expected_steady > 0 else 0
+    # Check steady-state collection rate
+    # Count timeline entries within steady-state window
+    steady_entries = [
+        e for e in timeline if steady_start <= e.get("timestamp", 0) <= steady_end
+    ]
+    expected_steady = int(steady_duration)
+    actual_steady = len(steady_entries)
+    ratio_steady = actual_steady / expected_steady if expected_steady > 0 else 0
 
     # Check if ratios are acceptable (>=75%)
     issues = []
     if ratio_total < 0.75:
         issues.append(f"total={ratio_total:.2f}")
-    if ratio_steady is not None and ratio_steady < 0.75:
+    if ratio_steady < 0.75:
         issues.append(f"steady={ratio_steady:.2f}")
 
     if not issues:
-        msg = f"Total: {actual_total}/{expected_total} ({ratio_total:.2f})"
-        if ratio_steady is not None:
-            msg += f", Steady: {actual_steady}/{expected_steady} ({ratio_steady:.2f})"
+        msg = f"Total: {actual_total}/{expected_total} ({ratio_total:.2f}), Steady: {actual_steady}/{expected_steady} ({ratio_steady:.2f})"
         return Expectation(
             "Prometheus Collection",
             True,
@@ -283,11 +353,8 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
         details_parts = [
             f"Duration: {duration:.1f}s, Timeline entries: {actual_total}",
             f"Total collection rate: {ratio_total:.2%} ({actual_total}/{expected_total})",
+            f"Steady-state collection rate: {ratio_steady:.2%} ({actual_steady}/{expected_steady})",
         ]
-        if ratio_steady is not None:
-            details_parts.append(
-                f"Steady-state collection rate: {ratio_steady:.2%} ({actual_steady}/{expected_steady})"
-            )
         details_parts.append(
             "This may indicate CPU contention during multimodal workloads."
         )

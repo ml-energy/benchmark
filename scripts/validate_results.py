@@ -447,6 +447,291 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
         )
 
 
+# GPU TDP (Thermal Design Power) values in Watts
+GPU_TDP_MAP = {
+    "H100": 700,
+    "B200": 1000,
+}
+
+
+def get_gpu_tdp(gpu_model: str) -> float | None:
+    """Get TDP for a GPU model.
+
+    Args:
+        gpu_model: GPU model name from the results.json file
+    """
+    return GPU_TDP_MAP.get(gpu_model)
+
+
+def check_power_range(result_dir: Path, data: dict) -> Expectation:
+    """Check if power consumption is within reasonable bounds (100W to TDP).
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether power readings are within acceptable range
+    """
+    gpu_model = data.get("gpu_model", "unknown")
+    timeline = data.get("timeline", {})
+    power_data = timeline.get("power", {})
+
+    # Check all power fields: device_instant, device_average, memory_average
+    device_instant = power_data.get("device_instant", {})
+    device_average = power_data.get("device_average", {})
+    memory_average = power_data.get("memory_average", {})
+
+    if not device_instant and not device_average and not memory_average:
+        return Expectation(
+            "Power Range",
+            True,
+            "No power data to validate",
+            "warning",
+            "Power timeline not found in results.json",
+        )
+
+    # Get TDP for this GPU
+    tdp = get_gpu_tdp(gpu_model)
+    if tdp is None:
+        return Expectation(
+            "Power Range",
+            True,
+            f"Unknown GPU model: {gpu_model}",
+            "warning",
+            "Cannot validate power without known TDP. Add GPU model to GPU_TDP_MAP.",
+        )
+
+    # Check each power type separately
+    issues = []
+    stats_parts = []
+
+    # Helper function to calculate stats for a power type
+    def check_power_type(power_dict, name, min_threshold, max_threshold):
+        readings = []
+        type_issues = []
+
+        for gpu_id, timeline_data in power_dict.items():
+            if not timeline_data:
+                continue
+
+            for entry in timeline_data:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    power = entry[1]
+                    readings.append(power)
+
+                    if power < min_threshold:
+                        type_issues.append(
+                            f"GPU {gpu_id} ({name}): {power:.1f}W < {min_threshold}W"
+                        )
+                    elif power > max_threshold:
+                        type_issues.append(
+                            f"GPU {gpu_id} ({name}): {power:.1f}W > {max_threshold}W"
+                        )
+
+        if readings:
+            avg = sum(readings) / len(readings)
+            return {
+                "name": name,
+                "avg": avg,
+                "min": min(readings),
+                "max": max(readings),
+                "count": len(readings),
+                "issues": type_issues,
+            }
+        return None
+
+    # Check device_instant: allow spikes up to TDP*1.3 (instantaneous can exceed TDP)
+    device_instant_stats = None
+    if device_instant:
+        device_instant_stats = check_power_type(
+            device_instant, "device_instant", 100, tdp * 1.3
+        )
+        if device_instant_stats:
+            status = "✓" if not device_instant_stats["issues"] else "✗"
+            stats_parts.append(
+                f"device_instant={device_instant_stats['avg']:.0f}W{status}"
+            )
+            issues.extend(device_instant_stats["issues"])
+
+    # Check device_average: should stay within TDP*1.1 (average should not exceed TDP much)
+    device_avg_stats = None
+    if device_average:
+        device_avg_stats = check_power_type(
+            device_average, "device_avg", 100, tdp * 1.1
+        )
+        if device_avg_stats:
+            status = "✓" if not device_avg_stats["issues"] else "✗"
+            stats_parts.append(f"device_avg={device_avg_stats['avg']:.0f}W{status}")
+            issues.extend(device_avg_stats["issues"])
+
+    # Check memory_average: should be 0W to TDP*0.5
+    memory_stats = None
+    if memory_average:
+        memory_stats = check_power_type(memory_average, "memory", 0, tdp * 0.5)
+        if memory_stats:
+            status = "✓" if not memory_stats["issues"] else "✗"
+            stats_parts.append(f"memory={memory_stats['avg']:.0f}W{status}")
+            issues.extend(memory_stats["issues"])
+
+    if not stats_parts:
+        return Expectation(
+            "Power Range",
+            False,
+            "No power readings found",
+            "error",
+            "Power timeline exists but contains no valid readings",
+        )
+
+    # Format the summary message
+    summary_msg = ", ".join(stats_parts) + f", TDP={tdp}W"
+
+    # Pass if no issues
+    if not issues:
+        return Expectation(
+            "Power Range",
+            True,
+            summary_msg,
+            "warning",
+            "",
+        )
+    else:
+        details_parts = [
+            f"Power readings for {gpu_model} (TDP={tdp}W):",
+            f"  Found {len(issues)} out-of-range readings",
+            f"  Expected device_instant: [100W, {tdp * 1.3:.0f}W] (allows spikes)",
+            f"  Expected device_avg: [100W, {tdp * 1.1:.0f}W]",
+            f"  Expected memory: [0W, {tdp * 0.5:.0f}W]",
+        ]
+
+        if issues:
+            details_parts.append("\nIssues found:")
+            for issue in issues[:10]:
+                details_parts.append(f"  - {issue}")
+            if len(issues) > 10:
+                details_parts.append(f"  ... and {len(issues) - 10} more")
+
+        details_parts.append("\nCheck if power monitoring is configured correctly.")
+        details = "\n".join(details_parts)
+
+        return Expectation(
+            "Power Range",
+            False,
+            f"{summary_msg} ({len(issues)} issues)",
+            "warning",
+            details,
+        )
+
+
+def check_temperature_range(result_dir: Path, data: dict) -> Expectation:
+    """Check if GPU temperatures are within reasonable bounds.
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether temperatures are within acceptable range
+    """
+    timeline = data.get("timeline", {})
+    temperature_timeline = timeline.get("temperature", {})
+
+    if not temperature_timeline:
+        return Expectation(
+            "Temperature Range",
+            True,
+            "No temperature data to validate",
+            "warning",
+            "Temperature timeline not found in results.json",
+        )
+
+    # Reasonable temperature bounds for GPUs under sustained load
+    MIN_TEMP = 20  # °C - Below this suggests sensor error
+    MAX_TEMP = 95  # °C - Most datacenter GPUs throttle before this
+
+    # Collect all temperature readings across all GPUs
+    all_temp_readings = []
+    issues = []
+
+    for gpu_id, timeline_data in temperature_timeline.items():
+        if not timeline_data:
+            continue
+
+        for entry in timeline_data:
+            # Timeline format: [[timestamp, temperature], ...]
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                temp = entry[1]
+            else:
+                continue
+
+            all_temp_readings.append(temp)
+
+            # Check if temperature is below minimum (sensor error)
+            if temp < MIN_TEMP:
+                issues.append(
+                    f"GPU {gpu_id}: {temp:.1f}°C < {MIN_TEMP}°C (sensor error?)"
+                )
+            # Check if temperature exceeds maximum (thermal throttling likely)
+            elif temp > MAX_TEMP:
+                issues.append(
+                    f"GPU {gpu_id}: {temp:.1f}°C > {MAX_TEMP}°C (throttling risk)"
+                )
+
+    if not all_temp_readings:
+        return Expectation(
+            "Temperature Range",
+            False,
+            "No temperature readings found",
+            "error",
+            "Temperature timeline exists but contains no valid readings",
+        )
+
+    # Calculate statistics
+    avg_temp = sum(all_temp_readings) / len(all_temp_readings)
+    max_temp = max(all_temp_readings)
+    min_temp = min(all_temp_readings)
+
+    # Count how many readings are out of range
+    out_of_range = sum(1 for t in all_temp_readings if t < MIN_TEMP or t > MAX_TEMP)
+    out_of_range_pct = out_of_range / len(all_temp_readings)
+
+    # Fail if >5% of readings are out of range
+    if out_of_range_pct >= 0.05:
+        details_parts = [
+            "Temperature readings outside acceptable range:",
+            f"  Average: {avg_temp:.1f}°C",
+            f"  Range: [{min_temp:.1f}°C, {max_temp:.1f}°C]",
+            f"  Out of range: {out_of_range}/{len(all_temp_readings)} ({out_of_range_pct:.1%})",
+            f"  Expected range: [{MIN_TEMP}°C, {MAX_TEMP}°C]",
+        ]
+
+        if issues:
+            details_parts.append("\nSample issues:")
+            for issue in issues[:5]:
+                details_parts.append(f"  - {issue}")
+            if len(issues) > 5:
+                details_parts.append(f"  ... and {len(issues) - 5} more")
+
+        details_parts.append("\nCheck GPU cooling and ensure no thermal throttling.")
+        details = "\n".join(details_parts)
+
+        return Expectation(
+            "Temperature Range",
+            False,
+            f"{out_of_range_pct:.1%} readings out of range [{MIN_TEMP}°C, {MAX_TEMP}°C]",
+            "error",
+            details,
+        )
+    else:
+        return Expectation(
+            "Temperature Range",
+            True,
+            f"avg={avg_temp:.0f}°C, range=[{min_temp:.0f}, {max_temp:.0f}]°C",
+            "warning",
+            "",
+        )
+
+
 def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
     """Check if batch size is limited by memory saturation.
 
@@ -741,6 +1026,8 @@ def validate_result(result_dir: Path) -> ValidationResult:
                 check_steady_state_duration(result_dir, data),
                 check_prometheus_collection(result_dir, data),
                 check_metrics_validity(result_dir, data),
+                check_power_range(result_dir, data),
+                check_temperature_range(result_dir, data),
                 check_no_crashes(result_dir, data),
             ]
         )

@@ -111,8 +111,27 @@ def check_files_present(result_dir: Path) -> Expectation:
 
 def check_completion(result_dir: Path, data: dict) -> Expectation:
     """Check if all requests completed."""
-    completed = data.get("completed", 0)
-    num_prompts = data.get("num_prompts", 0)
+    completed = data.get("completed")
+    num_prompts = data.get("num_prompts")
+
+    # Fail if required fields are missing
+    if completed is None:
+        return Expectation(
+            "Completion",
+            False,
+            "completed not in results.json",
+            "error",
+            "completed field is required in results.json",
+        )
+
+    if num_prompts is None:
+        return Expectation(
+            "Completion",
+            False,
+            "num_prompts not in results.json",
+            "error",
+            "num_prompts field is required in results.json",
+        )
 
     if completed == num_prompts:
         return Expectation(
@@ -179,7 +198,17 @@ def check_request_success(result_dir: Path, data: dict) -> Expectation:
 
 def check_steady_state_duration(result_dir: Path, data: dict) -> Expectation:
     """Check if steady-state duration is at least 30 seconds."""
-    steady_duration = data.get("steady_state_duration", 0)
+    steady_duration = data.get("steady_state_duration")
+
+    # Fail if required field is missing
+    if steady_duration is None:
+        return Expectation(
+            "Steady State Duration",
+            False,
+            "steady_state_duration not in results.json",
+            "error",
+            "steady_state_duration field is required in results.json",
+        )
 
     if steady_duration >= 30:
         return Expectation(
@@ -227,12 +256,58 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
             "error",
         )
 
-    timeline = prom_data.get("timeline", [])
-    duration = data.get("duration", 0)
-    steady_duration = data.get("steady_state_duration", 0)
+    timeline = prom_data.get("timeline")
+    duration = data.get("duration")
+    steady_duration = data.get("steady_state_duration")
 
     steady_start = prom_data.get("steady_state_start_time")
     steady_end = prom_data.get("steady_state_end_time")
+
+    # Fail if required fields are missing
+    if duration is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "duration not in results.json",
+            "error",
+            "duration field is required for Prometheus collection validation",
+        )
+
+    if steady_duration is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_duration not in results.json",
+            "error",
+            "steady_state_duration field is required for Prometheus collection validation",
+        )
+
+    if timeline is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "timeline not in prometheus.json",
+            "error",
+            "timeline field is required in prometheus.json",
+        )
+
+    if steady_start is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_start_time not in prometheus.json",
+            "error",
+            "steady_state_start_time field is required in prometheus.json",
+        )
+
+    if steady_end is None:
+        return Expectation(
+            "Prometheus Collection",
+            False,
+            "steady_state_end_time not in prometheus.json",
+            "error",
+            "steady_state_end_time field is required in prometheus.json",
+        )
 
     if duration == 0:
         return Expectation(
@@ -240,6 +315,7 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
             False,
             "Duration is zero",
             "error",
+            "duration must be greater than 0",
         )
 
     # Check total duration collection rate
@@ -247,30 +323,24 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
     actual_total = len(timeline)
     ratio_total = actual_total / expected_total if expected_total > 0 else 0
 
-    # Check steady-state collection rate if we have timing info
-    ratio_steady = None
-    actual_steady = 0
-    expected_steady = 0
-    if steady_start is not None and steady_end is not None and timeline:
-        # Count timeline entries within steady-state window
-        steady_entries = [
-            e for e in timeline if steady_start <= e.get("timestamp", 0) <= steady_end
-        ]
-        expected_steady = int(steady_duration)
-        actual_steady = len(steady_entries)
-        ratio_steady = actual_steady / expected_steady if expected_steady > 0 else 0
+    # Check steady-state collection rate
+    # Count timeline entries within steady-state window
+    steady_entries = [
+        e for e in timeline if steady_start <= e.get("timestamp", 0) <= steady_end
+    ]
+    expected_steady = int(steady_duration)
+    actual_steady = len(steady_entries)
+    ratio_steady = actual_steady / expected_steady if expected_steady > 0 else 0
 
     # Check if ratios are acceptable (>=75%)
     issues = []
     if ratio_total < 0.75:
         issues.append(f"total={ratio_total:.2f}")
-    if ratio_steady is not None and ratio_steady < 0.75:
+    if ratio_steady < 0.75:
         issues.append(f"steady={ratio_steady:.2f}")
 
     if not issues:
-        msg = f"Total: {actual_total}/{expected_total} ({ratio_total:.2f})"
-        if ratio_steady is not None:
-            msg += f", Steady: {actual_steady}/{expected_steady} ({ratio_steady:.2f})"
+        msg = f"Total: {actual_total}/{expected_total} ({ratio_total:.2f}), Steady: {actual_steady}/{expected_steady} ({ratio_steady:.2f})"
         return Expectation(
             "Prometheus Collection",
             True,
@@ -283,11 +353,8 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
         details_parts = [
             f"Duration: {duration:.1f}s, Timeline entries: {actual_total}",
             f"Total collection rate: {ratio_total:.2%} ({actual_total}/{expected_total})",
+            f"Steady-state collection rate: {ratio_steady:.2%} ({actual_steady}/{expected_steady})",
         ]
-        if ratio_steady is not None:
-            details_parts.append(
-                f"Steady-state collection rate: {ratio_steady:.2%} ({actual_steady}/{expected_steady})"
-            )
         details_parts.append(
             "This may indicate CPU contention during multimodal workloads."
         )
@@ -542,11 +609,12 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
             }
         return None
 
-    # Check device_instant: allow spikes up to TDP*1.3 (instantaneous can exceed TDP)
+    # Check device_instant: allow spikes
+    instant_power_ceiling_mult = 1.5
     device_instant_stats = None
     if device_instant:
         device_instant_stats = check_power_type(
-            device_instant, "device_instant", 100, tdp * 1.3
+            device_instant, "device_instant", 70, tdp * instant_power_ceiling_mult
         )
         if device_instant_stats:
             status = "✓" if not device_instant_stats["issues"] else "✗"
@@ -559,7 +627,7 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
     device_avg_stats = None
     if device_average:
         device_avg_stats = check_power_type(
-            device_average, "device_avg", 100, tdp * 1.1
+            device_average, "device_avg", 70, tdp * 1.1
         )
         if device_avg_stats:
             status = "✓" if not device_avg_stats["issues"] else "✗"
@@ -600,8 +668,8 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         details_parts = [
             f"Power readings for {gpu_model} (TDP={tdp}W):",
             f"  Found {len(issues)} out-of-range readings",
-            f"  Expected device_instant: [100W, {tdp * 1.3:.0f}W] (allows spikes)",
-            f"  Expected device_avg: [100W, {tdp * 1.1:.0f}W]",
+            f"  Expected device_instant: [70W, {tdp * instant_power_ceiling_mult}W] (allows spikes)",
+            f"  Expected device_avg: [70W, {tdp * 1.1:.0f}W]",
             f"  Expected memory: [0W, {tdp * 0.5:.0f}W]",
         ]
 
@@ -1157,8 +1225,95 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 max_seqs_str = str(max_seqs) if max_seqs is not None else "N/A"
                 e_req_str = f"{e_req:.2f}" if e_req is not None else "N/A"
                 print(
-                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {steady_state_duration:<10} {median_itl:<12.1f} {e_req_str:<12}"
+                    f"{i:<6} {model:<50} {gpu:<8} {ngpus:<7} {max_seqs_str:<9} {e_tok:<12.4f} {steady_state_duration:<10.1f} {median_itl:<12.1f} {e_req_str:<12}"
                 )
+
+
+def check_max_num_seqs_coverage(validations: list[ValidationResult]) -> None:
+    """Check if the largest max_num_seqs in each sweep saturates memory enough.
+
+    For each (model, GPU, num_gpus) combination, finds the result with the largest
+    max_num_seqs and checks if its KV cache usage is high enough. If not, adds a
+    warning suggesting to test larger max_num_seqs values.
+
+    Args:
+        validations: List of validation results to analyze. Modified in-place.
+    """
+    # Group results by (model_id, gpu_model, num_gpus)
+    by_config: dict[tuple[str, str, int], list[tuple[ValidationResult, dict]]] = (
+        defaultdict(list)
+    )
+
+    for v in validations:
+        result_path = Path(v.path)
+        results_json = result_path / "results.json"
+
+        # Skip if results.json doesn't exist or failed validation
+        if not results_json.exists():
+            continue
+
+        try:
+            with open(results_json) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+
+        model_id = data.get("model_id")
+        gpu_model = data.get("gpu_model")
+        num_gpus = data.get("num_gpus")
+        max_num_seqs = data.get("max_num_seqs")
+
+        # Skip if required fields are missing
+        if not all([model_id, gpu_model, num_gpus is not None, max_num_seqs]):
+            continue
+
+        key = (model_id, gpu_model, num_gpus)
+        by_config[key].append((v, data))
+
+    # For each configuration, check the largest max_num_seqs
+    for (model_id, gpu_model, num_gpus), runs in by_config.items():
+        # Skip if there's only one run (no sweep)
+        if len(runs) <= 1:
+            continue
+
+        # Find the run with the largest max_num_seqs
+        max_run = max(runs, key=lambda x: x[1].get("max_num_seqs", 0))
+        max_validation, max_data = max_run
+        max_num_seqs = max_data.get("max_num_seqs")
+
+        # Get KV cache usage from prometheus.json
+        prom_path = Path(max_validation.path) / "prometheus.json"
+        if not prom_path.exists():
+            continue
+
+        try:
+            with open(prom_path) as f:
+                prom_data = json.load(f)
+        except Exception:
+            continue
+
+        steady_stats = prom_data.get("steady_state_stats", {})
+        avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
+
+        if avg_kv_cache_raw is None:
+            continue
+
+        avg_kv_cache = avg_kv_cache_raw * 100  # Convert to percentage
+
+        # If KV cache usage is below threshold (e.g., 80%), suggest testing larger values
+        # Using 80% as threshold - below this, memory isn't saturated enough
+        if avg_kv_cache < 80:
+            warning = Expectation(
+                "Max Num Seqs Coverage",
+                False,
+                f"Largest max_num_seqs={max_num_seqs} only reaches {avg_kv_cache:.1f}% KV cache",
+                "warning",
+                f"Model: {model_id}, GPU: {gpu_model}, Num GPUs: {num_gpus}\n"
+                f"The largest max_num_seqs value ({max_num_seqs}) in this sweep only achieves "
+                f"{avg_kv_cache:.1f}% KV cache utilization.\n"
+                "Consider adding larger max_num_seqs values.",
+            )
+            max_validation.expectations.append(warning)
 
 
 def print_aggregate_statistics(validations: list[ValidationResult]):
@@ -1210,6 +1365,9 @@ def main():
     # Validate all results in parallel
     with Pool(processes=args.workers) as pool:
         validations = pool.map(validate_result, result_dirs)
+
+    # Perform cross-result validation checks
+    check_max_num_seqs_coverage(validations)
 
     # Categorize results
     passed = [v for v in validations if v.passed]

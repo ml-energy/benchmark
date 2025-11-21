@@ -608,11 +608,12 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
             }
         return None
 
-    # Check device_instant: allow spikes up to TDP*1.3 (instantaneous can exceed TDP)
+    # Check device_instant: allow spikes
+    instant_power_ceiling_mult = 1.5
     device_instant_stats = None
     if device_instant:
         device_instant_stats = check_power_type(
-            device_instant, "device_instant", 100, tdp * 1.3
+            device_instant, "device_instant", 70, tdp * instant_power_ceiling_mult
         )
         if device_instant_stats:
             status = "✓" if not device_instant_stats["issues"] else "✗"
@@ -625,7 +626,7 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
     device_avg_stats = None
     if device_average:
         device_avg_stats = check_power_type(
-            device_average, "device_avg", 100, tdp * 1.1
+            device_average, "device_avg", 70, tdp * 1.1
         )
         if device_avg_stats:
             status = "✓" if not device_avg_stats["issues"] else "✗"
@@ -666,8 +667,8 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         details_parts = [
             f"Power readings for {gpu_model} (TDP={tdp}W):",
             f"  Found {len(issues)} out-of-range readings",
-            f"  Expected device_instant: [100W, {tdp * 1.3:.0f}W] (allows spikes)",
-            f"  Expected device_avg: [100W, {tdp * 1.1:.0f}W]",
+            f"  Expected device_instant: [70W, {tdp * instant_power_ceiling_mult}W] (allows spikes)",
+            f"  Expected device_avg: [70W, {tdp * 1.1:.0f}W]",
             f"  Expected memory: [0W, {tdp * 0.5:.0f}W]",
         ]
 

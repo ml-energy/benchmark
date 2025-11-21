@@ -7,6 +7,7 @@ command_template: |
     --workload.base-dir {run_dir}/mllm \
     --workload.model-id {model_id} \
     --workload.num-requests {num_requests} \
+    --workload.num-request-repeats {num_request_repeats} \
     --workload.num-images {num_images} \
     --workload.gpu-model {gpu_model} \
     --workload.num-gpus {num_gpus} \
@@ -16,6 +17,7 @@ workload_defaults:
   max_output_tokens: 4096
   run_dir: run
   num_requests: 1024
+  num_request_repeats: 1
   num_images: 1
 
 sweep_defaults:

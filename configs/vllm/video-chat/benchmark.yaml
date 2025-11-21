@@ -7,6 +7,7 @@ command_template: |
     --workload.base-dir {run_dir}/mllm \
     --workload.model-id {model_id} \
     --workload.num-requests {num_requests} \
+    --workload.num-request-repeats {num_request_repeats} \
     --workload.num-videos {num_videos} \
     --workload.video-data-dir ${{VIDEO_DATA_DIR:?VIDEO_DATA_DIR not set}} \
     --workload.gpu-model {gpu_model} \
@@ -17,6 +18,7 @@ workload_defaults:
   max_output_tokens: 4096
   run_dir: run
   num_requests: 512
+  num_request_repeats: 1
   num_videos: 1
 
 sweep_defaults:

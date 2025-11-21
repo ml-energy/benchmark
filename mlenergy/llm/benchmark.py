@@ -844,7 +844,7 @@ async def benchmark(
         else contextlib.nullcontext()
     )
     request_tracker = RequestTracker(
-        max_num_seqs=max_num_seqs, num_requests=workload.num_requests
+        max_num_seqs=max_num_seqs, num_requests=len(input_requests)
     )
 
     async def limited_request_func(request_func_input):
@@ -961,7 +961,7 @@ async def benchmark(
 
     # fmt: off
     logger.info("{s:{c}^{n}}".format(s="Benchmark results", n=51, c="="))
-    logger.info("%-40s: %d", "Total requests", workload.num_requests)
+    logger.info("%-40s: %d", "Total requests", len(input_requests))
     logger.info("%-40s: %d", "Successful requests", metrics.completed)
     logger.info("%-40s: %.2f", "Benchmark total duration (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Benchmark total energy (J)", entire_benchmark_energy)
@@ -1398,7 +1398,9 @@ def main(args: Args) -> None:
     result_json["endpoint_type"] = args.workload.endpoint_type
     result_json["model_id"] = model_id
     result_json["seed"] = args.workload.seed
-    result_json["num_prompts"] = args.workload.num_requests
+    result_json["num_unique_prompts"] = args.workload.num_requests
+    result_json["num_prompts"] = len(input_requests)
+    result_json["num_request_repeats"] = args.workload.num_request_repeats
     result_json["gpu_model"] = args.workload.gpu_model
     result_json["num_gpus"] = args.workload.num_gpus
     result_json["max_num_seqs"] = args.workload.max_num_seqs
@@ -1463,9 +1465,9 @@ def main(args: Args) -> None:
             logger.info("%-30s: %.3f", metric_name, value)
 
     # Something failed. Treat the whole run as a failure.
-    if benchmark_result["completed"] < args.workload.num_requests:
+    if benchmark_result["completed"] < len(input_requests):
         raise RuntimeError(
-            f"Only {benchmark_result['completed']} out of {args.workload.num_requests} requests completed successfully. "
+            f"Only {benchmark_result['completed']} out of {len(input_requests)} requests completed successfully. "
             "Raising RuntimeError to indicate failure."
         )
 

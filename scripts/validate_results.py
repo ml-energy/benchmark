@@ -458,24 +458,9 @@ def get_gpu_tdp(gpu_model: str) -> float | None:
     """Get TDP for a GPU model.
 
     Args:
-        gpu_model: GPU model name from results
-
-    Returns:
-        TDP in Watts, or None if unknown
+        gpu_model: GPU model name from the results.json file
     """
-    # Normalize the model name by removing common prefixes and spaces
-    normalized = gpu_model.upper().replace("NVIDIA ", "").replace("TESLA ", "").strip()
-
-    # Try direct lookup first
-    if normalized in GPU_TDP_MAP:
-        return GPU_TDP_MAP[normalized]
-
-    # Try partial match
-    for key, tdp in GPU_TDP_MAP.items():
-        if key in normalized or normalized in key:
-            return tdp
-
-    return None
+    return GPU_TDP_MAP.get(gpu_model)
 
 
 def check_power_range(result_dir: Path, data: dict) -> Expectation:

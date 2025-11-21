@@ -449,24 +449,8 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
 
 # GPU TDP (Thermal Design Power) values in Watts
 GPU_TDP_MAP = {
-    "H100": 700,  # H100 SXM5
-    "H100-PCIe": 350,  # H100 PCIe
-    "H100-PCIE": 350,  # Alternative naming
-    "A100": 400,  # A100 SXM4
-    "A100-PCIe": 250,  # A100 PCIe
-    "A100-PCIE": 250,  # Alternative naming
-    "A100-SXM4": 400,
-    "L40S": 350,
-    "L40": 300,
-    "A40": 300,
-    "A30": 165,
-    "V100": 300,  # V100 SXM2
-    "V100-PCIe": 250,  # V100 PCIe
-    "V100-PCIE": 250,
-    "T4": 70,
-    "RTX 4090": 450,
-    "RTX 3090": 350,
-    "RTX A6000": 300,
+    "H100": 700,
+    "B200": 1000,
 }
 
 

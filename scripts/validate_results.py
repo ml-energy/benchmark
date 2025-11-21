@@ -450,6 +450,7 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
 # GPU TDP (Thermal Design Power) values in Watts
 GPU_TDP_MAP = {
     "H100": 700,
+    "H200": 700,
     "B200": 1000,
 }
 

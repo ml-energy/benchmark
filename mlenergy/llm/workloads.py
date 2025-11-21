@@ -191,12 +191,11 @@ class WorkloadConfig(BaseModel):
         params = {
             "num_gpus": self.num_gpus,
             "max_num_seqs": self.max_num_seqs,
-            "max_num_batched_tokens": self.max_num_batched_tokens,
+            "num_request_repeats": self.num_request_repeats,
             **self._dataset_params(),
         }
-        # Include num_request_repeats only when it's > 1 to keep paths clean
-        if self.num_request_repeats > 1:
-            params["num_request_repeats"] = self.num_request_repeats
+        if self.max_num_batched_tokens is not None:
+            params["max_num_batched_tokens"] = self.max_num_batched_tokens
         return params
 
     def to_path(
@@ -377,7 +376,6 @@ class WorkloadConfig(BaseModel):
             self._save_data(requests)
             self._save_tokenization(requests)
 
-        # Repeat requests if num_request_repeats > 1
         if self.num_request_repeats > 1:
             num_unique = len(requests)
             requests = requests * self.num_request_repeats

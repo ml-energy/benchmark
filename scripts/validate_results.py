@@ -447,6 +447,133 @@ def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
         )
 
 
+def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
+    """Check if batch size is limited by memory saturation.
+
+    If the steady-state average batch size is noticeably smaller than max_num_seqs,
+    it suggests that memory has saturated and the batch size cannot increase,
+    making the high max_num_seqs setting pointless.
+
+    Args:
+        result_dir: Path to result directory
+        data: Parsed results.json data
+
+    Returns:
+        Expectation indicating whether batch size is saturated by memory
+    """
+    max_num_seqs = data.get("max_num_seqs")
+
+    # Fail if max_num_seqs is not set (it should be present for benchmarks)
+    if max_num_seqs is None:
+        return Expectation(
+            "Batch Size Saturation",
+            False,
+            "max_num_seqs not in results.json",
+            "error",
+            "max_num_seqs is required for batch size validation",
+        )
+
+    prom_path = result_dir / "prometheus.json"
+    if not prom_path.exists():
+        return Expectation(
+            "Batch Size Saturation",
+            False,
+            "prometheus.json missing",
+            "error",
+            "prometheus.json is required for batch size validation",
+        )
+
+    try:
+        with open(prom_path) as f:
+            prom_data = json.load(f)
+    except Exception as e:
+        return Expectation(
+            "Batch Size Saturation",
+            False,
+            f"Error reading prometheus.json: {e}",
+            "error",
+            f"Failed to parse prometheus.json: {str(e)}",
+        )
+
+    steady_stats = prom_data.get("steady_state_stats", {})
+
+    # Get average batch size (num_requests_running) - stored as single mean value
+    avg_batch_size = steady_stats.get("vllm:num_requests_running")
+
+    # Get memory utilization - stored as single mean value (as fraction 0-1, convert to percentage)
+    avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
+    avg_kv_cache = avg_kv_cache_raw * 100 if avg_kv_cache_raw is not None else None
+
+    # Fail if we don't have the required metrics
+    if avg_batch_size is None:
+        return Expectation(
+            "Batch Size Saturation",
+            False,
+            "vllm:num_requests_running not in steady_state_stats",
+            "error",
+            "Batch size metric (vllm:num_requests_running) is required but missing from prometheus.json steady_state_stats",
+        )
+
+    # Calculate utilization ratio
+    utilization_ratio = avg_batch_size / max_num_seqs if max_num_seqs > 0 else 0
+
+    # Check if batch size is significantly below max_num_seqs
+    # Using 60% threshold - if avg batch size is less than 80% of max_num_seqs, flag it
+    if utilization_ratio < 0.8:
+        msg = f"Avg batch size {avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={max_num_seqs}"
+
+        details_parts = [
+            "Steady-state batch size:",
+            f"  - Average: {avg_batch_size:.1f}",
+            f"  - max_num_seqs: {max_num_seqs}",
+            f"  - average batch size / max_num_seqs: {utilization_ratio:.1%}",
+            "",
+        ]
+
+        if avg_kv_cache is not None:
+            # Convert to percentage if needed (value is already 0-100)
+            details_parts.append("KV cache memory utilization:")
+            details_parts.append(f"  - Average: {avg_kv_cache:.1f}%")
+            details_parts.append("")
+
+            # If memory is high, this explains the saturation
+            if avg_kv_cache > 85:
+                details_parts.append(
+                    f"High KV cache usage ({avg_kv_cache:.1f}%) indicates memory saturation is limiting batch size. "
+                    "It is likely that this max_num_seqs setting can be excluded as it is not achievable."
+                )
+            else:
+                details_parts.append(
+                    f"KV cache usage ({avg_kv_cache:.1f}%) is not particularly high. "
+                    "Batch size may be limited by other factors; this requires further investigation."
+                )
+        else:
+            details_parts.append(
+                "KV cache utilization metrics not available. Cannot confirm if memory saturation is the cause."
+            )
+
+        details = "\n".join(details_parts)
+
+        return Expectation(
+            "Batch Size Saturation",
+            False,
+            msg,
+            "warning",
+            details,
+        )
+    else:
+        msg = f"Avg batch size {avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={max_num_seqs}"
+        if avg_kv_cache is not None:
+            msg += f", KV cache {avg_kv_cache:.1f}%"
+        return Expectation(
+            "Batch Size Saturation",
+            True,
+            msg,
+            "warning",
+            "",
+        )
+
+
 def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
     """Check if output lengths are consistently hitting max limit.
 
@@ -460,23 +587,34 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
     max_output_tokens = data.get("max_output_tokens")
     results = data.get("results", [])
 
-    # Skip check if no max limit or no results
-    if max_output_tokens is None or not results:
+    # Fail if max_output_tokens is not set (it should be present for benchmarks)
+    if max_output_tokens is None:
         return Expectation(
             "Output Length",
-            True,
-            "No max_output_tokens limit set",
-            "warning",
-            "",
+            False,
+            "max_output_tokens not in results.json",
+            "error",
+            "max_output_tokens is required for output length validation",
         )
 
+    # Fail if results are missing
+    if not results:
+        return Expectation(
+            "Output Length",
+            False,
+            "No results found in results.json",
+            "error",
+            "Results array is required for output length validation",
+        )
+
+    # Fail if max_output_tokens is not an integer
     if not isinstance(max_output_tokens, int):
         return Expectation(
             "Output Length",
-            True,
+            False,
             f"max_output_tokens is not an integer: {max_output_tokens}",
-            "warning",
-            "",
+            "error",
+            f"max_output_tokens must be an integer, got {type(max_output_tokens).__name__}",
         )
 
     hitting_limit = []
@@ -599,6 +737,7 @@ def validate_result(result_dir: Path) -> ValidationResult:
                 check_completion(result_dir, data),
                 check_request_success(result_dir, data),
                 check_output_length_saturation(result_dir, data),
+                check_batch_size_saturation(result_dir, data),
                 check_steady_state_duration(result_dir, data),
                 check_prometheus_collection(result_dir, data),
                 check_metrics_validity(result_dir, data),

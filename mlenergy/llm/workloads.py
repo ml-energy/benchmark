@@ -121,7 +121,9 @@ class WorkloadConfig(BaseModel):
             are automatically appended based on the workload's properties.
         seed: Random seed for reproducibility.
         model_id: Model identifier for the model to be used in the benchmark.
-        num_requests: Number of requests to sample for the benchmark.
+        num_requests: Number of unique requests to sample for the benchmark.
+        num_request_repeats: Number of times to repeat the request sequence. Total
+            requests sent will be num_requests * num_request_repeats. Default is 1.
         gpu_model: GPU model identifier (e.g., "H100", "A100", "B200") used to
             load model-specific vLLM configurations.
         max_num_seqs: vLLM maximum number of sequences config.
@@ -133,6 +135,7 @@ class WorkloadConfig(BaseModel):
     seed: int = DEFAULT_SEED
     model_id: str
     num_requests: int
+    num_request_repeats: int = 1
 
     # Systems parameters
     gpu_model: str
@@ -185,12 +188,15 @@ class WorkloadConfig(BaseModel):
         The set of parameters returned by this method should uniquely identify the
         workload configuration, as this will be used to create unique results directories.
         """
-        return {
+        params = {
             "num_gpus": self.num_gpus,
             "max_num_seqs": self.max_num_seqs,
-            "max_num_batched_tokens": self.max_num_batched_tokens,
+            "num_request_repeats": self.num_request_repeats,
             **self._dataset_params(),
         }
+        if self.max_num_batched_tokens is not None:
+            params["max_num_batched_tokens"] = self.max_num_batched_tokens
+        return params
 
     def to_path(
         self,
@@ -369,6 +375,16 @@ class WorkloadConfig(BaseModel):
             requests = self.sample(dump_multimodal_data=dump_multimodal_data)
             self._save_data(requests)
             self._save_tokenization(requests)
+
+        if self.num_request_repeats > 1:
+            num_unique = len(requests)
+            requests = requests * self.num_request_repeats
+            logger.info(
+                "Repeated %d unique requests %d times for a total of %d requests",
+                num_unique,
+                self.num_request_repeats,
+                len(requests),
+            )
 
         return requests
 

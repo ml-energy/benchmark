@@ -2,4 +2,6 @@ sweep:
   - num_request_repeats: [1]
     max_num_seqs: [8, 16, 32, 64, 96, 128, 192, 256, 384]
   - num_request_repeats: [2]
-    max_num_seqs: [512, 768, 1024, 1536]
+    max_num_seqs: [512, 768, 1024]
+  - num_request_repeats: [3]
+    max_num_seqs: [1536, 2048]

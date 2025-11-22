@@ -611,6 +611,7 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
     # Check device_instant: allow spikes
     instant_power_ceiling_mult = 1.5
     device_instant_stats = None
+
     if device_instant:
         device_instant_stats = check_power_type(
             device_instant, "device_instant", 70, tdp * instant_power_ceiling_mult
@@ -618,28 +619,33 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         if device_instant_stats:
             status = "✓" if not device_instant_stats["issues"] else "✗"
             stats_parts.append(
-                f"device_instant={device_instant_stats['avg']:.0f}W{status}"
+                f"device_instant=avg={device_instant_stats['avg']:.0f}W, "
+                f"range=[{device_instant_stats['min']:.0f}, {device_instant_stats['max']:.0f}]W{status}"
             )
             issues.extend(device_instant_stats["issues"])
 
     # Check device_average: should stay within TDP*1.1 (average should not exceed TDP much)
     device_avg_stats = None
     if device_average:
-        device_avg_stats = check_power_type(
-            device_average, "device_avg", 70, tdp * 1.1
-        )
+        device_avg_stats = check_power_type(device_average, "device_avg", 70, tdp * 1.1)
         if device_avg_stats:
             status = "✓" if not device_avg_stats["issues"] else "✗"
-            stats_parts.append(f"device_avg={device_avg_stats['avg']:.0f}W{status}")
+            stats_parts.append(
+                f"device_avg=avg={device_avg_stats['avg']:.0f}W, "
+                f"range=[{device_avg_stats['min']:.0f}, {device_avg_stats['max']:.0f}]W{status}"
+            )
             issues.extend(device_avg_stats["issues"])
 
-    # Check memory_average: should be 0W to TDP*0.5
+    # Check memory_average: should be 10W to TDP*0.5
     memory_stats = None
     if memory_average:
-        memory_stats = check_power_type(memory_average, "memory", 0, tdp * 0.5)
+        memory_stats = check_power_type(memory_average, "memory", 10, tdp * 0.5)
         if memory_stats:
             status = "✓" if not memory_stats["issues"] else "✗"
-            stats_parts.append(f"memory={memory_stats['avg']:.0f}W{status}")
+            stats_parts.append(
+                f"memory=avg={memory_stats['avg']:.0f}W, "
+                f"range=[{memory_stats['min']:.0f}, {memory_stats['max']:.0f}]W{status}"
+            )
             issues.extend(memory_stats["issues"])
 
     if not stats_parts:

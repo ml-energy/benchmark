@@ -438,6 +438,8 @@ async def async_request_openai_completions(
         output.success = False
         exc_info = sys.exc_info()
         output.error = "".join(traceback.format_exception(*exc_info))
+        output.output_text = output_text
+        output.latency = most_recent_timestamp - st
     finally:
         request_tracker.notify_request_finished()
 
@@ -583,6 +585,9 @@ async def async_request_openai_chat_completions(
         output.success = False
         exc_info = sys.exc_info()
         output.error = "".join(traceback.format_exception(*exc_info))
+        output.output_text = output_text
+        output.reasoning_output_text = reasoning_output_text
+        output.latency = most_recent_timestamp - st
     finally:
         request_tracker.notify_request_finished()
         if not output.success:

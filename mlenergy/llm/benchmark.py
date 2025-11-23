@@ -1146,7 +1146,9 @@ def spawn_vllm(
         (hf_home, hf_home, ""),
     ]
     if vllm_cache_dir:
-        bind_mounts.append((vllm_cache_dir, vllm_cache_dir, ""))
+        # Mount the cache dir to vLLM's hardcoded cache location
+        # The ~ will be replaced with /root for Docker or user home for Singularity
+        bind_mounts.append((vllm_cache_dir, "~/.cache/vllm", ""))
 
     # Build vLLM command
     vllm_cmd = [

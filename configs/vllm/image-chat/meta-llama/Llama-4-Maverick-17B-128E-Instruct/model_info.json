@@ -1,0 +1,5 @@
+{
+  "total_parameters_billion": 400,
+  "active_parameters_billion": 17,
+  "weight_precision": "bfloat16"
+}

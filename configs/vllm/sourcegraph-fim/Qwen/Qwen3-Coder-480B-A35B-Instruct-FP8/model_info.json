@@ -1,0 +1,5 @@
+{
+  "total_parameters_billion": 480,
+  "active_parameters_billion": 35,
+  "weight_precision": "fp8"
+}

@@ -1,4 +1,5 @@
 {
+  "nickname": "Llama 4 Maverick 17B 128E Instruct FP8",
   "total_parameters_billion": 400,
   "active_parameters_billion": 17,
   "weight_precision": "fp8"

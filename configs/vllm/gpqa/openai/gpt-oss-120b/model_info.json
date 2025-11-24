@@ -1,4 +1,5 @@
 {
+  "nickname": "GPT OSS 120B",
   "total_parameters_billion": 117,
   "active_parameters_billion": 5,
   "weight_precision": "bfloat16"

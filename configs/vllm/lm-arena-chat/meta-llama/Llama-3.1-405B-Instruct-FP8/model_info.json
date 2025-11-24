@@ -1,4 +1,5 @@
 {
+  "nickname": "Llama 3.1 405B Instruct FP8",
   "total_parameters_billion": 405,
   "active_parameters_billion": 405,
   "weight_precision": "fp8"

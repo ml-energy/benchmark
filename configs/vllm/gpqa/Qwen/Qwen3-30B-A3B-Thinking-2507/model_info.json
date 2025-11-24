@@ -1,0 +1,6 @@
+{
+  "nickname": "Qwen 3 30B A3B Thinking",
+  "total_parameters_billion": 30,
+  "active_parameters_billion": 3,
+  "weight_precision": "bfloat16"
+}

@@ -1,0 +1,6 @@
+{
+  "nickname": "DeepSeek R1",
+  "total_parameters_billion": 671,
+  "active_parameters_billion": 37,
+  "weight_precision": "fp8"
+}

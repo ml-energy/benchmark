@@ -1438,10 +1438,10 @@ def main(args: Args) -> None:
         timeline=prometheus_timeline,
         steady_start=steady_state_start,
         steady_end=steady_state_end,
-        gauge_metric_names=[
-            "vllm:num_requests_running",
-            "vllm:kv_cache_usage_perc",
-        ],
+        agg_gauge_metrics={
+            "vllm:num_requests_running": "sum",
+            "vllm:kv_cache_usage_perc": "avg",
+        },
         histogram_metric_names=[
             "vllm:request_prompt_tokens",
             "vllm:request_generation_tokens",

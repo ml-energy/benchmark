@@ -1,0 +1,13 @@
+sweep:
+  - num_gpus: [1]
+    num_request_repeats: [1]
+    max_num_seqs: [8, 16, 32, 64, 96, 128]
+  - num_gpus: [2]
+    num_request_repeats: [1]
+    max_num_seqs: [8, 16, 32, 64, 96, 128, 192]
+  - num_gpus: [2]
+    num_request_repeats: [2]
+    max_num_seqs: [256, 512, 768, 1024]
+  - num_gpus: [2]
+    num_request_repeats: [3]
+    max_num_seqs: [1536]

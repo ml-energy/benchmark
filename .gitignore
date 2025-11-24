@@ -20,5 +20,5 @@ build/
 /results
 vllm_cache
 
-pegasus
-slurm
+/pegasus*
+/slurm*

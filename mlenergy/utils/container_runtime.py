@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import logging
 from abc import ABC, abstractmethod
@@ -164,6 +165,10 @@ class DockerRuntime(ContainerRuntime):
 
         # Bind mounts
         for host_path, container_path, mode in bind_mounts:
+            # Replace ~ with /root in container path (Docker runs as root)
+            if container_path.startswith("~"):
+                container_path = container_path.replace("~", "/root", 1)
+
             if mode:
                 cmd.extend(["-v", f"{host_path}:{container_path}:{mode}"])
             else:
@@ -235,6 +240,10 @@ class SingularityRuntime(ContainerRuntime):
 
         # Bind mounts
         for host_path, container_path, mode in bind_mounts:
+            # Replace ~ with actual user home in container path (Singularity runs as current user)
+            if container_path.startswith("~"):
+                container_path = os.path.expanduser(container_path)
+
             if mode:
                 cmd.extend(["--bind", f"{host_path}:{container_path}:{mode}"])
             else:

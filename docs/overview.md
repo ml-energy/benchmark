@@ -29,10 +29,6 @@
 - **Docker**: For cloud and local machines
 - **Singularity**: For HPC clusters
 
-### vLLM Images
-- **Standard**: `vllm/vllm-openai:v0.11.1` (for all tasks except audio-chat)
-- **Audio**: Build from `docker/vllm-audio.Dockerfile` or `docker/vllm-audio.def` (for audio-chat only)
-
 ### Environment Variables
 
 Required for all tasks:

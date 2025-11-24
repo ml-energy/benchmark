@@ -1,5 +1,0 @@
-Bootstrap: docker
-From: vllm/vllm-openai:v0.11.1
-
-%post
-    uv pip install --system vllm[audio]==0.11.1

@@ -1,0 +1,6 @@
+{
+  "nickname": "NVIDIA Nemotron Nano 9B V2",
+  "total_parameters_billion": 9,
+  "active_parameters_billion": 9,
+  "weight_precision": "bfloat16"
+}

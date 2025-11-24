@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 
@@ -176,34 +176,37 @@ def parse_summary(metrics_text: str, metric_name: str) -> dict[str, Any]:
 
 
 def _get_gauge_value(
-    metrics_text: str, metric_name: str, handle_vllm_bug: bool = False
+    metrics_text: str,
+    metric_name: str,
+    aggregation: Literal["sum", "avg", "max"] = "max",
 ) -> float | None:
-    """Extract a single value from a gauge metric.
+    """Extract a single value from a gauge metric with specified aggregation.
+
+    When multiple metric entries exist (e.g., from data-parallel engines or multiple
+    PID entries), this function aggregates them according to the specified strategy.
 
     Args:
         metrics_text: Raw Prometheus metrics text
         metric_name: Name of the gauge metric
-        handle_vllm_bug: If True, handle vLLM bug where multiple PID entries exist
+        aggregation: How to aggregate multiple values ("sum", "avg", "max")
 
     Returns:
-        Single float value, or None if metric not found
+        Aggregated float value, or None if metric not found
     """
     values = parse_gauge(metrics_text, metric_name)
     if not values:
         return None
 
-    if handle_vllm_bug:
-        # vLLM bug: Multiple entries per API server replica with different PIDs.
-        nonzero_values = [v for v in values.values() if v > 0]
-        if nonzero_values:
-            return sum(nonzero_values) / len(nonzero_values)
-        return max(values.values())
+    value_list = list(values.values())
+
+    if aggregation == "sum":
+        return sum(value_list)
+    elif aggregation == "avg":
+        return sum(value_list) / len(value_list)
+    elif aggregation == "max":
+        return max(value_list)
     else:
-        # If there's only one value, return it
-        if len(values) == 1:
-            return next(iter(values.values()))
-        # If multiple values, take the max as a fallback
-        return max(values.values())
+        raise ValueError(f"Unknown aggregation: {aggregation}")
 
 
 def _calculate_histogram_percentile(
@@ -305,7 +308,7 @@ def calculate_steady_state_stats(
     timeline: list[dict[str, Any]],
     steady_start: float,
     steady_end: float,
-    gauge_metric_names: list[str],
+    agg_gauge_metrics: dict[str, Literal["sum", "avg", "max"]],
     histogram_metric_names: list[str] | None = None,
     histogram_percentiles: list[float] | None = None,
 ) -> dict[str, float]:
@@ -315,13 +318,15 @@ def calculate_steady_state_stats(
         timeline: List of metric snapshots with "timestamp" and "metrics" keys
         steady_start: Steady state start timestamp
         steady_end: Steady state end timestamp
-        gauge_metric_names: List of gauge metric names to analyze
+        agg_gauge_metrics: Dict mapping gauge metric names to aggregation strategies
+            ("sum", "avg", "max"). For DP engines, use "sum" for batch size metrics
+            and "avg" for utilization metrics.
         histogram_metric_names: List of histogram metric names to calculate percentiles for
         histogram_percentiles: Percentiles to calculate for histograms (default: [50, 90, 95, 99])
 
     Returns:
         Dict mapping metric names to values during steady state.
-        For gauges: average values.
+        For gauges: average values over time (after aggregating across engines per snapshot).
         For histograms: percentile values with "_p50", "_p90", etc. suffixes.
         Example: {
             "vllm:num_requests_running": 42.3,
@@ -355,13 +360,13 @@ def calculate_steady_state_stats(
     stats = {}
 
     # Process gauge metrics
-    for gauge_metric_name in gauge_metric_names:
+    for gauge_metric_name, aggregation in agg_gauge_metrics.items():
         values = []
-        # Special handling for vLLM KV cache bug
-        handle_bug = gauge_metric_name == "vllm:kv_cache_usage_perc"
 
         for snapshot in steady_snapshots:
-            value = _get_gauge_value(snapshot["metrics"], gauge_metric_name, handle_bug)
+            value = _get_gauge_value(
+                snapshot["metrics"], gauge_metric_name, aggregation
+            )
             if value is not None:
                 values.append(value)
 
@@ -369,7 +374,8 @@ def calculate_steady_state_stats(
             avg_value = sum(values) / len(values)
             stats[gauge_metric_name] = avg_value
             logger.info(
-                f"{gauge_metric_name}: {avg_value:.3f} (averaged over {len(values)} snapshots)"
+                f"{gauge_metric_name}: {avg_value:.3f} "
+                f"(aggregation={aggregation}, averaged over {len(values)} snapshots)"
             )
         else:
             logger.warning(f"No values found for metric: {gauge_metric_name}")

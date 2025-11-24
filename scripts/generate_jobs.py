@@ -136,10 +136,10 @@ def validate_sweep_keys(
     """
     template_placeholders = extract_template_placeholders(template)
 
-    # Collect all sweep parameter names
+    # Collect all sweep parameter names (excluding 'num_gpus' which is a filter key)
     sweep_params = set()
     for param_group in sweep_config:
-        sweep_params.update(param_group.keys())
+        sweep_params.update(k for k in param_group.keys() if k != "num_gpus")
 
     # Check that all sweep params exist in template
     missing_in_template = sweep_params - template_placeholders
@@ -199,6 +199,53 @@ def compute_cartesian_product(
         combinations.append(dict(zip(keys, value_tuple)))
 
     return combinations
+
+
+def filter_sweep_config_by_num_gpus(
+    sweep_config: list[dict[str, list[Any]]],
+    num_gpus: int,
+) -> list[dict[str, list[Any]]]:
+    """Filter sweep configuration groups by num_gpus.
+
+    If a group has a 'num_gpus' key, it only applies to jobs with those GPU counts.
+    If a group doesn't have 'num_gpus', it applies to all GPU counts.
+
+    Args:
+        sweep_config: List of parameter group dicts
+        num_gpus: Number of GPUs for the current job
+
+    Returns:
+        Filtered sweep config with only applicable groups, with num_gpus key removed
+
+    Example:
+        >>> filter_sweep_config_by_num_gpus([
+        ...     {'a': [1], 'b': [2]},
+        ...     {'num_gpus': [2], 'a': [3], 'b': [4]}
+        ... ], num_gpus=1)
+        [{'a': [1], 'b': [2]}]
+        >>> filter_sweep_config_by_num_gpus([
+        ...     {'a': [1], 'b': [2]},
+        ...     {'num_gpus': [2], 'a': [3], 'b': [4]}
+        ... ], num_gpus=2)
+        [{'a': [1], 'b': [2]}, {'a': [3], 'b': [4]}]
+    """
+    filtered_groups = []
+
+    for param_group in sweep_config:
+        # Check if this group has a num_gpus filter
+        if "num_gpus" in param_group:
+            # Only include this group if num_gpus matches
+            if num_gpus in param_group["num_gpus"]:
+                # Create a copy without the num_gpus key
+                filtered_group = {
+                    k: v for k, v in param_group.items() if k != "num_gpus"
+                }
+                filtered_groups.append(filtered_group)
+        else:
+            # No filter, applies to all num_gpus
+            filtered_groups.append(param_group)
+
+    return filtered_groups
 
 
 def compute_sweep_combinations(
@@ -310,10 +357,18 @@ def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
                         sweep_config, template.command_template, config_source
                     )
 
-                    # Compute all sweep combinations
-                    sweep_combinations = compute_sweep_combinations(sweep_config)
-
+                    # Compute sweep combinations per num_gpus (with filtering)
                     for num_gpus in gpu_counts:
+                        # Filter sweep config for this specific num_gpus value
+                        filtered_sweep_config = filter_sweep_config_by_num_gpus(
+                            sweep_config, num_gpus
+                        )
+
+                        # Compute sweep combinations for this num_gpus
+                        sweep_combinations = compute_sweep_combinations(
+                            filtered_sweep_config
+                        )
+
                         workload = ModelWorkload(
                             model_id=model_id,
                             config_dir=gpu_dir,

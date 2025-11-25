@@ -8,15 +8,16 @@ from __future__ import annotations
 import os
 import json
 import logging
-import random
-from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal, Self, Optional
 
-from datasets import load_dataset
 from pydantic import BaseModel, model_validator
 
-from mlenergy.diffusion.dataset import DiffusionRequest, OpenPreferenceDataset, EvalCrafterDataset
+from mlenergy.diffusion.dataset import (
+    DiffusionRequest,
+    OpenPreferenceDataset,
+    EvalCrafterDataset,
+)
 from mlenergy.constants import DEFAULT_SEED
 
 logger = logging.getLogger(__name__)
@@ -43,21 +44,21 @@ MODEL_CONFIGS = {
     # https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers
     "stabilityai/stable-diffusion-3-medium-diffusers": {
         "inference_steps": 28,
-        "height": 1024, 
+        "height": 1024,
         "width": 1024,
         "num_frames": None,
         "fps": None,
     },
     "stabilityai/stable-diffusion-3.5-medium": {
         "inference_steps": 28,
-        "height": 1024, 
+        "height": 1024,
         "width": 1024,
         "num_frames": None,
         "fps": None,
     },
     "stabilityai/stable-diffusion-3.5-large": {
         "inference_steps": 28,
-        "height": 1024, 
+        "height": 1024,
         "width": 1024,
         "num_frames": None,
         "fps": None,
@@ -104,7 +105,7 @@ MODEL_CONFIGS = {
     # https://huggingface.co/BestWishYsh/ConsisID-preview
     "BestWishYsh/ConsisID-preview": {
         "inference_steps": 50,
-        "height": 480, # Some SP degree may fail because not divisible
+        "height": 480,  # Some SP degree may fail because not divisible
         "width": 720,
         "num_frames": 49,
         "fps": 8,
@@ -184,12 +185,12 @@ class DiffusionWorkloadConfig(BaseModel):
     seed: int = DEFAULT_SEED
     model_id: str
     batch_size: int
-    
+
     # Generation parameters - will use model-specific defaults if not specified
     height: Optional[int] = None
     width: Optional[int] = None
     inference_steps: Optional[int] = None
-    
+
     # Parallelism configuration
     ulysses_degree: int = 1
     ring_degree: int = 1
@@ -202,7 +203,7 @@ class DiffusionWorkloadConfig(BaseModel):
         """Validate the sanity of the workload and apply model-specific defaults."""
         if self.batch_size <= 0:
             raise ValueError("Batch size must be positive.")
-        
+
         # Apply model-specific defaults for parameters that weren't specified
         defaults = get_model_defaults(self.model_id)
 
@@ -218,7 +219,12 @@ class DiffusionWorkloadConfig(BaseModel):
     def to_path(
         self,
         of: Literal[
-            "requests", "results", "driver_log", "server_log", "image_outputs", "video_outputs"
+            "requests",
+            "results",
+            "driver_log",
+            "server_log",
+            "image_outputs",
+            "video_outputs",
         ],
     ) -> Path:
         """Generate a file path based on file type and workload parameters.
@@ -258,8 +264,6 @@ class DiffusionWorkloadConfig(BaseModel):
 
     def to_filename_parts(self) -> list[str]:
         """Generate filename parts based on workload parameters."""
-        # Clean model_id for filename
-        model_name = self.model_id.replace("/", "-").replace(".", "_")
         parts = [
             f"batch-{self.batch_size}",
             f"size-{self.height}x{self.width}",
@@ -275,11 +279,11 @@ class DiffusionWorkloadConfig(BaseModel):
         """Load the requests from the file specified by the configuration.
 
         If the file does not exist, it will call `sample` to sample new requests.
-        
+
         Args:
             warmup_iters: Number of warmup iterations
             benchmark_iters: Number of benchmark iterations
-            
+
         Returns:
             List of DiffusionRequest objects, one for each iteration
         """
@@ -299,13 +303,16 @@ class DiffusionWorkloadConfig(BaseModel):
         shared_requests_path = None
         if category_dir is not None:
             total_prompts = total_iters * self.batch_size
-            shared_requests_path = category_dir / f"requests-totalprompts-{total_prompts}-seed-{self.seed}.json"
+            shared_requests_path = (
+                category_dir
+                / f"requests-totalprompts-{total_prompts}-seed-{self.seed}.json"
+            )
             shared_requests_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Prefer loading from shared cache if available, otherwise fall back to model-specific cache
         if shared_requests_path is not None and shared_requests_path.exists():
             logger.info(f"Loading cached requests from {shared_requests_path}")
-            with open(shared_requests_path, 'r', encoding='utf-8') as f:
+            with open(shared_requests_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 requests = [DiffusionRequest(**req_data) for req_data in data]
@@ -313,13 +320,18 @@ class DiffusionWorkloadConfig(BaseModel):
                 requests = [DiffusionRequest(**data)]
             # Ensure model-specific requests.json is also written for this run
             if local_rank == 0 and not model_request_path.exists():
-                with open(model_request_path, 'w', encoding='utf-8') as f:
-                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+                with open(model_request_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        [req.model_dump() for req in requests],
+                        f,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
                 logger.info(f"Saved {len(requests)} requests to {model_request_path}")
             return requests
         if model_request_path.exists():
             logger.info(f"Loading cached requests from {model_request_path}")
-            with open(model_request_path, 'r', encoding='utf-8') as f:
+            with open(model_request_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 requests = [DiffusionRequest(**req_data) for req_data in data]
@@ -332,22 +344,32 @@ class DiffusionWorkloadConfig(BaseModel):
         requests = self.sample(total_iters)
         if local_rank == 0:
             if shared_requests_path is not None:
-                with open(shared_requests_path, 'w', encoding='utf-8') as f:
-                    json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+                with open(shared_requests_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        [req.model_dump() for req in requests],
+                        f,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
                 logger.info(f"Saved {len(requests)} requests to {shared_requests_path}")
-            with open(model_request_path, 'w', encoding='utf-8') as f:
-                json.dump([req.model_dump() for req in requests], f, indent=2, ensure_ascii=False)
+            with open(model_request_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    [req.model_dump() for req in requests],
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
             logger.info(f"Saved {len(requests)} requests to {model_request_path}")
         return requests
 
     def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the dataset.
-        
+
         This method should be implemented by subclasses to specify dataset-specific sampling logic.
-        
+
         Args:
             num_requests: Total number of DiffusionRequest objects to create
-            
+
         Returns:
             List of DiffusionRequest objects, each potentially with different prompts/seeds
         """
@@ -356,7 +378,7 @@ class DiffusionWorkloadConfig(BaseModel):
 
 class TextToImage(DiffusionWorkloadConfig):
     """Text-to-image generation workload using open-image-preferences dataset."""
-    
+
     def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the open-image-preferences dataset."""
         dataset = OpenPreferenceDataset(
@@ -370,29 +392,37 @@ class TextToImage(DiffusionWorkloadConfig):
 
 class TextToVideo(DiffusionWorkloadConfig):
     """Text-to-video generation workload using EvalCrafter dataset."""
-    
+
     # Video-specific parameters - will use model-specific defaults if not specified
     num_frames: Optional[int] = None
     fps: Optional[int] = None
 
     # For ConsisID, provide a URL or local path to reference face image
-    img_file_path: Optional[str] = "https://github.com/PKU-YuanGroup/ConsisID/blob/main/asserts/example_images/2.png?raw=true"
-    
+    img_file_path: Optional[str] = (
+        "https://github.com/PKU-YuanGroup/ConsisID/blob/main/asserts/example_images/2.png?raw=true"
+    )
+
     @model_validator(mode="after")
     def _validate_video_workload(self) -> Self:
         """Apply video-specific model defaults."""
         # Call parent validator first
         super()._validate_workload()
-        
+
         defaults = get_model_defaults(self.model_id)
-        
+
         if self.num_frames is None:
-            self.num_frames = defaults.get("num_frames", 16)
+            if defaults.get("num_frames") is None:
+                raise ValueError(
+                    f"num_frames must be specified for model {self.model_id}"
+                )
+            self.num_frames = defaults["num_frames"]
         if self.fps is None:
-            self.fps = defaults.get("fps", 8)
-                
+            if defaults.get("fps") is None:
+                raise ValueError(f"fps must be specified for model {self.model_id}")
+            self.fps = defaults["fps"]
+
         return self
-    
+
     def sample(self, num_requests: int) -> list[DiffusionRequest]:
         """Sample requests from the EvalCrafter dataset."""
         dataset = EvalCrafterDataset(
@@ -420,8 +450,10 @@ if __name__ == "__main__":
         width=512,
         inference_steps=28,
     )
-    
+
     requests = workload.load_requests(warmup_iters=2, benchmark_iters=4)
     logger.info(f"Loaded {len(requests)} requests")
     for i, req in enumerate(requests[:3]):
-        logger.info(f"Request {i+1}: {req.prompts[0][:100] if req.prompts else 'No prompts'}...") 
+        logger.info(
+            f"Request {i + 1}: {req.prompts[0][:100] if req.prompts else 'No prompts'}..."
+        )

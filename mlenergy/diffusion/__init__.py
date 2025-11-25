@@ -15,4 +15,4 @@ __all__ = [
     "TextToImage",
     "TextToVideo",
     "DiffusionArgs",
-] 
+]

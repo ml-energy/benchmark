@@ -6,21 +6,18 @@ for various diffusion models with energy monitoring and detailed metrics.
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import io
 import json
 import logging
 import os
 import random
-import sys
 import time
-import warnings
 from contextlib import redirect_stdout
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 import torch
@@ -69,9 +66,11 @@ from diffusers.pipelines.consisid.consisid_utils import (
     prepare_face_models,
     process_face_embeddings_infer,
 )
-from diffusers import WanPipeline, WanImageToVideoPipeline
+from diffusers import WanPipeline
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from xfuser.model_executor.models.transformers.transformer_wan import xFuserWanAttnProcessor
+from xfuser.model_executor.models.transformers.transformer_wan import (
+    xFuserWanAttnProcessor,
+)
 from diffusers import HunyuanVideoPipeline, HunyuanVideoTransformer3DModel
 from diffusers.utils import scale_lora_layers, unscale_lora_layers, USE_PEFT_BACKEND
 
@@ -82,7 +81,7 @@ from mlenergy.diffusion.workloads import (
     TextToVideo,
 )
 
-logger = logging.getLogger("mlenergy.diffusion.run")
+logger = logging.getLogger("mlenergy.diffusion.benchmark")
 
 WorkloadT = TypeVar("WorkloadT", bound=DiffusionWorkloadConfig)
 
@@ -193,9 +192,9 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
 
     # Results configuration
     overwrite_results: bool = False
-    save_images: bool = True
+    save_images: bool = True  # Temporarily use this for video too
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def set_benchmark_iters(self):
         """Set warmup_iters and benchmark_iters based on workload type and inference steps."""
         if isinstance(self.workload, TextToImage):
@@ -250,7 +249,7 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
         if t2 is not None:
             return functools.wraps(t2.__class__.forward)
         else:
-            return (lambda f: f)
+            return lambda f: f
 
     @functools.wraps(transformer.__class__.forward)
     @maybe_transformer_2(transformer_2)
@@ -285,17 +284,28 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
         else:
             ts_seq_len = None
 
-        temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
-            timestep, encoder_hidden_states, encoder_hidden_states_image, timestep_seq_len=ts_seq_len
+        temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
+            self.condition_embedder(
+                timestep,
+                encoder_hidden_states,
+                encoder_hidden_states_image,
+                timestep_seq_len=ts_seq_len,
+            )
         )
         if ts_seq_len is not None:
-            timestep_proj = timestep_proj.unflatten(2, (6, -1))  # batch_size, seq_len, 6, inner_dim
+            timestep_proj = timestep_proj.unflatten(
+                2, (6, -1)
+            )  # batch_size, seq_len, 6, inner_dim
         else:
-            timestep_proj = timestep_proj.unflatten(1, (6, -1))  # batch_size, 6, inner_dim
+            timestep_proj = timestep_proj.unflatten(
+                1, (6, -1)
+            )  # batch_size, 6, inner_dim
 
         if encoder_hidden_states_image is not None:
             # Wan2.1: when doing cross attention with image embeddings
-            encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
+            encoder_hidden_states = torch.concat(
+                [encoder_hidden_states_image, encoder_hidden_states], dim=1
+            )
         else:
             # Chunk EHS across sequence-parallel groups
             encoder_hidden_states = torch.chunk(
@@ -303,7 +313,10 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
             )[get_sequence_parallel_rank()]
 
         # Sequence-parallel: pad to multiple of sp world size before chunking
-        max_chunked_sequence_length = int(math.ceil(hidden_states.shape[1] / get_sequence_parallel_world_size())) * get_sequence_parallel_world_size()
+        max_chunked_sequence_length = (
+            int(math.ceil(hidden_states.shape[1] / get_sequence_parallel_world_size()))
+            * get_sequence_parallel_world_size()
+        )
         sequence_pad_amount = max_chunked_sequence_length - hidden_states.shape[1]
         hidden_states = torch.cat(
             [
@@ -318,9 +331,9 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
             ],
             dim=1,
         )
-        hidden_states = torch.chunk(hidden_states, get_sequence_parallel_world_size(), dim=-2)[
-            get_sequence_parallel_rank()
-        ]
+        hidden_states = torch.chunk(
+            hidden_states, get_sequence_parallel_world_size(), dim=-2
+        )[get_sequence_parallel_rank()]
 
         if ts_seq_len is not None:
             temb = torch.cat(
@@ -350,10 +363,12 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
                 ],
                 dim=1,
             )
-            temb = torch.chunk(temb, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-            timestep_proj = torch.chunk(timestep_proj, get_sequence_parallel_world_size(), dim=1)[
+            temb = torch.chunk(temb, get_sequence_parallel_world_size(), dim=1)[
                 get_sequence_parallel_rank()
             ]
+            timestep_proj = torch.chunk(
+                timestep_proj, get_sequence_parallel_world_size(), dim=1
+            )[get_sequence_parallel_rank()]
 
         freqs_cos, freqs_sin = rotary_emb
 
@@ -362,12 +377,19 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
                 [
                     freqs,
                     torch.zeros(
-                        1, sequence_pad_amount, freqs.shape[2], freqs.shape[3], device=freqs.device, dtype=freqs.dtype
+                        1,
+                        sequence_pad_amount,
+                        freqs.shape[2],
+                        freqs.shape[3],
+                        device=freqs.device,
+                        dtype=freqs.dtype,
                     ),
                 ],
                 dim=1,
             )
-            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
+            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=1)[
+                get_sequence_parallel_rank()
+            ]
             return freqs
 
         freqs_cos = get_rotary_emb_chunk(freqs_cos, sequence_pad_amount)
@@ -378,34 +400,57 @@ def _parallelize_wan_transformer(pipe: Any) -> None:
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for block in self.blocks:
                 hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    timestep_proj,
+                    rotary_emb,
                 )
         else:
             for block in self.blocks:
-                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+                hidden_states = block(
+                    hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
+                )
 
         # Output norm, projection & unpatchify
         if temb.ndim == 3:
             # batch_size, seq_len, inner_dim (wan 2.2 ti2v)
-            shift, scale = (self.scale_shift_table.unsqueeze(0).to(temb.device) + temb.unsqueeze(2)).chunk(2, dim=2)
+            shift, scale = (
+                self.scale_shift_table.unsqueeze(0).to(temb.device) + temb.unsqueeze(2)
+            ).chunk(2, dim=2)
             shift = shift.squeeze(2)
             scale = scale.squeeze(2)
         else:
             # batch_size, inner_dim
-            shift, scale = (self.scale_shift_table.to(temb.device) + temb.unsqueeze(1)).chunk(2, dim=1)
+            shift, scale = (
+                self.scale_shift_table.to(temb.device) + temb.unsqueeze(1)
+            ).chunk(2, dim=1)
 
         shift = shift.to(hidden_states.device)
         scale = scale.to(hidden_states.device)
 
-        hidden_states = (self.norm_out(hidden_states.float()) * (1 + scale) + shift).type_as(hidden_states)
+        hidden_states = (
+            self.norm_out(hidden_states.float()) * (1 + scale) + shift
+        ).type_as(hidden_states)
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = get_sp_group().all_gather(hidden_states, dim=-2)
 
         # Remove padding and reshape
-        hidden_states = hidden_states[:, : math.prod([post_patch_num_frames, post_patch_height, post_patch_width]), :]
+        hidden_states = hidden_states[
+            :,
+            : math.prod([post_patch_num_frames, post_patch_height, post_patch_width]),
+            :,
+        ]
         hidden_states = hidden_states.reshape(
-            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, p_t, p_h, p_w, -1
+            batch_size,
+            post_patch_num_frames,
+            post_patch_height,
+            post_patch_width,
+            p_t,
+            p_h,
+            p_w,
+            -1,
         )
         hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
         output = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
@@ -454,8 +499,13 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         if USE_PEFT_BACKEND:
             scale_lora_layers(self, lora_scale)
         else:
-            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
-                logging.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
+            if (
+                attention_kwargs is not None
+                and attention_kwargs.get("scale", None) is not None
+            ):
+                logging.warning(
+                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
+                )
 
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
 
@@ -473,19 +523,25 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         image_rotary_emb = self.rope(hidden_states)
 
         # 2. Conditional embeddings
-        temb, _ = self.time_text_embed(timestep=timestep, pooled_projection=pooled_projections, guidance=guidance)
+        temb, _ = self.time_text_embed(
+            timestep=timestep, pooled_projection=pooled_projections, guidance=guidance
+        )
         hidden_states = self.x_embedder(hidden_states)
-        encoder_hidden_states = self.context_embedder(encoder_hidden_states, timestep, encoder_attention_mask)
+        encoder_hidden_states = self.context_embedder(
+            encoder_hidden_states, timestep, encoder_attention_mask
+        )
 
-        hidden_states = hidden_states.reshape(batch_size, post_patch_num_frames, post_patch_height, post_patch_width, -1)
+        hidden_states = hidden_states.reshape(
+            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, -1
+        )
         hidden_states = hidden_states.flatten(1, 3)
 
-        hidden_states = torch.chunk(hidden_states, get_classifier_free_guidance_world_size(), dim=0)[
-            get_classifier_free_guidance_rank()
-        ]
-        hidden_states = torch.chunk(hidden_states, get_sequence_parallel_world_size(), dim=-2)[
-            get_sequence_parallel_rank()
-        ]
+        hidden_states = torch.chunk(
+            hidden_states, get_classifier_free_guidance_world_size(), dim=0
+        )[get_classifier_free_guidance_rank()]
+        hidden_states = torch.chunk(
+            hidden_states, get_sequence_parallel_world_size(), dim=-2
+        )[get_sequence_parallel_rank()]
 
         encoder_attention_mask = encoder_attention_mask.to(torch.bool).any(dim=0)
         encoder_hidden_states = encoder_hidden_states[:, encoder_attention_mask, :]
@@ -494,9 +550,9 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         else:
             get_runtime_state().split_text_embed_in_sp = True
 
-        encoder_hidden_states = torch.chunk(encoder_hidden_states, get_classifier_free_guidance_world_size(), dim=0)[
-            get_classifier_free_guidance_rank()
-        ]
+        encoder_hidden_states = torch.chunk(
+            encoder_hidden_states, get_classifier_free_guidance_world_size(), dim=0
+        )[get_classifier_free_guidance_rank()]
         if get_runtime_state().split_text_embed_in_sp:
             encoder_hidden_states = torch.chunk(
                 encoder_hidden_states, get_sequence_parallel_world_size(), dim=-2
@@ -505,7 +561,9 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         freqs_cos, freqs_sin = image_rotary_emb
 
         def get_rotary_emb_chunk(freqs):
-            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=0)[get_sequence_parallel_rank()]
+            freqs = torch.chunk(freqs, get_sequence_parallel_world_size(), dim=0)[
+                get_sequence_parallel_rank()
+            ]
             return freqs
 
         freqs_cos = get_rotary_emb_chunk(freqs_cos)
@@ -527,33 +585,41 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
             ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False}
 
             for block in self.transformer_blocks:
-                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb,
-                    None,
-                    image_rotary_emb,
-                    **ckpt_kwargs,
+                hidden_states, encoder_hidden_states = (
+                    torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(block),
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb,
+                        None,
+                        image_rotary_emb,
+                        **ckpt_kwargs,
+                    )
                 )
 
             for block in self.single_transformer_blocks:
-                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb,
-                    None,
-                    image_rotary_emb,
-                    **ckpt_kwargs,
+                hidden_states, encoder_hidden_states = (
+                    torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(block),
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb,
+                        None,
+                        image_rotary_emb,
+                        **ckpt_kwargs,
+                    )
                 )
 
         else:
             for block in self.transformer_blocks:
-                hidden_states, encoder_hidden_states = block(hidden_states, encoder_hidden_states, temb, None, image_rotary_emb)
+                hidden_states, encoder_hidden_states = block(
+                    hidden_states, encoder_hidden_states, temb, None, image_rotary_emb
+                )
 
             for block in self.single_transformer_blocks:
-                hidden_states, encoder_hidden_states = block(hidden_states, encoder_hidden_states, temb, None, image_rotary_emb)
+                hidden_states, encoder_hidden_states = block(
+                    hidden_states, encoder_hidden_states, temb, None, image_rotary_emb
+                )
 
         # 5. Output projection
         hidden_states = self.norm_out(hidden_states, temb)
@@ -563,7 +629,14 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         hidden_states = get_cfg_group().all_gather(hidden_states, dim=0)
 
         hidden_states = hidden_states.reshape(
-            batch_size, post_patch_num_frames, post_patch_height, post_patch_width, -1, p_t, p, p
+            batch_size,
+            post_patch_num_frames,
+            post_patch_height,
+            post_patch_width,
+            -1,
+            p_t,
+            p,
+            p,
         )
 
         hidden_states = hidden_states.permute(0, 4, 1, 5, 2, 6, 3, 7)
@@ -581,7 +654,10 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
     transformer.forward = new_forward
 
     # Set xFuser attention processor
-    from xfuser.model_executor.layers.attention_processor import xFuserHunyuanVideoAttnProcessor2_0
+    from xfuser.model_executor.layers.attention_processor import (
+        xFuserHunyuanVideoAttnProcessor2_0,
+    )
+
     assert xFuserHunyuanVideoAttnProcessor2_0 is not None
     for block in transformer.transformer_blocks + transformer.single_transformer_blocks:
         block.attn.processor = xFuserHunyuanVideoAttnProcessor2_0()
@@ -608,7 +684,9 @@ def _apply_runtime_hotfixes() -> None:
             result = orig_fn(*args, **kwargs)
             # Guarantee torch tensors (tuple or single)
             if isinstance(result, tuple):
-                return tuple(x if torch.is_tensor(x) else torch.as_tensor(x) for x in result)
+                return tuple(
+                    x if torch.is_tensor(x) else torch.as_tensor(x) for x in result
+                )
             return result if torch.is_tensor(result) else torch.as_tensor(result)
 
         xf_hun.get_2d_rotary_pos_embed = _patched_get_2d_rotary_pos_embed
@@ -634,15 +712,12 @@ def ensure_model_downloaded(model_id: str, cache_dir: str | None = None) -> str:
 
 
 def setup_pipeline(
-    model_id: str,
-    engine_config: Any,
-    local_rank: int,
-    args: DiffusionArgs
+    model_id: str, engine_config: Any, local_rank: int, args: DiffusionArgs
 ) -> tuple[Any, int]:
     """Setup the appropriate pipeline based on model_id."""
     if model_id not in PIPELINE_CONFIGS:
         raise ValueError(f"Unsupported model_id: {model_id}")
-    
+
     config = PIPELINE_CONFIGS[model_id]
     model_type = get_model_type_from_id(model_id)
 
@@ -652,7 +727,7 @@ def setup_pipeline(
         local_model_dir = ensure_model_downloaded(model_id, hf_cache_dir)
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
-    
+
     # For ConsisID, use a local directory path for both pipeline and face model utils
     if get_model_type_from_id(model_id) == "ConsisID":
         if local_model_dir is None:
@@ -674,7 +749,7 @@ def setup_pipeline(
         "return_hidden_states_first": False,
         "num_steps": args.workload.inference_steps,
     }
-    
+
     # Handle T5 encoder if needed
     text_encoder_kwargs = {}
     if config["needs_t5"]:
@@ -685,7 +760,7 @@ def setup_pipeline(
         )
 
         text_encoder_kwargs[config["t5_subfolder"]] = text_encoder
-    
+
     # if args.use_fp8_t5_encoder:
     #     try:
     #         from optimum.quanto import freeze, qfloat8, quantize
@@ -700,9 +775,9 @@ def setup_pipeline(
         "pretrained_model_name_or_path": model_id,
         "engine_config": engine_config,
         "torch_dtype": config["dtype"],
-        **text_encoder_kwargs
+        **text_encoder_kwargs,
     }
-    
+
     # Add cache args for models that support it
     if get_model_type_from_id(model_id) == "Flux":
         pipeline_kwargs["cache_args"] = cache_args
@@ -772,16 +847,16 @@ def get_inference_kwargs(
         "output_type": "pil" if args.save_images else "latent",
         "generator": torch.Generator(device="cuda").manual_seed(args.workload.seed),
     }
-    
+
     # Add video parameters
-    if hasattr(args.workload, 'num_frames'):
+    if hasattr(args.workload, "num_frames"):
         if model_type == "Latte":
             inference_kwargs["video_length"] = args.workload.num_frames
         else:
             inference_kwargs["num_frames"] = args.workload.num_frames
     # if hasattr(args.workload, 'fps'):
     #     inference_kwargs["fps"] = args.workload.fps
-    
+
     return inference_kwargs
 
 
@@ -791,7 +866,7 @@ def save_generated_media(
     request: Any,
     args: DiffusionArgs,
     output_dir: Path,
-    iteration_idx: int = 0
+    iteration_idx: int = 0,
 ):
     """Save images or videos depending on pipeline output.
 
@@ -801,10 +876,14 @@ def save_generated_media(
     if not args.save_images:
         return
 
-    should_save = pipe.is_dp_last_group() if hasattr(pipe, 'is_dp_last_group') else is_dp_last_group()
+    should_save = (
+        pipe.is_dp_last_group()
+        if hasattr(pipe, "is_dp_last_group")
+        else is_dp_last_group()
+    )
     if not should_save:
         return
-    
+
     dp_group_index = get_data_parallel_rank()
     num_dp_groups = get_data_parallel_world_size()
     num_prompts = len(request.prompts)
@@ -818,12 +897,16 @@ def save_generated_media(
                 prompt_text = request.prompts[image_rank]
                 # Extract a clean name from the prompt
                 words = prompt_text.split()[:5]  # Take first 5 words
-                safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
-                safe_name = safe_name.replace(' ', '_').lower()
+                safe_name = "_".join(
+                    word for word in words if word.isalnum() or word in ["-", "_"]
+                )[:30]
+                safe_name = safe_name.replace(" ", "_").lower()
                 filename = f"i{iteration_idx}-{image_rank}_{safe_name}.png"
                 image_path = output_dir / filename
                 image.save(image_path)
-                logger.info(f"Saved image {image_rank} of {iteration_idx} to {image_path}")
+                logger.info(
+                    f"Saved image {image_rank} of {iteration_idx} to {image_path}"
+                )
         return
 
     # Save videos
@@ -835,12 +918,16 @@ def save_generated_media(
                 prompt_text = request.prompts[video_rank]
                 # Extract a clean name from the prompt
                 words = prompt_text.split()[:5]  # Take first 5 words
-                safe_name = "_".join(word for word in words if word.isalnum() or word in ['-', '_'])[:30]
-                safe_name = safe_name.replace(' ', '_').lower()
+                safe_name = "_".join(
+                    word for word in words if word.isalnum() or word in ["-", "_"]
+                )[:30]
+                safe_name = safe_name.replace(" ", "_").lower()
                 filename = f"i{iteration_idx}-{video_rank}_{safe_name}.mp4"
                 video_path = output_dir / filename
                 export_to_video(video_frames, video_path, fps=fps)
-                logger.info(f"Saved video {video_rank} of {iteration_idx} to {video_path}")
+                logger.info(
+                    f"Saved video {video_rank} of {iteration_idx} to {video_path}"
+                )
 
 
 def save_results(
@@ -856,45 +943,47 @@ def save_results(
 ) -> None:
     if local_rank != 0:
         return
-        
+
     # Calculate metrics
     num_images = args.workload.batch_size * args.benchmark_iters
     throughput = num_images / benchmark_duration if benchmark_duration > 0 else 0.0
     avg_time_per_image = benchmark_duration / num_images if num_images > 0 else 0.0
-    
+
     # Prepare results dictionary
     result_json: dict[str, Any] = {}
-    
+
     # Setup information
     current_dt = datetime.now().strftime("%Y%m%d-%H%M%S")
     result_json["date"] = current_dt
     result_json["model_id"] = args.workload.model_id
     result_json["batch_size"] = args.workload.batch_size
     result_json["num_iterations"] = args.benchmark_iters
-    
+
     # Generation parameters
     result_json["height"] = args.workload.height
-    result_json["width"] = args.workload.width 
+    result_json["width"] = args.workload.width
     result_json["inference_steps"] = args.workload.inference_steps
     result_json["seed"] = args.workload.seed
-    
-    # Performance metrics  
+
+    # Performance metrics
     result_json["total_images"] = num_images
     result_json["total_time"] = benchmark_duration
     result_json["throughput_images_per_sec"] = throughput
     result_json["avg_time_per_image"] = avg_time_per_image
-    
+
     # Energy metrics
     if total_energy_result:
         result_json["total_energy"] = total_energy_result.total_energy
-        result_json["energy_per_image"] = total_energy_result.total_energy / num_images if num_images > 0 else 0.0
+        result_json["energy_per_image"] = (
+            total_energy_result.total_energy / num_images if num_images > 0 else 0.0
+        )
         result_json["energy_measurement"] = asdict(total_energy_result)
 
     if iter_energy_results:
         result_json["iteration_energy_measurements"] = [
             asdict(iter_energy_result) for iter_energy_result in iter_energy_results
         ]
-    
+
     # Configuration details
     result_json["configurations"] = {
         "ulysses_degree": args.workload.ulysses_degree,
@@ -915,9 +1004,9 @@ def save_results(
     result_file = args.workload.to_path(of="results")
     with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2)
-    
+
     logger.info(f"Results saved to {result_file}")
-    
+
     # Log summary
     logger.info("[Diffusion Benchmark Results]")
     logger.info("%-40s: %s", "Model ID", args.workload.model_id)
@@ -926,10 +1015,14 @@ def save_results(
     logger.info("%-40s: %.2f", "Total Time (s)", benchmark_duration)
     logger.info("%-40s: %.2f", "Images per Second", throughput)
     logger.info("%-40s: %.2f", "Seconds per Image", avg_time_per_image)
-    
+
     if total_energy_result:
         logger.info("%-40s: %.2f", "Total Energy (J)", total_energy_result.total_energy)
-        logger.info("%-40s: %.2f", "Energy per Image (J)", total_energy_result.total_energy / num_images)
+        logger.info(
+            "%-40s: %.2f",
+            "Energy per Image (J)",
+            total_energy_result.total_energy / num_images,
+        )
 
 
 def main(args: DiffusionArgs) -> None:
@@ -968,7 +1061,7 @@ def main(args: DiffusionArgs) -> None:
         zeus_monitor = ZeusMonitor()
         power_monitor = PowerMonitor(update_period=0.1)
         temperature_monitor = TemperatureMonitor(update_period=0.5)
-    
+
     random.seed(args.workload.seed)
     np.random.seed(args.workload.seed)
     torch.manual_seed(args.workload.seed)
@@ -976,7 +1069,7 @@ def main(args: DiffusionArgs) -> None:
     requests = args.workload.load_requests(args.warmup_iters, args.benchmark_iters)
 
     # Setup xFuser arguments
-    logger.info(f"Setting up xFuser args")
+    logger.info("Setting up xFuser args")
     xfuser_args = xFuserArgs(
         model=args.workload.model_id,
         ulysses_degree=args.workload.ulysses_degree,
@@ -992,11 +1085,10 @@ def main(args: DiffusionArgs) -> None:
 
     world_group = get_world_group()
     local_rank = world_group.local_rank
-    world_size = world_group.world_size
     torch.cuda.set_device(local_rank)
 
     # Setup xFuser pipeline
-    logger.info(f"Setting up xFuser pipeline")
+    logger.info("Setting up xFuser pipeline")
     pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
 
     # Enable VAE tiling and slicing for text-to-video workloads
@@ -1009,8 +1101,13 @@ def main(args: DiffusionArgs) -> None:
 
     # Prepare/warmup pipeline
     dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
-    if model_type == "CogVideo" or model_type == "Latte" or model_type == "Wan" or model_type == "HunyuanVideo":
-        logger.info(f"Warming up pipeline with 1-step inference")
+    if (
+        model_type == "CogVideo"
+        or model_type == "Latte"
+        or model_type == "Wan"
+        or model_type == "HunyuanVideo"
+    ):
+        logger.info("Warming up pipeline with 1-step inference")
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup
         if model_type == "Latte":
@@ -1020,23 +1117,35 @@ def main(args: DiffusionArgs) -> None:
         else:
             _ = pipe(**warmup_kwargs)
     elif model_type == "ConsisID":
-        logger.info("ConsisID detected: skipping prepare_run; will warm up via forward call.")
+        logger.info(
+            "ConsisID detected: skipping prepare_run; will warm up via forward call."
+        )
     else:
-        logger.info(f"Preparing xFuser pipeline with prepare_run")
+        logger.info("Preparing xFuser pipeline with prepare_run")
         pipe.prepare_run(input_config, steps=args.workload.inference_steps)
 
     # Warmup iterations with different requests
-    logger.info(f"Running {args.warmup_iters} warmup iterations with different requests")
-    output_kind = "video_outputs" if getattr(args.workload, "num_frames", None) else "image_outputs"
+    logger.info(
+        f"Running {args.warmup_iters} warmup iterations with different requests"
+    )
+    output_kind = (
+        "video_outputs"
+        if getattr(args.workload, "num_frames", None)
+        else "image_outputs"
+    )
     output_dir = args.workload.to_path(of=output_kind)
-    
+
     # Prepare face models once for ConsisID
     consisid_face_models = None
     consisid_face_inputs = None
     if model_type == "ConsisID":
         device = torch.device(f"cuda:{local_rank}")
-        model_root = getattr(engine_config.model_config, "model", args.workload.model_id)
-        consisid_face_models = prepare_face_models(model_root, device=device, dtype=dtype)
+        model_root = getattr(
+            engine_config.model_config, "model", args.workload.model_id
+        )
+        consisid_face_models = prepare_face_models(
+            model_root, device=device, dtype=dtype
+        )
         # Precompute face embeddings once and reuse across all iterations
         (
             face_helper_1,
@@ -1059,9 +1168,9 @@ def main(args: DiffusionArgs) -> None:
             img_file_path,
             is_align_face=True,
         )
-    
+
     for i in range(args.warmup_iters):
-        logger.info(f"Warmup iteration {i+1}/{args.warmup_iters}")
+        logger.info(f"Warmup iteration {i + 1}/{args.warmup_iters}")
         warmup_request = requests[i]
         if model_type == "ConsisID":
             # Reuse precomputed ConsisID-specific inputs
@@ -1076,14 +1185,14 @@ def main(args: DiffusionArgs) -> None:
                     "use_dynamic_cfg": False,
                 }
             )
-            warmup_output = pipe(**warmup_kwargs)
+            _ = pipe(**warmup_kwargs)
         else:
             warmup_kwargs = get_inference_kwargs(warmup_request, args)
             if model_type == "Latte":
                 with torch.autocast(device_type="cuda", dtype=dtype):
-                    warmup_output = pipe(**warmup_kwargs)
+                    _ = pipe(**warmup_kwargs)
             else:
-                warmup_output = pipe(**warmup_kwargs)
+                _ = pipe(**warmup_kwargs)
 
     # Benchmark iterations with different requests
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
@@ -1091,10 +1200,10 @@ def main(args: DiffusionArgs) -> None:
     torch.cuda.synchronize()
     torch.distributed.barrier()
     benchmark_start_time = time.time()
-    
+
     if zeus_monitor:
         zeus_monitor.begin_window("entire_benchmark", sync_execution=False)
-    
+
     for i in range(args.benchmark_iters):
         request_idx = args.warmup_iters + i
         benchmark_request = requests[request_idx]
@@ -1113,32 +1222,38 @@ def main(args: DiffusionArgs) -> None:
             )
         else:
             benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
-        
-        logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
+
+        logger.info(f"Benchmark iteration {i + 1}/{args.benchmark_iters}")
         torch.cuda.synchronize()
         torch.distributed.barrier()
         if zeus_monitor:
             zeus_monitor.begin_window("iteration", sync_execution=False)
-        
+
         if model_type == "Latte":
             with torch.autocast(device_type="cuda", dtype=dtype):
                 benchmark_output = pipe(**benchmark_kwargs)
         else:
             benchmark_output = pipe(**benchmark_kwargs)
-        
+
         torch.cuda.synchronize()
         torch.distributed.barrier()
         if zeus_monitor:
-            iter_energy_results.append(zeus_monitor.end_window("iteration", sync_execution=False))
+            iter_energy_results.append(
+                zeus_monitor.end_window("iteration", sync_execution=False)
+            )
 
-        save_generated_media(pipe, benchmark_output, benchmark_request, args, output_dir, i)
+        save_generated_media(
+            pipe, benchmark_output, benchmark_request, args, output_dir, i
+        )
 
     torch.cuda.synchronize()
     torch.distributed.barrier()
 
     total_energy_result = None
     if zeus_monitor:
-        total_energy_result = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
+        total_energy_result = zeus_monitor.end_window(
+            "entire_benchmark", sync_execution=False
+        )
     benchmark_end_time = time.time()
 
     power_timeline = None
@@ -1152,7 +1267,7 @@ def main(args: DiffusionArgs) -> None:
             start_time=benchmark_start_time,
             end_time=benchmark_end_time,
         )
-    
+
     benchmark_duration = benchmark_end_time - benchmark_start_time
     logger.info(f"End running diffusion benchmark, duration: {benchmark_duration:.2f}s")
 
@@ -1168,7 +1283,7 @@ def main(args: DiffusionArgs) -> None:
             benchmark_start_time,
             benchmark_end_time,
         )
-    
+
     # Proactively free pipeline and CUDA memory before teardown
     try:
         try:
@@ -1183,7 +1298,9 @@ def main(args: DiffusionArgs) -> None:
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
     except Exception as sync_err:
-        logger.warning("Non-fatal error during final sync before shutdown: %s", sync_err)
+        logger.warning(
+            "Non-fatal error during final sync before shutdown: %s", sync_err
+        )
     # Best-effort teardown of xFuser groups
     try:
         get_runtime_state().destroy_distributed_env()
@@ -1194,7 +1311,9 @@ def main(args: DiffusionArgs) -> None:
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
     except Exception as pg_err:
-        logger.warning("Ignoring error during default process group shutdown: %s", pg_err)
+        logger.warning(
+            "Ignoring error during default process group shutdown: %s", pg_err
+        )
 
 
 # TODO: handle server log
@@ -1204,24 +1323,26 @@ if __name__ == "__main__":
     # Set up logging
     # Only rank 0 should write to the driver log file to avoid conflicts
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    
+
     # Create handlers
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s [%(name)s: %(lineno)d] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     stream_handler.setFormatter(formatter)
-    
+
     handlers = [stream_handler]
-    
+
     if local_rank == 0:
-        file_handler = logging.FileHandler(args.workload.to_path(of="driver_log"), mode="w")
+        file_handler = logging.FileHandler(
+            args.workload.to_path(of="driver_log"), mode="w"
+        )
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         handlers.append(file_handler)
-    
+
     # Configure root logger with force=True to override any existing configuration
     logging.basicConfig(
         level=logging.INFO,
@@ -1235,4 +1356,4 @@ if __name__ == "__main__":
         main(args)
     except Exception as e:
         logger.exception("An error occurred during the benchmark: %s", e)
-        raise 
+        raise

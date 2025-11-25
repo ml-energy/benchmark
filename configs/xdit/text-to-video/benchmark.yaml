@@ -6,9 +6,9 @@ command_template: |
     --master_port $MASTER_PORT \
     --master_addr $MASTER_ADDR \
     mlenergy/diffusion/benchmark.py \
-    workload:text-to-image \
+    workload:text-to-video \
     --workload.model_id {model_id} \
-    --workload.base_dir run/diffusion/text-to-image/{model_id} \
+    --workload.base_dir run/diffusion/text-to-video/{model_id} \
     --workload.batch_size {batch_size} \
     --workload.ulysses_degree {ulysses_degree} \
     --workload.ring_degree {ring_degree} || echo 'Combination failed (non-zero exit), continuing to next.' >&2
@@ -44,3 +44,5 @@ sweep_defaults:
   - batch_size: [1, 2, 4, 8, 16]
     ulysses_degree: [8]
     ring_degree: [1]
+
+

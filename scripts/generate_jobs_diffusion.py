@@ -603,7 +603,6 @@ def generate_slurm_script(
                 "module load gcc",
                 "",
                 "source .venv/bin/activate",
-                "export HF_HOME=/nfs/turbo/coe-SymbioticLab/hfcache",
                 "",
             ]
         )
@@ -684,10 +683,7 @@ def generate_slurm_script(
         config_source=f"Slurm: {dataset}/{workload.model_id}/{gpu_model}",
     )
 
-    # Run command; if it fails (e.g., OOM), log and continue to next combination.
-    script_lines.append(
-        f"  {command_str} || echo 'Combination failed (non-zero exit), continuing to next.' >&2"
-    )
+    script_lines.append(f"  {command_str}")
     script_lines.append("done")
 
     with open(output_file, "w") as f:

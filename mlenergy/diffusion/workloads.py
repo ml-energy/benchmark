@@ -48,6 +48,20 @@ MODEL_CONFIGS = {
         "num_frames": None,
         "fps": None,
     },
+    "stabilityai/stable-diffusion-3.5-medium": {
+        "inference_steps": 28,
+        "height": 1024, 
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
+    "stabilityai/stable-diffusion-3.5-large": {
+        "inference_steps": 28,
+        "height": 1024, 
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
     # https://huggingface.co/docs/diffusers/en/api/pipelines/hunyuandit
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "inference_steps": 50,
@@ -58,6 +72,13 @@ MODEL_CONFIGS = {
     },
     # https://github.com/NVlabs/Sana
     "Efficient-Large-Model/SANA1.5_4.8B_1024px_diffusers": {
+        "inference_steps": 20,
+        "height": 1024,
+        "width": 1024,
+        "num_frames": None,
+        "fps": None,
+    },
+    "Efficient-Large-Model/SANA1.5_1.6B_1024px_diffusers": {
         "inference_steps": 20,
         "height": 1024,
         "width": 1024,

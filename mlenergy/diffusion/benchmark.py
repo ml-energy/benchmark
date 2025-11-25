@@ -106,6 +106,18 @@ PIPELINE_CONFIGS = {
         "t5_subfolder": "text_encoder_3",
         "dtype": torch.bfloat16,
     },
+    "stabilityai/stable-diffusion-3.5-medium": {
+        "pipeline_class": xFuserStableDiffusion3Pipeline,
+        "needs_t5": True,
+        "t5_subfolder": "text_encoder_3",
+        "dtype": torch.bfloat16,
+    },
+    "stabilityai/stable-diffusion-3.5-large": {
+        "pipeline_class": xFuserStableDiffusion3Pipeline,
+        "needs_t5": True,
+        "t5_subfolder": "text_encoder_3",
+        "dtype": torch.bfloat16,
+    },
     "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers": {
         "pipeline_class": xFuserHunyuanDiTPipeline,
         "needs_t5": True,
@@ -113,6 +125,11 @@ PIPELINE_CONFIGS = {
         "dtype": torch.bfloat16,
     },
     "Efficient-Large-Model/SANA1.5_4.8B_1024px_diffusers": {
+        "pipeline_class": xFuserSanaPipeline,
+        "needs_t5": False,
+        "dtype": torch.bfloat16,
+    },
+    "Efficient-Large-Model/SANA1.5_1.6B_1024px_diffusers": {
         "pipeline_class": xFuserSanaPipeline,
         "needs_t5": False,
         "dtype": torch.bfloat16,
@@ -584,7 +601,7 @@ def setup_pipeline(
     if local_rank == 0:
         local_model_dir = ensure_model_downloaded(model_id, hf_cache_dir)
     if torch.distributed.is_initialized():
-        torch.distributed.barrier(device_ids=[local_rank])
+        torch.distributed.barrier()
     
     # For ConsisID, use a local directory path for both pipeline and face model utils
     if get_model_type_from_id(model_id) == "ConsisID":
@@ -918,20 +935,22 @@ def main(args: DiffusionArgs) -> None:
     world_group = get_world_group()
     local_rank = world_group.local_rank
     world_size = world_group.world_size
+    torch.cuda.set_device(local_rank)
 
     # Setup xFuser pipeline
     logger.info(f"Setting up xFuser pipeline")
     pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
+    model_type = get_model_type_from_id(args.workload.model_id)
 
     # Enable VAE tiling and slicing for text-to-video workloads
     if isinstance(args.workload, TextToVideo):
-        pipe.vae.enable_tiling()
-        logger.info("Enabled VAE tiling for text-to-video pipeline.")
-        pipe.vae.enable_slicing()
-        logger.info("Enabled VAE slicing for text-to-video pipeline.")
+        if model_type != "Latte":
+            pipe.vae.enable_tiling()
+            logger.info("Enabled VAE tiling for text-to-video pipeline.")
+            pipe.vae.enable_slicing()
+            logger.info("Enabled VAE slicing for text-to-video pipeline.")
 
     # Prepare/warmup pipeline
-    model_type = get_model_type_from_id(args.workload.model_id)
     dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
     if model_type == "CogVideo" or model_type == "Latte" or model_type == "Wan" or model_type == "HunyuanVideo":
         logger.info(f"Warming up pipeline with 1-step inference")
@@ -1013,11 +1032,11 @@ def main(args: DiffusionArgs) -> None:
     logger.info(f"Start running {args.benchmark_iters} benchmark iterations")
     iter_energy_results = []
     torch.cuda.synchronize()
-    torch.distributed.barrier(device_ids=[local_rank])
+    torch.distributed.barrier()
     benchmark_start_time = time.time()
     
     if zeus_monitor:
-        zeus_monitor.begin_window("entire_benchmark")
+        zeus_monitor.begin_window("entire_benchmark", sync_execution=False)
     
     for i in range(args.benchmark_iters):
         request_idx = args.warmup_iters + i
@@ -1039,24 +1058,30 @@ def main(args: DiffusionArgs) -> None:
             benchmark_kwargs = get_inference_kwargs(benchmark_request, args)
         
         logger.info(f"Benchmark iteration {i+1}/{args.benchmark_iters}")
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
         if zeus_monitor:
-            zeus_monitor.begin_window("iteration")
+            zeus_monitor.begin_window("iteration", sync_execution=False)
+        
         if model_type == "Latte":
             with torch.autocast(device_type="cuda", dtype=dtype):
                 benchmark_output = pipe(**benchmark_kwargs)
         else:
             benchmark_output = pipe(**benchmark_kwargs)
+        
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
         if zeus_monitor:
-            iter_energy_results.append(zeus_monitor.end_window("iteration"))
+            iter_energy_results.append(zeus_monitor.end_window("iteration", sync_execution=False))
 
         save_generated_media(pipe, benchmark_output, benchmark_request, args, output_dir, i)
 
     torch.cuda.synchronize()
-    torch.distributed.barrier(device_ids=[local_rank])
+    torch.distributed.barrier()
 
     total_energy_result = None
     if zeus_monitor:
-        total_energy_result = zeus_monitor.end_window("entire_benchmark")
+        total_energy_result = zeus_monitor.end_window("entire_benchmark", sync_execution=False)
     benchmark_end_time = time.time()
 
     power_timeline = None
@@ -1087,7 +1112,32 @@ def main(args: DiffusionArgs) -> None:
             benchmark_end_time,
         )
     
-    get_runtime_state().destroy_distributed_env()
+    # Proactively free pipeline and CUDA memory before teardown
+    try:
+        try:
+            del pipe
+        except Exception:
+            pass
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
+        time.sleep(0.5)
+        # Ensure all ranks have fully finished work before tearing down NCCL groups
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+    except Exception as sync_err:
+        logger.warning("Non-fatal error during final sync before shutdown: %s", sync_err)
+    # Best-effort teardown of xFuser groups
+    try:
+        get_runtime_state().destroy_distributed_env()
+    except Exception as shutdown_err:
+        logger.warning("Ignoring error during distributed shutdown: %s", shutdown_err)
+    # Finally, destroy the default process group explicitly
+    try:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+    except Exception as pg_err:
+        logger.warning("Ignoring error during default process group shutdown: %s", pg_err)
 
 
 # TODO: handle server log

@@ -21,6 +21,3 @@ sweep:
   - num_gpus: [2]
     num_request_repeats: [12]
     max_num_seqs: [2048]
-  - num_gpus: [2]
-    num_request_repeats: [18]
-    max_num_seqs: [3072]

@@ -27,7 +27,7 @@ import torch
 import torch.distributed
 import tyro
 from huggingface_hub import snapshot_download
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from transformers.models.t5 import T5EncoderModel
 from zeus.monitor import ZeusMonitor, PowerMonitor, TemperatureMonitor
 from zeus.show_env import show_env
@@ -139,6 +139,11 @@ PIPELINE_CONFIGS = {
         "needs_t5": False,  # CogVideoX uses built-in text encoder, not T5
         "dtype": torch.bfloat16,
     },
+    "zai-org/CogVideoX-2b": {
+        "pipeline_class": xFuserCogVideoXPipeline,
+        "needs_t5": False,  # CogVideoX uses built-in text encoder, not T5
+        "dtype": torch.bfloat16,
+    },
     # ConsisID official repo id; also support local directories detected dynamically
     "BestWishYsh/ConsisID-preview": {
         "pipeline_class": xFuserConsisIDPipeline,
@@ -189,6 +194,21 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
     # Results configuration
     overwrite_results: bool = False
     save_images: bool = True
+
+    @model_validator(mode='after')
+    def set_benchmark_iters(self):
+        """Set warmup_iters and benchmark_iters based on workload type and inference steps."""
+        if isinstance(self.workload, TextToImage):
+            if self.workload.inference_steps <= 30:
+                self.warmup_iters = 4
+                self.benchmark_iters = 8
+            else:
+                self.warmup_iters = 2
+                self.benchmark_iters = 4
+        elif isinstance(self.workload, TextToVideo):
+            self.warmup_iters = 1
+            self.benchmark_iters = 2
+        return self
 
 
 def get_model_type_from_id(model_id: str) -> str:
@@ -567,6 +587,36 @@ def _parallelize_hunyuan_video_transformer(pipe: Any) -> None:
         block.attn.processor = xFuserHunyuanVideoAttnProcessor2_0()
 
 
+def _apply_runtime_hotfixes() -> None:
+    """Apply small runtime hotfixes for upstream API changes.
+
+    - Forces diffusers' get_2d_rotary_pos_embed to return torch tensors by
+      overriding the reference used inside xFuser's HunyuanDiT pipeline, avoiding
+      the deprecation error when output_type == 'np' on diffusers >= 0.33.0.
+    """
+    try:
+        # Patch the local reference used by xFuser's HunyuanDiT wrapper module
+        import xfuser.model_executor.pipelines.pipeline_hunyuandit as xf_hun
+        from diffusers.models import embeddings as diff_embeddings
+
+        orig_fn = diff_embeddings.get_2d_rotary_pos_embed
+
+        def _patched_get_2d_rotary_pos_embed(*args, **kwargs):
+            # Ensure modern API path without triggering deprecated numpy return
+            if kwargs.get("output_type") != "pt":
+                kwargs["output_type"] = "pt"
+            result = orig_fn(*args, **kwargs)
+            # Guarantee torch tensors (tuple or single)
+            if isinstance(result, tuple):
+                return tuple(x if torch.is_tensor(x) else torch.as_tensor(x) for x in result)
+            return result if torch.is_tensor(result) else torch.as_tensor(result)
+
+        xf_hun.get_2d_rotary_pos_embed = _patched_get_2d_rotary_pos_embed
+        logger.info("Applied rotary-pos-embed hotfix: forcing output_type='pt'.")
+    except Exception as e:
+        logger.warning("Failed to apply rotary-pos-embed hotfix: %s", e)
+
+
 def ensure_model_downloaded(model_id: str, cache_dir: str | None = None) -> str:
     try:
         logger.info(f"Downloading model {model_id}...")
@@ -839,9 +889,11 @@ def save_results(
         result_json["total_energy"] = total_energy_result.total_energy
         result_json["energy_per_image"] = total_energy_result.total_energy / num_images if num_images > 0 else 0.0
         result_json["energy_measurement"] = asdict(total_energy_result)
-    
-    for i, iter_energy_result in enumerate(iter_energy_results):
-        result_json[f"iter{i}_energy_measurement"] = asdict(iter_energy_result)
+
+    if iter_energy_results:
+        result_json["iteration_energy_measurements"] = [
+            asdict(iter_energy_result) for iter_energy_result in iter_energy_results
+        ]
     
     # Configuration details
     result_json["configurations"] = {
@@ -898,6 +950,12 @@ def main(args: DiffusionArgs) -> None:
     # os.environ["NCCL_NET"] = "Socket"
     # os.environ["NCCL_SOCKET_IFNAME"] = "lo"
 
+    model_type = get_model_type_from_id(args.workload.model_id)
+
+    # Apply runtime hotfixes for compatibility
+    if model_type == "HunyuanDiT":
+        _apply_runtime_hotfixes()
+
     zeus_monitor = None
     power_monitor = None
     temperature_monitor = None
@@ -940,7 +998,6 @@ def main(args: DiffusionArgs) -> None:
     # Setup xFuser pipeline
     logger.info(f"Setting up xFuser pipeline")
     pipe = setup_pipeline(args.workload.model_id, engine_config, local_rank, args)
-    model_type = get_model_type_from_id(args.workload.model_id)
 
     # Enable VAE tiling and slicing for text-to-video workloads
     if isinstance(args.workload, TextToVideo):

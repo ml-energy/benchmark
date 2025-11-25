@@ -93,6 +93,14 @@ MODEL_CONFIGS = {
         "num_frames": 81,
         "fps": 8,
     },
+    # https://huggingface.co/zai-org/CogVideoX-2b
+    "zai-org/CogVideoX-2b": {
+        "inference_steps": 50,
+        "height": 480,
+        "width": 720,
+        "num_frames": 49,
+        "fps": 8,
+    },
     # https://huggingface.co/BestWishYsh/ConsisID-preview
     "BestWishYsh/ConsisID-preview": {
         "inference_steps": 50,

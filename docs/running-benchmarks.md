@@ -12,7 +12,7 @@ python scripts/generate_jobs.py generate-slurm \
   --output.account your_account \
   --output.cpus-per-gpu 10 \
   --output.mem-per-gpu 120G \
-  --output.time-limit 1:00:00
+  --output.time-limit 3:00:00
 
 # Pegasus
 python scripts/generate_jobs.py generate-pegasus \
@@ -30,6 +30,21 @@ python scripts/generate_jobs.py generate-slurm \
   --gpu-models H100 \
   ...
 ```
+
+You can submit jobs so Slurm as you normally would:
+
+```bash
+for file in slurm_jobs/*8gpu*; do
+  sbatch $file
+done
+```
+
+And also Pegasus (install with `cargo install pegasus-ssh`):
+
+```bash
+pegasus q --hosts-file pegasus_b200_draft/hosts_8gpu.yaml --queue-file pegasus_b200_draft/queue_8gpu.yaml
+```
+
 
 ### Configuration
 
@@ -61,7 +76,9 @@ Benchmark commands use a two-level templating system:
 ```yaml
 # sweeps.yaml example
 sweep:
-  - max_num_seqs: [64, 128, 256]
+  - max_num_seqs: [64, 128, 256]  # Applies to all #GPUs
+  - num_gpus: [2]                 # Applies only when running with 2 GPUs
+    max_num_seqs: [384, 512]
 ```
 
 ### Container Runtimes

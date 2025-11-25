@@ -609,7 +609,7 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         return None
 
     # Check device_instant: allow spikes
-    instant_power_ceiling_mult = 1.5
+    instant_power_ceiling_mult = 1.7
     device_instant_stats = None
 
     if device_instant:

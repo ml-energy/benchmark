@@ -9,8 +9,8 @@ This script validates benchmark results for various model types. To add support 
 import json
 import sys
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 from multiprocessing import Pool
 from collections import defaultdict
 
@@ -30,6 +30,102 @@ class Args:
     run_dir: Path = Path("run")
     verbose: bool = False
     workers: int = 4
+
+
+@dataclass
+class RequestResult:
+    """A single request result from the benchmark."""
+
+    success: bool
+    output_len: int
+    error: str | None = None
+
+
+@dataclass
+class PowerTimeline:
+    """Power timeline data from results.json."""
+
+    device_instant: dict[str, list[tuple[float, float]]]
+    device_average: dict[str, list[tuple[float, float]]]
+    memory_average: dict[str, list[tuple[float, float]]]
+
+
+@dataclass
+class PrometheusTimelineEntry:
+    """A single entry in the Prometheus timeline."""
+
+    timestamp: float
+    metrics: dict
+
+
+@dataclass
+class BenchmarkData:
+    """Validated and extracted benchmark data.
+
+    This dataclass holds all data extracted from results.json and prometheus.json,
+    validated at load time. All fields that are required for validation are
+    non-optional. Optional fields are for data that may legitimately be missing.
+    """
+
+    # Identification
+    model_id: str
+    gpu_model: str
+    num_gpus: int
+    model_type: Literal["llm", "mllm", "diffusion"]
+
+    # Completion metrics
+    completed: int
+    num_prompts: int
+
+    # Timing metrics
+    duration: float
+    steady_state_duration: float
+
+    # Energy metrics
+    steady_state_energy: float
+    steady_state_energy_per_token: float
+    output_throughput: float
+
+    # Configuration
+    max_num_seqs: int
+    max_output_tokens: int
+
+    # Request results
+    request_results: list[RequestResult]
+
+    # Power/temperature timeline
+    power_timeline: PowerTimeline
+    temperature_timeline: dict[str, list[tuple[float, float]]]
+
+    # Prometheus data
+    prom_timeline: list[PrometheusTimelineEntry] = field(default_factory=list)
+    prom_steady_start: float = 0.0
+    prom_steady_end: float = 0.0
+
+    # Prometheus steady-state stats (may be missing)
+    prom_avg_batch_size: float | None = None
+    prom_avg_kv_cache: float | None = None  # Already converted to percentage (0-100)
+    prom_median_itl: float | None = None  # In seconds
+
+    # Cached computed values for post-validation
+    @property
+    def output_lengths(self) -> list[int]:
+        """Extract output lengths from request results."""
+        return [r.output_len for r in self.request_results]
+
+    @property
+    def avg_output_length(self) -> float:
+        """Calculate average output length."""
+        lengths = self.output_lengths
+        if not lengths:
+            raise ValueError("No output lengths available to calculate average")
+        return sum(lengths) / len(lengths)
+
+
+class DataLoadError(Exception):
+    """Raised when required data cannot be loaded or validated."""
+
+    pass
 
 
 @dataclass
@@ -57,6 +153,8 @@ class ValidationResult:
 
     path: str
     expectations: list[Expectation]
+    # Cached data for post-validation (avoids re-reading JSON files)
+    data: BenchmarkData | None = None
 
     @property
     def passed(self) -> bool:
@@ -74,6 +172,207 @@ class ValidationResult:
         return [
             e for e in self.expectations if not e.passed and e.severity == "warning"
         ]
+
+
+def get_model_type(result_dir: Path) -> Literal["llm", "mllm", "diffusion"]:
+    """Detect model type from directory structure.
+
+    Returns:
+        Model type identifier (e.g., "llm", "mllm", "diffusion")
+    """
+    parts = result_dir.parts
+    if "llm" in parts:
+        return "llm"
+    elif "mllm" in parts:
+        return "mllm"
+    elif "diffusion" in parts:
+        return "diffusion"
+    raise ValueError(f"Could not determine model type from path: {result_dir}")
+
+
+def _require_field(data: dict, field: str, context: str) -> Any:
+    """Extract a required field from a dict, raising DataLoadError if missing."""
+    if field not in data:
+        raise DataLoadError(f"{field} not in {context}")
+    value = data[field]
+    if value is None:
+        raise DataLoadError(f"{field} is null in {context}")
+    return value
+
+
+def _extract_power_timeline(timeline: dict) -> PowerTimeline:
+    """Extract power timeline data from results.json timeline."""
+    power_data = timeline.get("power")
+    if not power_data:
+        raise DataLoadError("timeline.power not in results.json")
+
+    def parse_timeline_entries(data: dict) -> dict[str, list[tuple[float, float]]]:
+        result = {}
+        for gpu_id, entries in data.items():
+            parsed = []
+            for entry in entries:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    parsed.append((float(entry[0]), float(entry[1])))
+            result[gpu_id] = parsed
+        return result
+
+    return PowerTimeline(
+        device_instant=parse_timeline_entries(power_data["device_instant"]),
+        device_average=parse_timeline_entries(power_data["device_average"]),
+        memory_average=parse_timeline_entries(power_data["memory_average"]),
+    )
+
+
+def _extract_temperature_timeline(
+    timeline: dict,
+) -> dict[str, list[tuple[float, float]]]:
+    """Extract temperature timeline data from results.json timeline."""
+    temp_data = timeline.get("temperature")
+    if not temp_data:
+        raise DataLoadError("timeline.temperature not in results.json")
+
+    result = {}
+    for gpu_id, entries in temp_data.items():
+        parsed = []
+        for entry in entries:
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                parsed.append((float(entry[0]), float(entry[1])))
+        result[gpu_id] = parsed
+    return result
+
+
+def load_benchmark_data(result_dir: Path) -> BenchmarkData:
+    """Load and validate benchmark data from result directory.
+
+    This function reads results.json and prometheus.json, validates that all
+    required fields are present, and returns a structured BenchmarkData object.
+
+    Args:
+        result_dir: Path to the result directory containing JSON files.
+
+    Returns:
+        BenchmarkData object with all extracted and validated data.
+
+    Raises:
+        DataLoadError: If required files are missing or required fields are absent.
+        json.JSONDecodeError: If JSON files are malformed.
+        FileNotFoundError: If required files don't exist.
+    """
+    model_type = get_model_type(result_dir)
+
+    # Load results.json
+    results_path = result_dir / "results.json"
+    with open(results_path) as f:
+        results_data = json.load(f)
+
+    # Load prometheus.json
+    prom_path = result_dir / "prometheus.json"
+    with open(prom_path) as f:
+        prom_data = json.load(f)
+
+    # Extract required fields from results.json
+    model_id = _require_field(results_data, "model_id", "results.json")
+    gpu_model = _require_field(results_data, "gpu_model", "results.json")
+    num_gpus = _require_field(results_data, "num_gpus", "results.json")
+    completed = _require_field(results_data, "completed", "results.json")
+    num_prompts = _require_field(results_data, "num_prompts", "results.json")
+    duration = _require_field(results_data, "duration", "results.json")
+    steady_state_duration = _require_field(
+        results_data, "steady_state_duration", "results.json"
+    )
+    steady_state_energy = _require_field(
+        results_data, "steady_state_energy", "results.json"
+    )
+    steady_state_energy_per_token = _require_field(
+        results_data, "steady_state_energy_per_token", "results.json"
+    )
+    output_throughput = _require_field(
+        results_data, "output_throughput", "results.json"
+    )
+    max_num_seqs = _require_field(results_data, "max_num_seqs", "results.json")
+    max_output_tokens = _require_field(
+        results_data, "max_output_tokens", "results.json"
+    )
+
+    # Extract request results
+    raw_results = _require_field(results_data, "results", "results.json")
+    if not isinstance(raw_results, list):
+        raise DataLoadError("results field must be a list in results.json")
+    if len(raw_results) == 0:
+        raise DataLoadError("results array is empty in results.json")
+
+    request_results = []
+    for i, r in enumerate(raw_results):
+        if "output_len" not in r:
+            raise DataLoadError(f"results[{i}].output_len missing in results.json")
+        if "success" not in r:
+            raise DataLoadError(f"results[{i}].success missing in results.json")
+        request_results.append(
+            RequestResult(
+                success=r["success"],
+                output_len=r["output_len"],
+                error=r.get("error"),
+            )
+        )
+
+    # Extract optional power/temperature timeline
+    timeline = results_data.get("timeline", {})
+    power_timeline = _extract_power_timeline(timeline)
+    temperature_timeline = _extract_temperature_timeline(timeline)
+
+    # Extract required fields from prometheus.json
+    prom_timeline_raw = _require_field(prom_data, "timeline", "prometheus.json")
+    prom_steady_start = _require_field(
+        prom_data, "steady_state_start_time", "prometheus.json"
+    )
+    prom_steady_end = _require_field(
+        prom_data, "steady_state_end_time", "prometheus.json"
+    )
+
+    # Parse prometheus timeline
+    prom_timeline = []
+    for entry in prom_timeline_raw:
+        if isinstance(entry, dict) and "timestamp" in entry:
+            prom_timeline.append(
+                PrometheusTimelineEntry(
+                    timestamp=entry["timestamp"],
+                    metrics=entry.get("metrics", {}),
+                )
+            )
+
+    # Extract prometheus steady-state stats (optional fields)
+    steady_stats = prom_data.get("steady_state_stats", {})
+    prom_avg_batch_size = steady_stats.get("vllm:num_requests_running")
+    prom_avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
+    prom_avg_kv_cache = (
+        prom_avg_kv_cache_raw * 100 if prom_avg_kv_cache_raw is not None else None
+    )
+    prom_median_itl = steady_stats.get("vllm:inter_token_latency_seconds_p50")
+
+    return BenchmarkData(
+        model_id=model_id,
+        gpu_model=gpu_model,
+        num_gpus=num_gpus,
+        model_type=model_type,
+        completed=completed,
+        num_prompts=num_prompts,
+        duration=duration,
+        steady_state_duration=steady_state_duration,
+        steady_state_energy=steady_state_energy,
+        steady_state_energy_per_token=steady_state_energy_per_token,
+        output_throughput=output_throughput,
+        max_num_seqs=max_num_seqs,
+        max_output_tokens=max_output_tokens,
+        request_results=request_results,
+        power_timeline=power_timeline,
+        temperature_timeline=temperature_timeline,
+        prom_timeline=prom_timeline,
+        prom_steady_start=prom_steady_start,
+        prom_steady_end=prom_steady_end,
+        prom_avg_batch_size=prom_avg_batch_size,
+        prom_avg_kv_cache=prom_avg_kv_cache,
+        prom_median_itl=prom_median_itl,
+    )
 
 
 def check_files_present(result_dir: Path) -> Expectation:
@@ -109,68 +408,37 @@ def check_files_present(result_dir: Path) -> Expectation:
         )
 
 
-def check_completion(result_dir: Path, data: dict) -> Expectation:
+def check_completion(data: BenchmarkData) -> Expectation:
     """Check if all requests completed."""
-    completed = data.get("completed")
-    num_prompts = data.get("num_prompts")
-
-    # Fail if required fields are missing
-    if completed is None:
-        return Expectation(
-            "Completion",
-            False,
-            "completed not in results.json",
-            "error",
-            "completed field is required in results.json",
-        )
-
-    if num_prompts is None:
-        return Expectation(
-            "Completion",
-            False,
-            "num_prompts not in results.json",
-            "error",
-            "num_prompts field is required in results.json",
-        )
-
-    if completed == num_prompts:
+    if data.completed == data.num_prompts:
         return Expectation(
             "Completion",
             True,
-            f"{completed}/{num_prompts} requests completed",
+            f"{data.completed}/{data.num_prompts} requests completed",
             "error",
             "",
         )
     else:
-        details = f"Expected {num_prompts} completions but got {completed}. Check driver.log for interruptions."
+        details = f"Expected {data.num_prompts} completions but got {data.completed}. Check driver.log for interruptions."
         return Expectation(
             "Completion",
             False,
-            f"Only {completed}/{num_prompts} requests completed",
+            f"Only {data.completed}/{data.num_prompts} requests completed",
             "error",
             details,
         )
 
 
-def check_request_success(result_dir: Path, data: dict) -> Expectation:
+def check_request_success(data: BenchmarkData) -> Expectation:
     """Check if all requests succeeded."""
-    results = data.get("results", [])
-    failed = [r for r in results if not r.get("success", False)]
-
-    if not results:
-        return Expectation(
-            "Request Success",
-            False,
-            "No request results found",
-            "error",
-            "results.json contains empty or missing 'results' array",
-        )
+    failed = [r for r in data.request_results if not r.success]
+    total = len(data.request_results)
 
     if len(failed) == 0:
         return Expectation(
             "Request Success",
             True,
-            f"All {len(results)} requests succeeded",
+            f"All {total} requests succeeded",
             "error",
             "",
         )
@@ -178,7 +446,7 @@ def check_request_success(result_dir: Path, data: dict) -> Expectation:
         # Collect error messages from failed requests
         error_samples = []
         for r in failed[:3]:  # Show first 3 failures
-            error_msg = r.get("error", "Unknown error")
+            error_msg = r.error if r.error else "Unknown error"
             error_samples.append(f"  - {error_msg}")
 
         details = f"{len(failed)} failed requests. First errors:\n" + "\n".join(
@@ -190,126 +458,39 @@ def check_request_success(result_dir: Path, data: dict) -> Expectation:
         return Expectation(
             "Request Success",
             False,
-            f"{len(failed)}/{len(results)} requests failed",
+            f"{len(failed)}/{total} requests failed",
             "error",
             details,
         )
 
 
-def check_steady_state_duration(result_dir: Path, data: dict) -> Expectation:
+def check_steady_state_duration(data: BenchmarkData) -> Expectation:
     """Check if steady-state duration is at least 30 seconds."""
-    steady_duration = data.get("steady_state_duration")
-
-    # Fail if required field is missing
-    if steady_duration is None:
-        return Expectation(
-            "Steady State Duration",
-            False,
-            "steady_state_duration not in results.json",
-            "error",
-            "steady_state_duration field is required in results.json",
-        )
-
-    if steady_duration >= 30:
+    if data.steady_state_duration >= 30:
         return Expectation(
             "Steady State Duration",
             True,
-            f"{steady_duration:.1f}s (>=30s)",
+            f"{data.steady_state_duration:.1f}s (>=30s)",
             "error",
             "",
         )
     else:
-        total_duration = data.get("duration", 0)
         details = (
-            f"Steady state: {steady_duration:.1f}s, Total duration: {total_duration:.1f}s. "
+            f"Steady state: {data.steady_state_duration:.1f}s, Total duration: {data.duration:.1f}s. "
             "Increase the number of requests."
         )
         return Expectation(
             "Steady State Duration",
             False,
-            f"{steady_duration:.1f}s (<30s)",
+            f"{data.steady_state_duration:.1f}s (<30s)",
             "error",
             details,
         )
 
 
-def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
+def check_prometheus_collection(data: BenchmarkData) -> Expectation:
     """Check Prometheus collection frequency for both total and steady-state durations."""
-    prom_path = result_dir / "prometheus.json"
-
-    if not prom_path.exists():
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "prometheus.json missing",
-            "error",
-        )
-
-    try:
-        with open(prom_path) as f:
-            prom_data = json.load(f)
-    except Exception as e:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            f"Error reading prometheus.json: {e}",
-            "error",
-        )
-
-    timeline = prom_data.get("timeline")
-    duration = data.get("duration")
-    steady_duration = data.get("steady_state_duration")
-
-    steady_start = prom_data.get("steady_state_start_time")
-    steady_end = prom_data.get("steady_state_end_time")
-
-    # Fail if required fields are missing
-    if duration is None:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "duration not in results.json",
-            "error",
-            "duration field is required for Prometheus collection validation",
-        )
-
-    if steady_duration is None:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "steady_state_duration not in results.json",
-            "error",
-            "steady_state_duration field is required for Prometheus collection validation",
-        )
-
-    if timeline is None:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "timeline not in prometheus.json",
-            "error",
-            "timeline field is required in prometheus.json",
-        )
-
-    if steady_start is None:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "steady_state_start_time not in prometheus.json",
-            "error",
-            "steady_state_start_time field is required in prometheus.json",
-        )
-
-    if steady_end is None:
-        return Expectation(
-            "Prometheus Collection",
-            False,
-            "steady_state_end_time not in prometheus.json",
-            "error",
-            "steady_state_end_time field is required in prometheus.json",
-        )
-
-    if duration == 0:
+    if data.duration == 0:
         return Expectation(
             "Prometheus Collection",
             False,
@@ -319,16 +500,18 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
         )
 
     # Check total duration collection rate
-    expected_total = int(duration)
-    actual_total = len(timeline)
+    expected_total = int(data.duration)
+    actual_total = len(data.prom_timeline)
     ratio_total = actual_total / expected_total if expected_total > 0 else 0
 
     # Check steady-state collection rate
     # Count timeline entries within steady-state window
     steady_entries = [
-        e for e in timeline if steady_start <= e.get("timestamp", 0) <= steady_end
+        e
+        for e in data.prom_timeline
+        if data.prom_steady_start <= e.timestamp <= data.prom_steady_end
     ]
-    expected_steady = int(steady_duration)
+    expected_steady = int(data.steady_state_duration)
     actual_steady = len(steady_entries)
     ratio_steady = actual_steady / expected_steady if expected_steady > 0 else 0
 
@@ -351,7 +534,7 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
     else:
         msg = f"Low collection rate: {', '.join(issues)} (expected >=0.75)"
         details_parts = [
-            f"Duration: {duration:.1f}s, Timeline entries: {actual_total}",
+            f"Duration: {data.duration:.1f}s, Timeline entries: {actual_total}",
             f"Total collection rate: {ratio_total:.2%} ({actual_total}/{expected_total})",
             f"Steady-state collection rate: {ratio_steady:.2%} ({actual_steady}/{expected_steady})",
         ]
@@ -369,45 +552,48 @@ def check_prometheus_collection(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def check_metrics_validity(result_dir: Path, data: dict) -> Expectation:
+def check_metrics_validity(data: BenchmarkData) -> Expectation:
     """Check if key metrics are valid."""
     issues = []
 
-    throughput = data.get("output_throughput")
-    if throughput is None or throughput <= 0:
-        issues.append(f"throughput={throughput}")
+    if data.output_throughput <= 0:
+        issues.append(f"throughput={data.output_throughput}")
 
-    energy = data.get("steady_state_energy")
-    if energy is None or energy <= 0:
-        issues.append(f"energy={energy}")
+    if data.steady_state_energy <= 0:
+        issues.append(f"energy={data.steady_state_energy}")
 
-    energy_per_tok = data.get("steady_state_energy_per_token")
-    if energy_per_tok is None or energy_per_tok <= 0:
-        issues.append(f"energy/tok={energy_per_tok}")
-    elif energy_per_tok > 100:  # Sanity check: >100J/token is suspicious
-        issues.append(f"energy/tok={energy_per_tok:.2f} (>100J)")
+    if data.steady_state_energy_per_token <= 0:
+        issues.append(f"energy/tok={data.steady_state_energy_per_token}")
+    elif (
+        data.steady_state_energy_per_token > 100
+    ):  # Sanity check: >100J/token is suspicious
+        issues.append(f"energy/tok={data.steady_state_energy_per_token:.2f} (>100J)")
 
     if not issues:
         return Expectation(
             "Metrics Valid",
             True,
-            f"throughput={throughput:.1f}, energy/tok={energy_per_tok:.4f}",
+            f"throughput={data.output_throughput:.1f}, energy/tok={data.steady_state_energy_per_token:.4f}",
             "error",
             "",
         )
     else:
         details_parts = ["Invalid or suspicious metric values:"]
-        if throughput is not None and throughput <= 0:
-            details_parts.append(f"  - output_throughput: {throughput} (should be >0)")
-        if energy is not None and energy <= 0:
-            details_parts.append(f"  - steady_state_energy: {energy} (should be >0)")
-        if energy_per_tok is not None and energy_per_tok <= 0:
+        if data.output_throughput <= 0:
             details_parts.append(
-                f"  - steady_state_energy_per_token: {energy_per_tok} (should be >0)"
+                f"  - output_throughput: {data.output_throughput} (should be >0)"
             )
-        elif energy_per_tok is not None and energy_per_tok > 100:
+        if data.steady_state_energy <= 0:
             details_parts.append(
-                f"  - steady_state_energy_per_token: {energy_per_tok:.2f}J (suspiciously high, >100J/token)"
+                f"  - steady_state_energy: {data.steady_state_energy} (should be >0)"
+            )
+        if data.steady_state_energy_per_token <= 0:
+            details_parts.append(
+                f"  - steady_state_energy_per_token: {data.steady_state_energy_per_token} (should be >0)"
+            )
+        elif data.steady_state_energy_per_token > 100:
+            details_parts.append(
+                f"  - steady_state_energy_per_token: {data.steady_state_energy_per_token:.2f}J (suspiciously high, >100J/token)"
             )
         details_parts.append("Check server.log and driver.log for measurement errors.")
         details = "\n".join(details_parts)
@@ -421,7 +607,7 @@ def check_metrics_validity(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def check_no_crashes(result_dir: Path, data: dict) -> Expectation:
+def check_no_crashes(result_dir: Path) -> Expectation:
     """Check driver and server logs for crashes."""
     driver_log = result_dir / "driver.log"
     server_log = result_dir / "server.log"
@@ -530,41 +716,35 @@ def get_gpu_tdp(gpu_model: str) -> float | None:
     return GPU_TDP_MAP.get(gpu_model)
 
 
-def check_power_range(result_dir: Path, data: dict) -> Expectation:
+def check_power_range(data: BenchmarkData) -> Expectation:
     """Check if power consumption is within reasonable bounds (100W to TDP).
 
     Args:
-        result_dir: Path to result directory
-        data: Parsed results.json data
+        data: Validated benchmark data
 
     Returns:
         Expectation indicating whether power readings are within acceptable range
     """
-    gpu_model = data.get("gpu_model", "unknown")
-    timeline = data.get("timeline", {})
-    power_data = timeline.get("power", {})
-
-    # Check all power fields: device_instant, device_average, memory_average
-    device_instant = power_data.get("device_instant", {})
-    device_average = power_data.get("device_average", {})
-    memory_average = power_data.get("memory_average", {})
+    device_instant = data.power_timeline.device_instant
+    device_average = data.power_timeline.device_average
+    memory_average = data.power_timeline.memory_average
 
     if not device_instant and not device_average and not memory_average:
         return Expectation(
             "Power Range",
             True,
-            "No power data to validate",
+            "No power readings in timeline",
             "warning",
-            "Power timeline not found in results.json",
+            "Power timeline exists but contains no readings",
         )
 
     # Get TDP for this GPU
-    tdp = get_gpu_tdp(gpu_model)
+    tdp = get_gpu_tdp(data.gpu_model)
     if tdp is None:
         return Expectation(
             "Power Range",
             True,
-            f"Unknown GPU model: {gpu_model}",
+            f"Unknown GPU model: {data.gpu_model}",
             "warning",
             "Cannot validate power without known TDP. Add GPU model to GPU_TDP_MAP.",
         )
@@ -574,7 +754,12 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
     stats_parts = []
 
     # Helper function to calculate stats for a power type
-    def check_power_type(power_dict, name, min_threshold, max_threshold):
+    def check_power_type(
+        power_dict: dict[str, list[tuple[float, float]]],
+        name: str,
+        min_threshold: float,
+        max_threshold: float,
+    ):
         readings = []
         type_issues = []
 
@@ -582,19 +767,17 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
             if not timeline_data:
                 continue
 
-            for entry in timeline_data:
-                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                    power = entry[1]
-                    readings.append(power)
+            for timestamp, power in timeline_data:
+                readings.append(power)
 
-                    if power < min_threshold:
-                        type_issues.append(
-                            f"GPU {gpu_id} ({name}): {power:.1f}W < {min_threshold}W"
-                        )
-                    elif power > max_threshold:
-                        type_issues.append(
-                            f"GPU {gpu_id} ({name}): {power:.1f}W > {max_threshold}W"
-                        )
+                if power < min_threshold:
+                    type_issues.append(
+                        f"GPU {gpu_id} ({name}): {power:.1f}W < {min_threshold}W"
+                    )
+                elif power > max_threshold:
+                    type_issues.append(
+                        f"GPU {gpu_id} ({name}): {power:.1f}W > {max_threshold}W"
+                    )
 
         if readings:
             avg = sum(readings) / len(readings)
@@ -671,7 +854,7 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         )
     else:
         details_parts = [
-            f"Power readings for {gpu_model} (TDP={tdp}W):",
+            f"Power readings for {data.gpu_model} (TDP={tdp}W):",
             f"  Found {len(issues)} out-of-range readings",
             f"  Expected device_instant: [70W, {tdp * instant_power_ceiling_mult}W] (allows spikes)",
             f"  Expected device_avg: [70W, {tdp * 1.1:.0f}W]",
@@ -697,27 +880,15 @@ def check_power_range(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def check_temperature_range(result_dir: Path, data: dict) -> Expectation:
+def check_temperature_range(data: BenchmarkData) -> Expectation:
     """Check if GPU temperatures are within reasonable bounds.
 
     Args:
-        result_dir: Path to result directory
-        data: Parsed results.json data
+        data: Validated benchmark data
 
     Returns:
         Expectation indicating whether temperatures are within acceptable range
     """
-    timeline = data.get("timeline", {})
-    temperature_timeline = timeline.get("temperature", {})
-
-    if not temperature_timeline:
-        return Expectation(
-            "Temperature Range",
-            True,
-            "No temperature data to validate",
-            "warning",
-            "Temperature timeline not found in results.json",
-        )
 
     # Reasonable temperature bounds for GPUs under sustained load
     MIN_TEMP = 20  # °C - Below this suggests sensor error
@@ -727,17 +898,11 @@ def check_temperature_range(result_dir: Path, data: dict) -> Expectation:
     all_temp_readings = []
     issues = []
 
-    for gpu_id, timeline_data in temperature_timeline.items():
+    for gpu_id, timeline_data in data.temperature_timeline.items():
         if not timeline_data:
             continue
 
-        for entry in timeline_data:
-            # Timeline format: [[timestamp, temperature], ...]
-            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                temp = entry[1]
-            else:
-                continue
-
+        for timestamp, temp in timeline_data:
             all_temp_readings.append(temp)
 
             # Check if temperature is below minimum (sensor error)
@@ -806,7 +971,7 @@ def check_temperature_range(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
+def check_batch_size_saturation(data: BenchmarkData) -> Expectation:
     """Check if batch size is limited by memory saturation.
 
     If the steady-state average batch size is noticeably smaller than max_num_seqs,
@@ -814,57 +979,13 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
     making the high max_num_seqs setting pointless.
 
     Args:
-        result_dir: Path to result directory
-        data: Parsed results.json data
+        data: Validated benchmark data
 
     Returns:
         Expectation indicating whether batch size is saturated by memory
     """
-    max_num_seqs = data.get("max_num_seqs")
-
-    # Fail if max_num_seqs is not set (it should be present for benchmarks)
-    if max_num_seqs is None:
-        return Expectation(
-            "Batch Size Saturation",
-            False,
-            "max_num_seqs not in results.json",
-            "error",
-            "max_num_seqs is required for batch size validation",
-        )
-
-    prom_path = result_dir / "prometheus.json"
-    if not prom_path.exists():
-        return Expectation(
-            "Batch Size Saturation",
-            False,
-            "prometheus.json missing",
-            "error",
-            "prometheus.json is required for batch size validation",
-        )
-
-    try:
-        with open(prom_path) as f:
-            prom_data = json.load(f)
-    except Exception as e:
-        return Expectation(
-            "Batch Size Saturation",
-            False,
-            f"Error reading prometheus.json: {e}",
-            "error",
-            f"Failed to parse prometheus.json: {str(e)}",
-        )
-
-    steady_stats = prom_data.get("steady_state_stats", {})
-
-    # Get average batch size (num_requests_running) - stored as single mean value
-    avg_batch_size = steady_stats.get("vllm:num_requests_running")
-
-    # Get memory utilization - stored as single mean value (as fraction 0-1, convert to percentage)
-    avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
-    avg_kv_cache = avg_kv_cache_raw * 100 if avg_kv_cache_raw is not None else None
-
     # Fail if we don't have the required metrics
-    if avg_batch_size is None:
+    if data.prom_avg_batch_size is None:
         return Expectation(
             "Batch Size Saturation",
             False,
@@ -874,36 +995,37 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
         )
 
     # Calculate utilization ratio
-    utilization_ratio = avg_batch_size / max_num_seqs if max_num_seqs > 0 else 0
+    utilization_ratio = (
+        data.prom_avg_batch_size / data.max_num_seqs if data.max_num_seqs > 0 else 0
+    )
 
     # Check if batch size is significantly below max_num_seqs
-    # Using 60% threshold - if avg batch size is less than 80% of max_num_seqs, flag it
+    # Using 80% threshold - if avg batch size is less than 80% of max_num_seqs, flag it
     if utilization_ratio < 0.8:
-        msg = f"Avg batch size {avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={max_num_seqs}"
+        msg = f"Avg batch size {data.prom_avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={data.max_num_seqs}"
 
         details_parts = [
             "Steady-state batch size:",
-            f"  - Average: {avg_batch_size:.1f}",
-            f"  - max_num_seqs: {max_num_seqs}",
+            f"  - Average: {data.prom_avg_batch_size:.1f}",
+            f"  - max_num_seqs: {data.max_num_seqs}",
             f"  - average batch size / max_num_seqs: {utilization_ratio:.1%}",
             "",
         ]
 
-        if avg_kv_cache is not None:
-            # Convert to percentage if needed (value is already 0-100)
+        if data.prom_avg_kv_cache is not None:
             details_parts.append("KV cache memory utilization:")
-            details_parts.append(f"  - Average: {avg_kv_cache:.1f}%")
+            details_parts.append(f"  - Average: {data.prom_avg_kv_cache:.1f}%")
             details_parts.append("")
 
             # If memory is high, this explains the saturation
-            if avg_kv_cache > 85:
+            if data.prom_avg_kv_cache > 85:
                 details_parts.append(
-                    f"High KV cache usage ({avg_kv_cache:.1f}%) indicates memory saturation is limiting batch size. "
+                    f"High KV cache usage ({data.prom_avg_kv_cache:.1f}%) indicates memory saturation is limiting batch size. "
                     "It is likely that this max_num_seqs setting can be excluded as it is not achievable."
                 )
             else:
                 details_parts.append(
-                    f"KV cache usage ({avg_kv_cache:.1f}%) is not particularly high. "
+                    f"KV cache usage ({data.prom_avg_kv_cache:.1f}%) is not particularly high. "
                     "Batch size may be limited by other factors; this requires further investigation."
                 )
         else:
@@ -921,9 +1043,9 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
             details,
         )
     else:
-        msg = f"Avg batch size {avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={max_num_seqs}"
-        if avg_kv_cache is not None:
-            msg += f", KV cache {avg_kv_cache:.1f}%"
+        msg = f"Avg batch size {data.prom_avg_batch_size:.1f} is {utilization_ratio:.1%} of max_num_seqs={data.max_num_seqs}"
+        if data.prom_avg_kv_cache is not None:
+            msg += f", KV cache {data.prom_avg_kv_cache:.1f}%"
         return Expectation(
             "Batch Size Saturation",
             True,
@@ -933,63 +1055,26 @@ def check_batch_size_saturation(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
+def check_output_length_saturation(data: BenchmarkData) -> Expectation:
     """Check if output lengths are consistently hitting max limit.
 
     Args:
-        result_dir: Path to result directory
-        data: Parsed results.json data
+        data: Validated benchmark data
 
     Returns:
         Expectation indicating whether outputs are saturating the max length
     """
-    max_output_tokens = data.get("max_output_tokens")
-    results = data.get("results", [])
+    output_lengths = data.output_lengths
+    hitting_limit_count = 0
+    for output_len in output_lengths:
+        if output_len >= data.max_output_tokens:
+            hitting_limit_count += 1
+            if output_len > data.max_output_tokens:
+                print(
+                    f"Warning: output_len {output_len} exceeds max_output_tokens {data.max_output_tokens}"
+                )
 
-    # Fail if max_output_tokens is not set (it should be present for benchmarks)
-    if max_output_tokens is None:
-        return Expectation(
-            "Output Length",
-            False,
-            "max_output_tokens not in results.json",
-            "error",
-            "max_output_tokens is required for output length validation",
-        )
-
-    # Fail if results are missing
-    if not results:
-        return Expectation(
-            "Output Length",
-            False,
-            "No results found in results.json",
-            "error",
-            "Results array is required for output length validation",
-        )
-
-    # Fail if max_output_tokens is not an integer
-    if not isinstance(max_output_tokens, int):
-        return Expectation(
-            "Output Length",
-            False,
-            f"max_output_tokens is not an integer: {max_output_tokens}",
-            "error",
-            f"max_output_tokens must be an integer, got {type(max_output_tokens).__name__}",
-        )
-
-    hitting_limit = []
-    output_lengths = []
-    for r in results:
-        output_len = r["output_len"]
-        output_lengths.append(output_len)
-        if output_len == max_output_tokens:
-            hitting_limit.append(r)
-        elif output_len > max_output_tokens:
-            print(
-                f"Warning: output_len {output_len} exceeds max_output_tokens {max_output_tokens}"
-            )
-            hitting_limit.append(r)
-
-    saturation_rate = len(hitting_limit) / len(results) if results else 0
+    saturation_rate = hitting_limit_count / len(output_lengths) if output_lengths else 0
 
     # Calculate statistics
     output_lengths_sorted = sorted(output_lengths)
@@ -1006,8 +1091,8 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
 
     if saturation_rate >= 0.3:
         details = (
-            f"{len(hitting_limit)}/{len(results)} requests ({saturation_rate:.1%}) "
-            f"hit max_output_tokens={max_output_tokens}.\n"
+            f"{hitting_limit_count}/{len(output_lengths)} requests ({saturation_rate:.1%}) "
+            f"hit max_output_tokens={data.max_output_tokens}.\n"
             f"Output length statistics: {stats_msg}\n"
             f"Percentiles: p75={p75}, p95={p95}\n"
             f"This suggests outputs may be truncated. Consider increasing max_output_tokens."
@@ -1029,28 +1114,8 @@ def check_output_length_saturation(result_dir: Path, data: dict) -> Expectation:
         )
 
 
-def get_model_type(result_dir: Path) -> Literal["llm", "mllm", "diffusion"]:
-    """Detect model type from directory structure.
-
-    Returns:
-        Model type identifier (e.g., "llm", "mllm", "diffusion")
-    """
-    # Check if path contains llm or mllm
-    parts = result_dir.parts
-    if "llm" in parts:
-        return "llm"
-    elif "mllm" in parts:
-        return "mllm"
-    elif "diffusion" in parts:
-        return "diffusion"
-    raise ValueError(f"Could not determine model type from path: {result_dir}")
-
-
 def validate_result(result_dir: Path) -> ValidationResult:
     """Validate a single benchmark result directory."""
-    # Detect model type for potential model-specific validation
-    model_type = get_model_type(result_dir)
-
     # Always check if files exist
     files_check = check_files_present(result_dir)
 
@@ -1059,7 +1124,7 @@ def validate_result(result_dir: Path) -> ValidationResult:
     if not results_path.exists():
         expectations = [files_check]
         # Check logs for crash information to help diagnose why results.json wasn't created
-        crash_check = check_no_crashes(result_dir, {})
+        crash_check = check_no_crashes(result_dir)
         expectations.append(crash_check)
         return ValidationResult(str(result_dir), expectations)
 
@@ -1067,11 +1132,24 @@ def validate_result(result_dir: Path) -> ValidationResult:
     if not files_check.passed:
         return ValidationResult(str(result_dir), [files_check])
 
-    # Try to parse results.json
+    # Try to load and validate benchmark data
     try:
-        with open(results_path) as f:
-            data = json.load(f)
-    except Exception as e:
+        data = load_benchmark_data(result_dir)
+    except DataLoadError as e:
+        return ValidationResult(
+            str(result_dir),
+            [
+                files_check,
+                Expectation(
+                    "Data Validation",
+                    False,
+                    str(e),
+                    "error",
+                    f"Required field missing or invalid: {str(e)}",
+                ),
+            ],
+        )
+    except json.JSONDecodeError as e:
         return ValidationResult(
             str(result_dir),
             [
@@ -1079,38 +1157,52 @@ def validate_result(result_dir: Path) -> ValidationResult:
                 Expectation(
                     "Parse Results",
                     False,
-                    f"Error reading results.json: {e}",
+                    f"Error parsing JSON: {e}",
                     "error",
                     f"Failed to parse JSON: {str(e)}",
+                ),
+            ],
+        )
+    except FileNotFoundError as e:
+        return ValidationResult(
+            str(result_dir),
+            [
+                files_check,
+                Expectation(
+                    "Files Present",
+                    False,
+                    f"File not found: {e.filename}",
+                    "error",
+                    str(e),
                 ),
             ],
         )
 
     expectations = []
 
-    if model_type in ["llm", "mllm"]:
+    if data.model_type in ["llm", "mllm"]:
         # Run common checks (applicable to all model types)
         expectations.extend(
             [
                 files_check,
-                check_completion(result_dir, data),
-                check_request_success(result_dir, data),
-                check_output_length_saturation(result_dir, data),
-                check_batch_size_saturation(result_dir, data),
-                check_steady_state_duration(result_dir, data),
-                check_prometheus_collection(result_dir, data),
-                check_metrics_validity(result_dir, data),
-                check_power_range(result_dir, data),
-                check_temperature_range(result_dir, data),
-                check_no_crashes(result_dir, data),
+                check_completion(data),
+                check_request_success(data),
+                check_output_length_saturation(data),
+                check_batch_size_saturation(data),
+                check_steady_state_duration(data),
+                check_prometheus_collection(data),
+                check_metrics_validity(data),
+                check_power_range(data),
+                check_temperature_range(data),
+                check_no_crashes(result_dir),
             ]
         )
     else:
         raise NotImplementedError(
-            f"Validation for model type '{model_type}' not implemented"
+            f"Validation for model type '{data.model_type}' not implemented"
         )
 
-    return ValidationResult(str(result_dir), expectations)
+    return ValidationResult(str(result_dir), expectations, data)
 
 
 def calc_percentiles(values: list[float]) -> dict[str, float]:
@@ -1136,21 +1228,12 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
     by_task: dict[str, list[dict]] = defaultdict(list)
 
     for v in validations:
-        result_path = Path(v.path)
-        results_json = result_path / "results.json"
-        prometheus_json = result_path / "prometheus.json"
-
-        try:
-            with open(results_json) as f:
-                data = json.load(f)
-        except Exception:
+        # Skip if no cached data (validation failed early)
+        if v.data is None:
             continue
 
-        try:
-            with open(prometheus_json) as f:
-                prometheus_stats = json.load(f)["steady_state_stats"]
-        except Exception:
-            prometheus_stats = None
+        data = v.data
+        result_path = Path(v.path)
 
         # Extract task name from path (e.g., run/llm/lm-arena-chat/... or run/mllm/image-chat/...)
         parts = result_path.parts
@@ -1160,42 +1243,26 @@ def print_llm_mllm_statistics(validations: list[ValidationResult]):
                 task = parts[i + 1]
                 break
 
-        # Collect metrics
-        energy_tok = data.get("steady_state_energy_per_token")
-        steady_state_duration = data.get("steady_state_duration")
-        model_id = data.get("model_id", "unknown")
-        gpu_model = data.get("gpu_model", "unknown")
-        num_gpus = data.get("num_gpus", 0)
-        median_itl = (
-            prometheus_stats.get("vllm:inter_token_latency_seconds_p50", 0)
-            if prometheus_stats is not None
-            else 0
-        )
-        results = data.get("results", [])
-
         # Calculate energy per request = energy_per_token * avg_output_length
         energy_per_req = None
-        if energy_tok is not None and energy_tok > 0 and results:
-            output_lengths = [r["output_len"] for r in results]
-            avg_output_len = (
-                sum(output_lengths) / len(output_lengths) if output_lengths else 0
-            )
-            if avg_output_len > 0:
-                energy_per_req = energy_tok * avg_output_len
+        if data.steady_state_energy_per_token > 0 and data.avg_output_length > 0:
+            energy_per_req = data.steady_state_energy_per_token * data.avg_output_length
+
+        # Get median ITL (convert from seconds to milliseconds)
+        median_itl = (data.prom_median_itl or 0) * 1000
 
         # Store for task comparison
-        if task and energy_tok is not None and energy_tok > 0:
-            max_num_seqs = data.get("max_num_seqs")
+        if task and data.steady_state_energy_per_token > 0:
             by_task[task].append(
                 {
-                    "model_id": model_id,
-                    "gpu_model": gpu_model,
-                    "num_gpus": num_gpus,
-                    "max_num_seqs": max_num_seqs,
+                    "model_id": data.model_id,
+                    "gpu_model": data.gpu_model,
+                    "num_gpus": data.num_gpus,
+                    "max_num_seqs": data.max_num_seqs,
                     "path": str(result_path),
-                    "energy_per_token": energy_tok,
-                    "steady_state_duration": steady_state_duration,
-                    "median_itl": median_itl * 1000,
+                    "energy_per_token": data.steady_state_energy_per_token,
+                    "steady_state_duration": data.steady_state_duration,
+                    "median_itl": median_itl,
                     "energy_per_request": energy_per_req,
                 }
             )
@@ -1245,35 +1312,16 @@ def check_max_num_seqs_coverage(validations: list[ValidationResult]) -> None:
         validations: List of validation results to analyze. Modified in-place.
     """
     # Group results by (model_id, gpu_model, num_gpus)
-    by_config: dict[tuple[str, str, int], list[tuple[ValidationResult, dict]]] = (
-        defaultdict(list)
-    )
+    by_config: dict[tuple[str, str, int], list[ValidationResult]] = defaultdict(list)
 
     for v in validations:
-        result_path = Path(v.path)
-        results_json = result_path / "results.json"
-
-        # Skip if results.json doesn't exist or failed validation
-        if not results_json.exists():
+        # Skip if no cached data (validation failed early)
+        if v.data is None:
             continue
 
-        try:
-            with open(results_json) as f:
-                data = json.load(f)
-        except Exception:
-            continue
-
-        model_id = data.get("model_id")
-        gpu_model = data.get("gpu_model")
-        num_gpus = data.get("num_gpus")
-        max_num_seqs = data.get("max_num_seqs")
-
-        # Skip if required fields are missing
-        if not all([model_id, gpu_model, num_gpus is not None, max_num_seqs]):
-            continue
-
-        key = (model_id, gpu_model, num_gpus)
-        by_config[key].append((v, data))
+        data = v.data
+        key = (data.model_id, data.gpu_model, data.num_gpus)
+        by_config[key].append(v)
 
     # For each configuration, check the largest max_num_seqs
     for (model_id, gpu_model, num_gpus), runs in by_config.items():
@@ -1282,28 +1330,15 @@ def check_max_num_seqs_coverage(validations: list[ValidationResult]) -> None:
             continue
 
         # Find the run with the largest max_num_seqs
-        max_run = max(runs, key=lambda x: x[1].get("max_num_seqs", 0))
-        max_validation, max_data = max_run
-        max_num_seqs = max_data.get("max_num_seqs")
-
-        # Get KV cache usage from prometheus.json
-        prom_path = Path(max_validation.path) / "prometheus.json"
-        if not prom_path.exists():
+        # Note: we already filtered out None data above, so data is guaranteed to exist
+        max_validation = max(runs, key=lambda x: x.data.max_num_seqs if x.data else 0)
+        if max_validation.data is None:
             continue
+        max_num_seqs = max_validation.data.max_num_seqs
+        avg_kv_cache = max_validation.data.prom_avg_kv_cache
 
-        try:
-            with open(prom_path) as f:
-                prom_data = json.load(f)
-        except Exception:
+        if avg_kv_cache is None:
             continue
-
-        steady_stats = prom_data.get("steady_state_stats", {})
-        avg_kv_cache_raw = steady_stats.get("vllm:kv_cache_usage_perc")
-
-        if avg_kv_cache_raw is None:
-            continue
-
-        avg_kv_cache = avg_kv_cache_raw * 100  # Convert to percentage
 
         # If KV cache usage is below threshold (e.g., 80%), suggest testing larger values
         # Using 80% as threshold - below this, memory isn't saturated enough
@@ -1327,12 +1362,16 @@ def print_aggregate_statistics(validations: list[ValidationResult]):
     by_model_type: dict[str, list[ValidationResult]] = defaultdict(list)
 
     for v in validations:
-        try:
-            model_type = get_model_type(Path(v.path))
-            by_model_type[model_type].append(v)
-        except ValueError:
-            # Skip if model type cannot be determined
-            continue
+        # Use cached data if available, otherwise try to detect from path
+        if v.data is not None:
+            by_model_type[v.data.model_type].append(v)
+        else:
+            try:
+                model_type = get_model_type(Path(v.path))
+                by_model_type[model_type].append(v)
+            except ValueError:
+                # Skip if model type cannot be determined
+                continue
 
     print("=" * 80)
     print("AGGREGATE STATISTICS")

@@ -305,7 +305,7 @@ class DiffusionWorkloadConfig(BaseModel):
             total_prompts = total_iters * self.batch_size
             shared_requests_path = (
                 category_dir
-                / f"requests-totalprompts-{total_prompts}-seed-{self.seed}.json"
+                / f"requests-batch-{self.batch_size}-iters-{total_iters}-seed-{self.seed}.json"
             )
             shared_requests_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -199,13 +199,13 @@ class DiffusionArgs(BaseModel, Generic[WorkloadT]):
         """Set warmup_iters and benchmark_iters based on workload type and inference steps."""
         if isinstance(self.workload, TextToImage):
             if self.workload.inference_steps <= 30:
-                self.warmup_iters = 4
+                self.warmup_iters = 0
                 self.benchmark_iters = 8
             else:
-                self.warmup_iters = 2
+                self.warmup_iters = 0
                 self.benchmark_iters = 4
         elif isinstance(self.workload, TextToVideo):
-            self.warmup_iters = 1
+            self.warmup_iters = 0
             self.benchmark_iters = 2
         return self
 
@@ -1101,12 +1101,7 @@ def main(args: DiffusionArgs) -> None:
 
     # Prepare/warmup pipeline
     dtype = PIPELINE_CONFIGS[args.workload.model_id]["dtype"]
-    if (
-        model_type == "CogVideo"
-        or model_type == "Latte"
-        or model_type == "Wan"
-        or model_type == "HunyuanVideo"
-    ):
+    if isinstance(args.workload, TextToVideo):
         logger.info("Warming up pipeline with 1-step inference")
         warmup_kwargs = get_inference_kwargs(requests[0], args)
         warmup_kwargs["num_inference_steps"] = 1  # Single step warmup
@@ -1116,10 +1111,6 @@ def main(args: DiffusionArgs) -> None:
                 _ = pipe(**warmup_kwargs)
         else:
             _ = pipe(**warmup_kwargs)
-    elif model_type == "ConsisID":
-        logger.info(
-            "ConsisID detected: skipping prepare_run; will warm up via forward call."
-        )
     else:
         logger.info("Preparing xFuser pipeline with prepare_run")
         pipe.prepare_run(input_config, steps=args.workload.inference_steps)

@@ -4,7 +4,7 @@ sweep:
   - num_request_repeats: [2]
     max_num_seqs: [512, 1024]
   - num_request_repeats: [3]
-    max_num_seqs: [1536, 2048]
+    max_num_seqs: [2048]
   - num_gpus: [4]
     num_request_repeats: [4]
     max_num_seqs: [3072]

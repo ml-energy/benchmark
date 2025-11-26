@@ -6,20 +6,6 @@ build-backend = "uv_build"
 module-root = ""
 module-name = "mlenergy"
 
-[tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]
-
-[tool.uv]
-index-url = "https://download.pytorch.org/whl/cu126"
-
-[tool.uv.sources]
-torch = { index = "pytorch-cu126" }
-xformers = { index = "pytorch-cu126" }
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-
 [project]
 name = "mlenergy"
 version = "3.0.0"
@@ -52,17 +38,8 @@ dependencies = [
 
 [project.optional-dependencies]
 diffusion = [
-    "packaging",
-    "einops",
-    "ninja",
-    "wheel",
-    "psutil",
-    "torch==2.6.0",
-    "flash-attn==2.7.0.post2",
-    "numpy==1.26.4",
-    "xformers==0.0.29.post2",
     "diffusers>=0.35.2",
-    "xfuser[flash-attn]==0.4.5",
+    "xfuser==0.4.5",
     "insightface",
     "peft==0.17.0",
     "onnxruntime",

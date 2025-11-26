@@ -302,7 +302,6 @@ class DiffusionWorkloadConfig(BaseModel):
 
         shared_requests_path = None
         if category_dir is not None:
-            total_prompts = total_iters * self.batch_size
             shared_requests_path = (
                 category_dir
                 / f"requests-batch-{self.batch_size}-iters-{total_iters}-seed-{self.seed}.json"

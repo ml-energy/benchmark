@@ -7,5 +7,3 @@ sweep:
     max_num_seqs: [512]
   - num_request_repeats: [4]
     max_num_seqs: [768]
-  - num_request_repeats: [6]
-    max_num_seqs: [1024]

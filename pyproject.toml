@@ -36,6 +36,18 @@ dependencies = [
     "scipy>=1.16.3",
 ]
 
+[project.optional-dependencies]
+diffusion = [
+    "diffusers>=0.35.2",
+    "xfuser==0.4.5",
+    "insightface",
+    "peft==0.17.0",
+    "onnxruntime",
+    "onnxruntime-gpu",
+    "consisid_eva_clip",
+    "imageio-ffmpeg",
+]
+
 [tool.setuptools.packages.find]
 where = ["mlenergy"]
 

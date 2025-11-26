@@ -11,6 +11,26 @@ cd leaderboard
 uv sync
 source .venv/bin/activate
 
+- Diffusion benchmark setup
+
+```bash
+uv venv --python=3.12
+source .venv/bin/activate
+
+uv pip install packaging einops ninja wheel psutil && \
+uv pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu126 && \
+uv pip install flash-attn==2.7.0.post2 --no-build-isolation && \
+uv pip install xformers==0.0.29.post2 --index-url https://download.pytorch.org/whl/cu126 && \
+uv pip install .[diffusion]
+```
+
+- Data preparation
+
+**TODO(Jeff)**: Add instructions for downloading and extracting video/audio datasets manually.
+
+```bash
+# This assumes the existence of extracted video/audio datasets.
+python -m mlenergy.llm.workloads
 # Setup
 export HF_TOKEN="your_huggingface_token"
 export HF_HOME="/path/to/huggingface/cache"

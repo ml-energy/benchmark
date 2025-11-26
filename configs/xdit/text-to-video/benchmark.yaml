@@ -1,0 +1,48 @@
+command_template: |
+  MASTER_PORT=$(shuf -i 20000-65000 -n 1)
+  MASTER_ADDR=$(hostname)
+  torchrun \
+    --nproc_per_node {num_gpus} \
+    --master_port $MASTER_PORT \
+    --master_addr $MASTER_ADDR \
+    mlenergy/diffusion/benchmark.py \
+    workload:text-to-video \
+    --workload.model_id {model_id} \
+    --workload.base_dir run/diffusion/text-to-video/{model_id} \
+    --workload.batch_size {batch_size} \
+    --workload.ulysses_degree {ulysses_degree} \
+    --workload.ring_degree {ring_degree} || echo 'Combination failed (non-zero exit), continuing to next.' >&2
+
+sweep_defaults:
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [1]
+    ring_degree: [1]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [1]
+    ring_degree: [2]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [2]
+    ring_degree: [1]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [1]
+    ring_degree: [4]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [2]
+    ring_degree: [2]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [4]
+    ring_degree: [1]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [1]
+    ring_degree: [8]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [2]
+    ring_degree: [4]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [4]
+    ring_degree: [2]
+  - batch_size: [1, 2, 4, 8, 16, 32]
+    ulysses_degree: [8]
+    ring_degree: [1]
+
+

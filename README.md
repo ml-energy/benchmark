@@ -1,23 +1,15 @@
 # The ML.ENERGY Benchmark
 
-## Instructions
+Benchmarking framework for measuring energy consumption and performance of Large Language Models (LLMs) and Multimodal LLMs (MLLMs).
 
-- System setup
-
-```bash
-# Increase the number of max open files
-ulimit -n 10000
-```
-
-- Python setup
+## Quick Start
 
 ```bash
-# Install the project in a new uv-managed virtual environment
+# Install
+git clone https://github.com/ml-energy/leaderboard.git
+cd leaderboard
 uv sync
-
-# Activate the virtual environment
 source .venv/bin/activate
-```
 
 - Diffusion benchmark setup
 
@@ -39,22 +31,35 @@ uv pip install .[diffusion]
 ```bash
 # This assumes the existence of extracted video/audio datasets.
 python -m mlenergy.llm.workloads
+# Setup
+export HF_TOKEN="your_huggingface_token"
+export HF_HOME="/path/to/huggingface/cache"
+export CUDA_VISIBLE_DEVICES=0
+
+# Run
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
+  --server-image vllm/vllm-openai:v0.11.1 \
+  --max-output-tokens 4096 \
+  workload:lm-arena-chat \
+  --workload.model-id Qwen/Qwen3-8B \
+  --workload.base-dir run/llm/lm-arena-chat/Qwen/Qwen3-8B/H100 \
+  --workload.num-requests 128 \
+  --workload.gpu-model H100 \
+  --workload.max-num-seqs 64
 ```
 
-- Running the benchmark
+## Documentation
+
+- **[Overview](docs/overview.md)**: Tasks, datasets, runtime
+- **[Data Preparation](docs/data-preparation.md)**: Dataset download scripts
+- **[Running Benchmarks](docs/running-benchmarks.md)**: Job generation and manual execution
+
+## Development
 
 ```bash
-# HF_TOKEN, HF_HOME, and CUDA_VISIBLE_DEVICES are required.
-export HF_TOKEN=<your_hf_token>
-export HF_HOME=<your_hf_home>
+# Lint and type check
+./scripts/lint.sh
 
-# Help and usage
-python -m mlenergy.llm.benchmark --help
-python -m mlenergy.llm.benchmark workload:image-chat --help
-
-# Example command
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark --server-image vllm/vllm-openai:v0.9.2 workload:image-chat --workload.model-id Qwen/Qwen2.5-VL-7B-Instruct --workload.base-dir run/mllm/Qwen/Qwen2.5-VL-7B-Instruct --workload.num-requests 1000 --workload.num-images 1 --workload.max-num-seqs 64
-
-# Check the results
-tree run
+# Test
+pytest
 ```

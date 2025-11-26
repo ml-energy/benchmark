@@ -1,0 +1,46 @@
+name: Check format and lint
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fmt_lint.yaml'
+      - 'mlenergy/**'
+      - 'tests/**'
+      - 'scripts/*.py'
+      - 'scripts/lint.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    paths:
+      - '.github/workflows/fmt_lint.yaml'
+      - 'mlenergy/**'
+      - 'tests/**'
+      - 'scripts/*.py'
+      - 'scripts/lint.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+# Jobs initiated by previous pushes get cancelled by a new push.
+concurrency:
+  group: ${{ github.ref }}-format-lint
+  cancel-in-progress: true
+
+jobs:
+  format_lint_test:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Check format and lint
+        run: uv run bash scripts/lint.sh

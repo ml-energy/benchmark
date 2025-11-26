@@ -16,4 +16,9 @@ pyrightconfig.json
 build/
 
 /run
+/test_run
 /results
+vllm_cache
+
+/pegasus*
+/slurm*

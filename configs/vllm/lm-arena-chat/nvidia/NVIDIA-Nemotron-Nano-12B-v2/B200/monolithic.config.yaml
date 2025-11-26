@@ -1,0 +1,7 @@
+async-scheduling: true
+max-num-batched-tokens: 8192
+max-model-len: 20480
+dtype: bfloat16
+trust-remote-code: true
+mamba-ssm-cache-dtype: float32
+api-server-count: 3

@@ -28,10 +28,12 @@ uv pip install .[diffusion]
 
 ```bash
 # Blackwell
+wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+
 uv pip install packaging einops ninja wheel psutil && \
-uv pip install "torch==2.7.0" "torchvision==0.22.0" --index-url https://download.pytorch.org/whl/cu128 && \
-uv pip install flash-attn==2.7.4.post1 --no-build-isolation && \
-uv pip install xformers==0.0.30 --index-url https://download.pytorch.org/whl/cu128 && \
+uv pip install "torch==2.8.0" "torchvision==0.23.0" --index-url https://download.pytorch.org/whl/cu128 && \
+uv pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl && \
+uv pip install xformers==0.0.32.post2 --index-url https://download.pytorch.org/whl/cu128 && \
 uv pip install .[diffusion]
 
 ```

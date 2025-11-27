@@ -2,5 +2,6 @@
   "nickname": "Qwen 3 Coder 480B A35B",
   "total_parameters_billion": 480,
   "active_parameters_billion": 35,
-  "weight_precision": "bfloat16"
+  "weight_precision": "bfloat16",
+  "architecture": "MoE"
 }

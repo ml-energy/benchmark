@@ -5,3 +5,4 @@ enable-expert-parallel: true
 dtype: auto
 trust-remote-code: true
 api-server-count: 3
+gpu-memory-utilization: 0.85  # Multimodal benchmark causes frequent OOMs on H100

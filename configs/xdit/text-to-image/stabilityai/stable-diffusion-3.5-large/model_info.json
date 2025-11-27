@@ -1,0 +1,5 @@
+{
+  "nickname": "Stable Diffusion 3.5 Large",
+  "total_parameters_billion": 8.1,
+  "weight_precision": "bfloat16"
+}

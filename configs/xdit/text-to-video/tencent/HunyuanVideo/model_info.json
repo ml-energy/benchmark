@@ -1,0 +1,5 @@
+{
+  "nickname": "HunyuanVideo",
+  "total_parameters_billion": 13,
+  "weight_precision": "bfloat16"
+}

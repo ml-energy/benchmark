@@ -2,5 +2,6 @@
   "nickname": "Qwen 3 14B",
   "total_parameters_billion": 14,
   "active_parameters_billion": 14,
-  "weight_precision": "bfloat16"
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
 }

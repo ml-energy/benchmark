@@ -1,0 +1,5 @@
+{
+  "nickname": "SANA 1.5 1.6B",
+  "total_parameters_billion": 1.6,
+  "weight_precision": "bfloat16"
+}

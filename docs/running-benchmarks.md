@@ -1,5 +1,9 @@
 # Running Benchmarks
 
+## Installing Dependencies
+
+TODO: Move from README.md
+
 ## Automated Job Generation (Recommended)
 
 Generate batch jobs files from configs for systematic benchmarking. The script support Slurm and [Pegasus](https://github.com/jaywonchung/pegasus).

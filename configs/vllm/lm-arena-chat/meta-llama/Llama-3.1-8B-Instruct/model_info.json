@@ -2,5 +2,6 @@
   "nickname": "Llama 3.1 8B Instruct",
   "total_parameters_billion": 8,
   "active_parameters_billion": 8,
-  "weight_precision": "bfloat16"
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
 }

@@ -2,5 +2,6 @@
   "nickname": "Qwen 3 235B A22B Thinking",
   "total_parameters_billion": 235,
   "active_parameters_billion": 22,
-  "weight_precision": "bfloat16"
+  "weight_precision": "bfloat16",
+  "architecture": "MoE"
 }

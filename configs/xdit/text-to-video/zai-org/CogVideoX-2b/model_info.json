@@ -1,0 +1,5 @@
+{
+  "nickname": "CogVideoX 2B",
+  "total_parameters_billion": 2,
+  "weight_precision": "bfloat16"
+}

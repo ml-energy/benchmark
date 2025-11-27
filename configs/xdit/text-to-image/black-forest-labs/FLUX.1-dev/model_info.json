@@ -1,0 +1,5 @@
+{
+  "nickname": "FLUX.1 Dev",
+  "total_parameters_billion": 12,
+  "weight_precision": "bfloat16"
+}

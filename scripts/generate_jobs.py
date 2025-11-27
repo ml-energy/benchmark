@@ -40,6 +40,7 @@ class ModelWorkload(BaseModel):
     config_dir: Path
     sweep_combinations: list[dict[str, Any]]
     workload_overrides: dict[str, Any] = {}
+    runtime: Literal["vllm", "xdit"] = "vllm"
 
 
 @dataclass
@@ -92,9 +93,10 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
         configs_dir: Path to configs directory (default: "configs")
         datasets: Filter by specific datasets (default: all)
         gpu_models: Filter by specific GPU models (default: all)
-        container_runtime: Container runtime ("docker" or "singularity", default: "docker")
-        server_image: Container image path (Docker image or .sif file path,
-            default: "vllm/vllm-openai:v0.11.1")
+        container_runtime: Container runtime ("docker" or "singularity"), or None
+            for workloads that don't use containers (e.g., xDiT)
+        server_image: Container image path (Docker image or .sif file path),
+            or None for workloads that don't use containers
         override_sweeps: Optional JSON string for global sweep parameters override
         override_workload: Optional JSON string for global workload parameters override
     """
@@ -104,8 +106,8 @@ class Generate[OutputConfigT: (Pegasus, Slurm)]:
     configs_dir: Path = Path("configs")
     datasets: list[str] = dataclasses.field(default_factory=list)
     gpu_models: list[str] = dataclasses.field(default_factory=list)
-    container_runtime: Literal["docker", "singularity"] = "docker"
-    server_image: str = "vllm/vllm-openai:v0.11.1"
+    container_runtime: Literal["docker", "singularity"] | None = None
+    server_image: str | None = None
     override_sweeps: str | None = None
     override_workload: str | None = None
 
@@ -285,99 +287,155 @@ def load_benchmark_template(dataset_dir: Path) -> BenchmarkTemplate:
 
 
 def scan_configs(configs_dir: Path) -> dict[str, DatasetConfig]:
-    """Scan configs directory and return workload information."""
-    configs_vllm = configs_dir / "vllm"
-    if not configs_vllm.exists():
-        raise ValueError(f"Directory not found: {configs_vllm}")
+    """Scan configs directory and return workload information.
+
+    Supports multiple runtimes (vllm, xdit). Each runtime has different
+    handling for GPU counts:
+    - vllm: Uses num_gpus.txt and filter_sweep_config_by_num_gpus
+    - xdit: Derives num_gpus from ulysses_degree * ring_degree
+    """
+    # Find available runtime directories
+    runtime_roots: list[tuple[Path, Literal["vllm", "xdit"]]] = []
+    for runtime_name in ("vllm", "xdit"):
+        root = configs_dir / runtime_name
+        if root.exists():
+            runtime_roots.append((root, runtime_name))  # type: ignore[arg-type]
+
+    if not runtime_roots:
+        raise ValueError(
+            f"No supported runtime directories found under: {configs_dir} "
+            "(expected one of: vllm, xdit)"
+        )
 
     datasets: dict[str, DatasetConfig] = {}
 
-    for dataset_dir in sorted(configs_vllm.iterdir()):
-        if not dataset_dir.is_dir():
-            continue
-
-        dataset = dataset_dir.name
-
-        try:
-            template = load_benchmark_template(dataset_dir)
-        except FileNotFoundError:
-            print(f"Skipping {dataset}: no benchmark.yaml found")
-            continue
-
-        dataset_config = DatasetConfig(
-            template=template, workloads=defaultdict(lambda: defaultdict(list))
-        )
-
-        for org_dir in sorted(dataset_dir.iterdir()):
-            if not org_dir.is_dir():
+    for runtime_root, runtime_name in runtime_roots:
+        for dataset_dir in sorted(runtime_root.iterdir()):
+            if not dataset_dir.is_dir():
                 continue
 
-            for model_dir in sorted(org_dir.iterdir()):
-                if not model_dir.is_dir():
+            dataset = dataset_dir.name
+
+            try:
+                template = load_benchmark_template(dataset_dir)
+            except FileNotFoundError:
+                print(f"Skipping {dataset}: no benchmark.yaml found")
+                continue
+
+            dataset_config = DatasetConfig(
+                template=template, workloads=defaultdict(lambda: defaultdict(list))
+            )
+
+            for org_dir in sorted(dataset_dir.iterdir()):
+                if not org_dir.is_dir():
                     continue
 
-                model_id = f"{org_dir.name}/{model_dir.name}"
-
-                for gpu_dir in sorted(model_dir.iterdir()):
-                    if not gpu_dir.is_dir():
+                for model_dir in sorted(org_dir.iterdir()):
+                    if not model_dir.is_dir():
                         continue
 
-                    gpu_model = gpu_dir.name
-                    num_gpus_file = gpu_dir / "num_gpus.txt"
+                    model_id = f"{org_dir.name}/{model_dir.name}"
 
-                    if not num_gpus_file.exists():
-                        print(f"Warning: {num_gpus_file} not found, skipping")
-                        continue
+                    for gpu_dir in sorted(model_dir.iterdir()):
+                        if not gpu_dir.is_dir():
+                            continue
 
-                    with open(num_gpus_file) as f:
-                        gpu_counts = [int(line.strip()) for line in f if line.strip()]
+                        gpu_model = gpu_dir.name
 
-                    # Check for model+GPU-specific sweeps.yaml
-                    sweeps_file = gpu_dir / "sweeps.yaml"
-                    if sweeps_file.exists():
-                        with open(sweeps_file) as f:
-                            sweep_data = yaml.safe_load(f)
-                        sweep_config_obj = SweepConfig(**sweep_data)
-                        sweep_config = sweep_config_obj.sweep
-                        config_source = f"sweeps.yaml in {gpu_dir}"
-                    else:
-                        # Fall back to task-level sweep_defaults
-                        sweep_config = template.sweep_defaults
-                        config_source = f"benchmark.yaml for {dataset}"
+                        # Check for model+GPU-specific sweeps.yaml
+                        sweeps_file = gpu_dir / "sweeps.yaml"
+                        if sweeps_file.exists():
+                            with open(sweeps_file) as f:
+                                sweep_data = yaml.safe_load(f)
+                            sweep_config_obj = SweepConfig(**sweep_data)
+                            sweep_config = sweep_config_obj.sweep
+                            config_source = f"sweeps.yaml in {gpu_dir}"
+                        else:
+                            # Fall back to task-level sweep_defaults
+                            sweep_config = template.sweep_defaults
+                            config_source = f"benchmark.yaml for {dataset}"
 
-                    # Check for model+GPU-specific workload.yaml
-                    workload_overrides = {}
-                    workload_file = gpu_dir / "workload.yaml"
-                    if workload_file.exists():
-                        with open(workload_file) as f:
-                            workload_overrides = yaml.safe_load(f) or {}
+                        # Check for model+GPU-specific workload.yaml
+                        workload_overrides = {}
+                        workload_file = gpu_dir / "workload.yaml"
+                        if workload_file.exists():
+                            with open(workload_file) as f:
+                                workload_overrides = yaml.safe_load(f) or {}
 
-                    # Validate sweep configuration
-                    validate_sweep_keys(
-                        sweep_config, template.command_template, config_source
-                    )
-
-                    # Compute sweep combinations per num_gpus (with filtering)
-                    for num_gpus in gpu_counts:
-                        # Filter sweep config for this specific num_gpus value
-                        filtered_sweep_config = filter_sweep_config_by_num_gpus(
-                            sweep_config, num_gpus
+                        # Validate sweep configuration
+                        validate_sweep_keys(
+                            sweep_config, template.command_template, config_source
                         )
 
-                        # Compute sweep combinations for this num_gpus
-                        sweep_combinations = compute_sweep_combinations(
-                            filtered_sweep_config
-                        )
+                        if runtime_name == "vllm":
+                            # vLLM: Use num_gpus.txt and filter_sweep_config_by_num_gpus
+                            num_gpus_file = gpu_dir / "num_gpus.txt"
+                            if not num_gpus_file.exists():
+                                print(f"Warning: {num_gpus_file} not found, skipping")
+                                continue
 
-                        workload = ModelWorkload(
-                            model_id=model_id,
-                            config_dir=gpu_dir,
-                            sweep_combinations=sweep_combinations,
-                            workload_overrides=workload_overrides,
-                        )
-                        dataset_config.workloads[gpu_model][num_gpus].append(workload)
+                            with open(num_gpus_file) as f:
+                                gpu_counts = [
+                                    int(line.strip()) for line in f if line.strip()
+                                ]
 
-        datasets[dataset] = dataset_config
+                            for num_gpus in gpu_counts:
+                                # Filter sweep config for this specific num_gpus value
+                                filtered_sweep_config = filter_sweep_config_by_num_gpus(
+                                    sweep_config, num_gpus
+                                )
+
+                                # Compute sweep combinations for this num_gpus
+                                sweep_combinations = compute_sweep_combinations(
+                                    filtered_sweep_config
+                                )
+
+                                workload = ModelWorkload(
+                                    model_id=model_id,
+                                    config_dir=gpu_dir,
+                                    sweep_combinations=sweep_combinations,
+                                    workload_overrides=workload_overrides,
+                                    runtime="vllm",
+                                )
+                                dataset_config.workloads[gpu_model][num_gpus].append(
+                                    workload
+                                )
+                        else:
+                            # xDiT: Derive num_gpus from ulysses_degree * ring_degree
+                            base_combinations = compute_sweep_combinations(sweep_config)
+
+                            # Group combinations by derived num_gpus
+                            groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
+                            for combo in base_combinations:
+                                if (
+                                    "ulysses_degree" not in combo
+                                    or "ring_degree" not in combo
+                                ):
+                                    raise ValueError(
+                                        f"Expected ulysses_degree and ring_degree in "
+                                        f"sweep for xDiT task {dataset}, but they were "
+                                        f"not found."
+                                    )
+                                ulysses_degree = int(combo["ulysses_degree"])
+                                ring_degree = int(combo["ring_degree"])
+                                num_gpus = ulysses_degree * ring_degree
+                                combo_with_num = dict(combo)
+                                combo_with_num["num_gpus"] = num_gpus
+                                groups[num_gpus].append(combo_with_num)
+
+                            for num_gpus, group_combos in groups.items():
+                                workload = ModelWorkload(
+                                    model_id=model_id,
+                                    config_dir=gpu_dir,
+                                    sweep_combinations=group_combos,
+                                    workload_overrides=workload_overrides,
+                                    runtime="xdit",
+                                )
+                                dataset_config.workloads[gpu_model][num_gpus].append(
+                                    workload
+                                )
+
+            datasets[dataset] = dataset_config
 
     return datasets
 
@@ -476,8 +534,8 @@ def generate_pegasus_queues(
     all_workloads: dict[str, DatasetConfig],
     output_dir: Path,
     config: Pegasus,
-    container_runtime: str,
-    server_image: str,
+    container_runtime: str | None,
+    server_image: str | None,
     workload_override: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate Pegasus queue.yaml files, one per GPU count."""
@@ -505,16 +563,20 @@ def generate_pegasus_queues(
             # Generate one queue entry per sweep combination
             for sweep_params in workload.sweep_combinations:
                 # Build full parameter dict
-                params = {
+                params: dict[str, Any] = {
                     "model_id": workload.model_id,
                     "gpu_model": gpu_model,
                     "num_gpus": num_gpus,
-                    "container_runtime": container_runtime,
-                    "server_image": server_image,
                     **template.workload_defaults,
                     **workload.workload_overrides,
                     **sweep_params,
                 }
+                # Add container params only for vLLM workloads when specified
+                if workload.runtime == "vllm":
+                    if container_runtime is not None:
+                        params["container_runtime"] = container_runtime
+                    if server_image is not None:
+                        params["server_image"] = server_image
                 if workload_override:
                     params.update(workload_override)
 
@@ -527,10 +589,20 @@ def generate_pegasus_queues(
                 # Flatten multiline command to single line
                 command = flatten_command(command)
 
-                # Prepend CUDA_VISIBLE_DEVICES with Pegasus templating
-                command = (
-                    f"CUDA_VISIBLE_DEVICES={{{{ cuda_visible_devices }}}} {command}"
-                )
+                # For xDiT: derive MASTER_PORT from cuda_visible_devices
+                if workload.runtime == "xdit":
+                    # Extract first GPU ID and compute port (8000 + first_gpu_id)
+                    # Use export && to ensure variables are set before expansion
+                    command = (
+                        "export MASTER_PORT=$((8000 + $(echo {{ cuda_visible_devices }} | cut -d, -f1))) && "
+                        "export MASTER_ADDR=$(hostname) && "
+                        f"CUDA_VISIBLE_DEVICES={{{{ cuda_visible_devices }}}} {command}"
+                    )
+                else:
+                    # Prepend CUDA_VISIBLE_DEVICES with Pegasus templating
+                    command = (
+                        f"CUDA_VISIBLE_DEVICES={{{{ cuda_visible_devices }}}} {command}"
+                    )
 
                 queue_data.append({"command": [command]})
 
@@ -555,7 +627,7 @@ def generate_pegasus_queues(
     return output_files
 
 
-def generate_slurm_script(
+def generate_vllm_slurm_script(
     dataset: str,
     gpu_model: str,
     num_gpus: int,
@@ -563,11 +635,11 @@ def generate_slurm_script(
     template: BenchmarkTemplate,
     output_dir: Path,
     slurm_config: Slurm,
-    container_runtime: str,
-    server_image: str,
+    container_runtime: str | None,
+    server_image: str | None,
     workload_override: dict[str, Any] | None = None,
 ) -> Path:
-    """Generate a Slurm script for a single model."""
+    """Generate a Slurm script for a vLLM workload."""
     model_slug = slugify(workload.model_id)
     output_file = output_dir / f"{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}.sh"
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -668,17 +740,159 @@ def generate_slurm_script(
     script_lines.append(f'  echo "Running with {echo_parts}"')
 
     # Build parameter dict for command formatting (using bash variables)
-    bash_params = {
+    bash_params: dict[str, Any] = {
         "model_id": workload.model_id,
         "gpu_model": gpu_model,
         "num_gpus": num_gpus,
-        "container_runtime": container_runtime,
-        "server_image": server_image,
         **template.workload_defaults,
         **workload.workload_overrides,
     }
+    if container_runtime is not None:
+        bash_params["container_runtime"] = container_runtime
+    if server_image is not None:
+        bash_params["server_image"] = server_image
     if workload_override:
         bash_params.update(workload_override)
+    for param_name in param_names:
+        bash_params[param_name] = f"${param_name}"
+
+    # Format command with bash variable references
+    command_str = format_command(
+        template.command_template,
+        bash_params,
+        config_source=f"Slurm: {dataset}/{workload.model_id}/{gpu_model}",
+    )
+
+    script_lines.append(f"  {command_str}")
+    script_lines.append("done")
+
+    with open(output_file, "w") as f:
+        f.write("\n".join(script_lines))
+
+    output_file.chmod(0o755)
+
+    return output_file
+
+
+def generate_xdit_slurm_script(
+    dataset: str,
+    gpu_model: str,
+    num_gpus: int,
+    workload: ModelWorkload,
+    template: BenchmarkTemplate,
+    output_dir: Path,
+    slurm_config: Slurm,
+) -> Path:
+    """Generate a Slurm script for an xDiT workload."""
+    model_slug = slugify(workload.model_id)
+    output_file = output_dir / f"{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}.sh"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    script_lines = [
+        "#!/bin/bash",
+        "",
+        f"# Slurm script for {dataset} / {workload.model_id} / {gpu_model} / {num_gpus} GPU{'' if num_gpus == 1 else 's'}",
+        "",
+    ]
+
+    if slurm_config.partition:
+        script_lines.append(f"#SBATCH --partition={slurm_config.partition}")
+    if slurm_config.account:
+        script_lines.append(f"#SBATCH --account={slurm_config.account}")
+    if slurm_config.time_limit:
+        script_lines.append(f"#SBATCH --time={slurm_config.time_limit}")
+
+    script_lines.append(f"#SBATCH --gres=gpu:{num_gpus}")
+
+    if slurm_config.cpus_per_gpu:
+        script_lines.append(f"#SBATCH --cpus-per-gpu={slurm_config.cpus_per_gpu}")
+    if slurm_config.mem_per_gpu:
+        script_lines.append(f"#SBATCH --mem-per-gpu={slurm_config.mem_per_gpu}")
+
+    script_lines.extend(
+        [
+            f"#SBATCH --job-name={dataset}_{model_slug}",
+            f"#SBATCH --output=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.out",
+            f"#SBATCH --error=logs/{dataset}_{gpu_model}_{num_gpus}gpu_{model_slug}_%j.err",
+            "",
+            "set -e",
+            "",
+            "# Change to submission directory",
+            "cd $SLURM_SUBMIT_DIR",
+            "",
+            "# Load Python, CUDA, and GCC",
+            "module load python/3.12.1 && \\",
+            "module load cuda/12.6.3 && \\",
+            "module load gcc",
+            "",
+            "source .venv/bin/activate",
+            "",
+            "# Ensure required environment variables are set",
+            'if [[ -z "$HF_HOME" ]]; then',
+            '  echo "ERROR: HF_HOME environment variable is not set. Please export HF_HOME before running sbatch." >&2',
+            "  exit 1",
+            "fi",
+            "",
+            'if [[ ! -d "$HF_HOME" ]]; then',
+            '  echo "ERROR: HF_HOME directory does not exist: $HF_HOME" >&2',
+            "  exit 1",
+            "fi",
+            "",
+            'if [[ -z "$HF_TOKEN" ]]; then',
+            '  echo "ERROR: HF_TOKEN environment variable is not set. Please export HF_TOKEN before running sbatch." >&2',
+            "  exit 1",
+            "fi",
+            "",
+        ]
+    )
+
+    # Pre-compute all sweep combinations
+    sweep_combinations = workload.sweep_combinations
+
+    if not sweep_combinations:
+        raise ValueError(f"No sweep combinations found for {workload.model_id}")
+
+    # Get parameter names from the first combination (all should have same keys)
+    param_names = list(sweep_combinations[0].keys())
+
+    # Generate readable comment showing combinations
+    script_lines.append("# Sweep combinations (one per line):")
+    for combo in sweep_combinations:
+        combo_str = " ".join(f"{k}={v}" for k, v in combo.items())
+        script_lines.append(f"# {combo_str}")
+    script_lines.append("")
+
+    # Build bash array of combinations
+    script_lines.append("combinations=(")
+    for combo in sweep_combinations:
+        # Each combination as space-separated values
+        values = " ".join(str(combo[k]) for k in param_names)
+        script_lines.append(f'  "{values}"')
+    script_lines.append(")")
+    script_lines.append("")
+
+    # Derive MASTER_PORT from first GPU in CUDA_VISIBLE_DEVICES
+    script_lines.append("# Derive MASTER_PORT from first GPU ID (8000 + first_gpu_id)")
+    script_lines.append(
+        "MASTER_PORT=$((8000 + $(echo $CUDA_VISIBLE_DEVICES | cut -d, -f1)))"
+    )
+    script_lines.append("MASTER_ADDR=$(hostname)")
+    script_lines.append("")
+
+    # Generate for loop that iterates over combinations
+    read_vars = " ".join(param_names)
+    script_lines.append('for combo in "${combinations[@]}"; do')
+    script_lines.append(f'  read -r {read_vars} <<< "$combo"')
+
+    # Generate echo statement showing current parameter values
+    echo_parts = " ".join(f"{name}=${name}" for name in param_names)
+    script_lines.append(f'  echo "Running with {echo_parts}"')
+
+    # Build parameter dict for command formatting (using bash variables)
+    bash_params: dict[str, Any] = {
+        "model_id": workload.model_id,
+        "gpu_model": gpu_model,
+    }
     for param_name in param_names:
         bash_params[param_name] = f"${param_name}"
 
@@ -704,8 +918,8 @@ def generate_slurm_scripts(
     all_workloads: dict[str, DatasetConfig],
     output_dir: Path,
     slurm_config: Slurm,
-    container_runtime: str,
-    server_image: str,
+    container_runtime: str | None,
+    server_image: str | None,
     workload_override: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate Slurm scripts for all workloads."""
@@ -715,18 +929,29 @@ def generate_slurm_scripts(
         for gpu_model, gpu_workloads in sorted(dataset_config.workloads.items()):
             for num_gpus, workloads in sorted(gpu_workloads.items()):
                 for workload in sorted(workloads, key=lambda w: w.model_id):
-                    output_file = generate_slurm_script(
-                        dataset,
-                        gpu_model,
-                        num_gpus,
-                        workload,
-                        dataset_config.template,
-                        output_dir,
-                        slurm_config,
-                        container_runtime,
-                        server_image,
-                        workload_override,
-                    )
+                    if workload.runtime == "vllm":
+                        output_file = generate_vllm_slurm_script(
+                            dataset,
+                            gpu_model,
+                            num_gpus,
+                            workload,
+                            dataset_config.template,
+                            output_dir,
+                            slurm_config,
+                            container_runtime,
+                            server_image,
+                            workload_override,
+                        )
+                    else:
+                        output_file = generate_xdit_slurm_script(
+                            dataset,
+                            gpu_model,
+                            num_gpus,
+                            workload,
+                            dataset_config.template,
+                            output_dir,
+                            slurm_config,
+                        )
                     print(f"Generated {output_file}")
                     output_files.append(output_file)
 
@@ -776,6 +1001,40 @@ def main(config: Generate[Pegasus] | Generate[Slurm]) -> None:
     if config.override_workload:
         workload_override = json.loads(config.override_workload)
         print(f"Overriding all workload parameters with: {workload_override}")
+
+    # Check runtime requirements and warn about mismatches
+    has_vllm_workloads = any(
+        workload.runtime == "vllm"
+        for dataset_config in filtered_datasets.values()
+        for gpu_workloads in dataset_config.workloads.values()
+        for workloads in gpu_workloads.values()
+        for workload in workloads
+    )
+    has_xdit_workloads = any(
+        workload.runtime == "xdit"
+        for dataset_config in filtered_datasets.values()
+        for gpu_workloads in dataset_config.workloads.values()
+        for workloads in gpu_workloads.values()
+        for workload in workloads
+    )
+
+    # vLLM workloads require container options
+    if has_vllm_workloads and (
+        config.container_runtime is None or config.server_image is None
+    ):
+        raise ValueError(
+            "vLLM workloads require --container-runtime and --server-image options. "
+            "Please specify both, e.g.: --container-runtime docker --server-image vllm/vllm-openai:v0.11.1"
+        )
+
+    # xDiT workloads don't use container options
+    if has_xdit_workloads and (
+        config.container_runtime is not None or config.server_image is not None
+    ):
+        print(
+            "Warning: container_runtime and server_image options are ignored for "
+            "xDiT/diffusion workloads (they run as native Python processes)."
+        )
 
     match config.output:
         case Pegasus():

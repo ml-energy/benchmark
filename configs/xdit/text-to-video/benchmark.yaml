@@ -1,6 +1,4 @@
 command_template: |
-  MASTER_PORT=$(shuf -i 20000-65000 -n 1)
-  MASTER_ADDR=$(hostname)
   torchrun \
     --nproc_per_node {num_gpus} \
     --master_port $MASTER_PORT \
@@ -11,7 +9,7 @@ command_template: |
     --workload.base_dir run/diffusion/text-to-video/{model_id} \
     --workload.batch_size {batch_size} \
     --workload.ulysses_degree {ulysses_degree} \
-    --workload.ring_degree {ring_degree} || echo 'Combination failed (non-zero exit), continuing to next.' >&2
+    --workload.ring_degree {ring_degree}
 
 sweep_defaults:
   - batch_size: [1, 2, 4, 8, 16, 32]

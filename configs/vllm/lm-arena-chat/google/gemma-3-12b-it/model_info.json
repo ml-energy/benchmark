@@ -2,5 +2,6 @@
   "nickname": "Gemma 3 12B",
   "total_parameters_billion": 12,
   "active_parameters_billion": 12,
-  "weight_precision": "bfloat16"
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
 }

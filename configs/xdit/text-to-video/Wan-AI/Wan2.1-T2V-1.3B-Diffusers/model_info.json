@@ -1,0 +1,5 @@
+{
+  "nickname": "Wan 2.1 1.3B",
+  "total_parameters_billion": 1.3,
+  "weight_precision": "bfloat16"
+}

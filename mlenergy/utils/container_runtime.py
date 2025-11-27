@@ -145,6 +145,14 @@ class DockerRuntime(ContainerRuntime):
         bind_mounts: list[tuple[str, str, str]],
         command: list[str],
     ) -> list[str]:
+        # Remove the container in case there's a corpse from a previous
+        # benchmarking run hanging around for some reason.
+        subprocess.call(
+            [*self._docker_cmd, "rm", "-f", container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
         cmd = [*self._docker_cmd, "run"]
 
         # GPU access

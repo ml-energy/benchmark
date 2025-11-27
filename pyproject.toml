@@ -61,5 +61,8 @@ dev = [
     "ruff>=0.12.4",
 ]
 
+[tool.pyright]
+exclude = ["mlenergy/diffusion"]
+
 [tool.pytest.ini_options]
 addopts = "--numprocesses auto"

@@ -871,11 +871,11 @@ def generate_xdit_slurm_script(
     script_lines.append(")")
     script_lines.append("")
 
-    # Derive MASTER_PORT from first GPU in CUDA_VISIBLE_DEVICES
-    script_lines.append("# Derive MASTER_PORT from first GPU ID (8000 + first_gpu_id)")
+    # Derive MASTER_PORT from SLURM_JOB_ID to avoid port conflicts
     script_lines.append(
-        "MASTER_PORT=$((8000 + $(echo $CUDA_VISIBLE_DEVICES | cut -d, -f1)))"
+        "# Derive MASTER_PORT from SLURM_JOB_ID (8000 + job_id % 52000)"
     )
+    script_lines.append("MASTER_PORT=$((8000 + SLURM_JOB_ID % 52000))")
     script_lines.append("MASTER_ADDR=$(hostname)")
     script_lines.append("")
 

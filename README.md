@@ -1,55 +1,23 @@
 # The ML.ENERGY Benchmark
 
-Benchmarking framework for measuring energy consumption and performance of Large Language Models (LLMs) and Multimodal LLMs (MLLMs).
+[![Leaderboard](https://custom-icon-badges.demolab.com/badge/ml.energy-leaderboard-23d175.svg?logo=home&logoColor=white&logoSource=feather)](https://ml.energy/leaderboard)
+[![Paper](https://custom-icon-badges.herokuapp.com/badge/NeurIPS'25%20D%26B-Spotlight-b31b1b.svg)](https://neurips.cc/virtual/2025/loc/san-diego/poster/121781)
 
-## Quick Start
-
-```bash
-# Install
-git clone https://github.com/ml-energy/leaderboard.git
-cd leaderboard
-uv sync
-source .venv/bin/activate
-```
-
-- Diffusion benchmark setup
-
-```bash
-uv venv --python=3.12
-source .venv/bin/activate
-
-# Hopper
-uv pip install packaging einops ninja wheel psutil && \
-uv pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu126 && \
-uv pip install flash-attn==2.7.0.post2 --no-build-isolation && \
-uv pip install xformers==0.0.29.post2 --index-url https://download.pytorch.org/whl/cu126 && \
-uv pip install .[diffusion]
-```
-
-```bash
-# Blackwell
-wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
-
-uv pip install packaging einops ninja wheel psutil && \
-uv pip install "torch==2.8.0" "torchvision==0.23.0" --index-url https://download.pytorch.org/whl/cu128 && \
-uv pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl && \
-uv pip install xformers==0.0.32.post2 --index-url https://download.pytorch.org/whl/cu128 && \
-uv pip install .[diffusion]
-
-```
-
-``
+Benchmarking framework for measuring energy consumption and performance of generative AI models like Large Language Models (LLMs), Multimodal LLMs (MLLMs), and Diffusion models.
 
 - **[Overview](docs/overview.md)**: Tasks, datasets, runtime
-- **[Data Preparation](docs/data-preparation.md)**: Dataset download scripts
+- **[Data Preparation](docs/data-preparation.md)**: Downloading necessary datasets and processing them
 - **[Running Benchmarks](docs/running-benchmarks.md)**: Job generation and manual execution
+- **[Analyzing Results](docs/analyzing-results.md)**: Analyzing and understanding benchmarking results
 
-## Development
 
-```bash
-# Lint and type check
-./scripts/lint.sh
+## Citation
 
-# Test
-pytest
+```bibtex
+@inproceedings{mlenergy-neuripsdb25,
+    title={The {ML.ENERGY Benchmark}: Toward Automated Inference Energy Measurement and Optimization}, 
+    author={Jae-Won Chung and Jeff J. Ma and Ruofan Wu and Jiachen Liu and Oh Jun Kweon and Yuxuan Xia and Zhiyu Wu and Mosharaf Chowdhury},
+    year={2025},
+    booktitle={NeurIPS Datasets and Benchmarks},
+}
 ```

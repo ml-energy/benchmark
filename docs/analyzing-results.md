@@ -1,5 +1,11 @@
 # Analyzing Results
 
+The diffusion benchmark results (`results.json`) are relatively straightforward.
+For a fixed batch size and parallelism configuration (Ring attention degree and Ulysses degree), the benchmarking scripts runs one batch multiple times and records the energy consumption of each batch under `iteration_energy_measurements`.
+Generated images/videos are also dumped in the result directory.
+
+The rest of this document is dedicated to LLM/MLLM results.
+
 ## Directory Structure
 
 Results are saved to `{base_dir}` (typically `run/`). The hierarchical structure is:
@@ -140,9 +146,9 @@ Time-series metrics collected from vLLM's Prometheus endpoint at 1-second interv
 
 ## Analyzing Results
 
-### Automated Validation (Recommended)
+### Automated Validation
 
-Validate all benchmark results against expectations:
+Run sanity checks on benchmark results against expectations:
 
 ```bash
 # Basic validation
@@ -152,28 +158,5 @@ python scripts/validate_results.py
 python scripts/validate_results.py --verbose
 
 # Validate specific directory
-python scripts/validate_results.py --base-dir run/llm/lm-arena-chat/
-```
-
-The script validates 7 expectations:
-
-1. **Files Present**: All result files exist
-2. **Completion**: All requests finished (`completed == num_prompts`)
-3. **Request Success**: All requests succeeded
-4. **Steady State Duration**: At least 30 seconds long
-5. **Prometheus Collection**: ~1 collection/second for both total and steady-state (>=75%)
-6. **Valid Metrics**: Throughput, energy > 0, under broadly-defined reasonable ranges
-7. **No Crashes**: No `RuntimeError`, CUDA assertions, or `EngineDeadError` in logs
-
-### Quick Manual Checks
-
-```bash
-# Check completion status
-jq '{completed: .completed, num_prompts: .num_prompts, throughput: .output_throughput}' results.json
-
-# Check for failed requests
-jq '[.results[] | select(.success == false)] | length' results.json
-
-# Check steady-state ratio (should be >50% for most workloads)
-jq '{duration: .duration, steady: .steady_state_duration, ratio: (.steady_state_duration / .duration)}' results.json
+python scripts/validate_results.py --run-dir run/llm/lm-arena-chat/
 ```

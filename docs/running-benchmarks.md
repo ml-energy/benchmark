@@ -1,10 +1,54 @@
 # Running Benchmarks
 
-## Installing Dependencies
+## Environment Setup
 
-TODO: Move from README.md
+Generally NVIDIA GPUs are assumed, but with runtimes compatible with other platforms (e.g., vLLM on ROCm), the benchmark should run fine.
+For energy measurement support, see [Zeus's documentation](https://ml.energy/zeus/measure/#hardware-support).
 
-## Automated Job Generation (Recommended)
+Clone the repository:
+
+```bash
+git clone https://github.com/ml-energy/leaderboard.git
+```
+
+Python virtual environment (using [`uv`](https://astral.sh/uv)):
+
+```bash
+cd leaderboard
+
+uv sync
+source .venv/bin/activate
+```
+
+Extra depedencies for the diffusion benchmark:
+
+```bash
+wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+
+uv pip install packaging einops ninja wheel psutil && \
+uv pip install "torch==2.8.0" "torchvision==0.23.0" --index-url https://download.pytorch.org/whl/cu128 && \
+uv pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl && \
+uv pip install xformers==0.0.32.post2 --index-url https://download.pytorch.org/whl/cu128 && \
+uv pip install .[diffusion]
+
+```
+
+## Environment Variables
+
+Required for all tasks:
+```bash
+export HF_TOKEN="your_huggingface_token"
+export HF_HOME="/path/to/huggingface/cache"
+export CUDA_VISIBLE_DEVICES=0
+```
+
+Required for MLLM tasks:
+```bash
+export VIDEO_DATA_DIR="/path/to/llava-video-178k"  # For video-chat
+export AUDIO_DATA_DIR="/path/to/fsd50k"            # For audio-chat
+```
+
+## Automated Job Generation
 
 Generate batch jobs files from configs for systematic benchmarking. The script support Slurm and [Pegasus](https://github.com/jaywonchung/pegasus).
 
@@ -46,7 +90,7 @@ done
 And also Pegasus (install with `cargo install pegasus-ssh`):
 
 ```bash
-pegasus q --hosts-file pegasus_b200_draft/hosts_8gpu.yaml --queue-file pegasus_b200_draft/queue_8gpu.yaml
+pegasus q --hosts-file pegasus_jobs/hosts_8gpu.yaml --queue-file pegasus_jobs/queue_8gpu.yaml
 ```
 
 

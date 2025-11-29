@@ -1797,7 +1797,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.53.2" },
     { name = "tyro", specifier = ">=0.9.26" },
     { name = "xfuser", marker = "extra == 'diffusion'", specifier = "==0.4.5" },
-    { name = "zeus", specifier = ">=0.12.3" },
+    { name = "zeus", specifier = ">=0.13.1" },
 ]
 provides-extras = ["diffusion"]
 

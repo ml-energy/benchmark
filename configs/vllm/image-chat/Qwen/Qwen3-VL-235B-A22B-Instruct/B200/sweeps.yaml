@@ -5,6 +5,3 @@ sweep:
     max_num_seqs: [512, 1024]
   - num_request_repeats: [3]
     max_num_seqs: [2048]
-  - num_gpus: [8]
-    num_request_repeats: [6]
-    max_num_seqs: [3072, 4096]

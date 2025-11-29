@@ -12,6 +12,11 @@
 - **video-chat**: Conversational prompts that include videos
 - **audio-chat**: Conversational prompts that include audio clips
 
+### Diffusion Tasks
+- **text-to-image**: Image generation from text prompts
+- **text-to-video**: Video generation from text prompts
+
+
 ## Request Datasets
 
 | **Task** | **Dataset** | **Auto-downloaded** |
@@ -22,24 +27,5 @@
 | image-chat | LMArena Vision Arena | Yes |
 | video-chat | LLaVA-Video-178K | No (see [data-preparation.md](data-preparation.md)) |
 | audio-chat | NVIDIA AudioSkills (FSD50K subset) | No (see [data-preparation.md](data-preparation.md)) |
-
-## Runtime
-
-### Container Runtime Support
-- **Docker**: For cloud and local machines
-- **Singularity**: For HPC clusters
-
-### Environment Variables
-
-Required for all tasks:
-```bash
-export HF_TOKEN="your_huggingface_token"
-export HF_HOME="/path/to/huggingface/cache"
-export CUDA_VISIBLE_DEVICES=0
-```
-
-Required for MLLM tasks:
-```bash
-export VIDEO_DATA_DIR="/path/to/llava-video-178k"  # For video-chat
-export AUDIO_DATA_DIR="/path/to/fsd50k"            # For audio-chat
-```
+| text-to-image | Open Image Preferences | Yes |
+| text-to-video | EvalCrafter T2V | Yes |

@@ -965,6 +965,12 @@ def save_results(
     result_json["inference_steps"] = args.workload.inference_steps
     result_json["seed"] = args.workload.seed
 
+    # Video-specific parameters
+    if hasattr(args.workload, "num_frames") and args.workload.num_frames is not None:
+        result_json["num_frames"] = args.workload.num_frames
+    if hasattr(args.workload, "fps") and args.workload.fps is not None:
+        result_json["fps"] = args.workload.fps
+
     # Performance metrics
     result_json["total_images"] = num_images
     result_json["total_time"] = benchmark_duration

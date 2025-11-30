@@ -10,6 +10,8 @@ command_template: |
     --workload.batch_size {batch_size} \
     --workload.ulysses_degree {ulysses_degree} \
     --workload.ring_degree {ring_degree}
+    --workload.inference_steps None \
+    --workload.num_frames None
 
 sweep_defaults:
   - batch_size: [1, 2, 4, 8, 16]
@@ -42,5 +44,3 @@ sweep_defaults:
   - batch_size: [1, 2, 4, 8, 16]
     ulysses_degree: [8]
     ring_degree: [1]
-
-

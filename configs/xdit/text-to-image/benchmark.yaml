@@ -9,7 +9,8 @@ command_template: |
     --workload.base_dir run/diffusion/text-to-image/{model_id} \
     --workload.batch_size {batch_size} \
     --workload.ulysses_degree {ulysses_degree} \
-    --workload.ring_degree {ring_degree}
+    --workload.ring_degree {ring_degree} \
+    --workload.inference_steps None
 
 sweep_defaults:
   - batch_size: [1, 2, 4, 8, 16]

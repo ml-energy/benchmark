@@ -1,7 +1,7 @@
 # The ML.ENERGY Benchmark
 
 [![Leaderboard](https://custom-icon-badges.demolab.com/badge/ml.energy-leaderboard-23d175.svg?logo=home&logoColor=white&logoSource=feather)](https://ml.energy/leaderboard)
-[![Paper](https://custom-icon-badges.herokuapp.com/badge/NeurIPS'25%20D%26B-Spotlight-b31b1b.svg)](https://neurips.cc/virtual/2025/loc/san-diego/poster/121781)
+[![Paper](https://custom-icon-badges.herokuapp.com/badge/NeurIPS'25%20D%26B-Spotlight-b31b1b.svg)](https://arxiv.org/abs/2505.06371)
 [![Apache-2.0 License](https://custom-icon-badges.herokuapp.com/github/license/ml-energy/leaderboard?logo=law)](/LICENSE)
 
 Benchmarking framework for measuring energy consumption and performance of generative AI models like Large Language Models (LLMs), Multimodal LLMs (MLLMs), and Diffusion models.

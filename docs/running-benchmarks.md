@@ -8,7 +8,7 @@ For energy measurement support, see [Zeus's documentation](https://ml.energy/zeu
 Clone the repository:
 
 ```bash
-git clone https://github.com/ml-energy/leaderboard.git
+git clone https://github.com/ml-energy/benchmark.git
 ```
 
 Python virtual environment (using [`uv`](https://astral.sh/uv)):

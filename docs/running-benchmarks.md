@@ -14,7 +14,7 @@ git clone https://github.com/ml-energy/leaderboard.git
 Python virtual environment (using [`uv`](https://astral.sh/uv)):
 
 ```bash
-cd leaderboard
+cd benchmark
 
 uv sync
 source .venv/bin/activate

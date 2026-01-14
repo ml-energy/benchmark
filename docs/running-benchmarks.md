@@ -101,6 +101,7 @@ Configs are in `configs/vllm/{task}/{org}/{model}/{gpu}/`:
 - `monolithic.env.yaml`: Environment variables
 - `num_gpus.txt`: GPU count
 - `sweeps.yaml` (optional): Override parameter sweep ranges
+- `extra_body.json` (optional): Additional request body parameters
 
 See `configs/vllm/{task}/benchmark.yaml` for command templates and default sweeps.
 

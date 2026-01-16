@@ -115,7 +115,10 @@ Main benchmark results file containing metrics and per-request data.
 
 ### `prometheus.json`
 
-Time-series metrics collected from vLLM's Prometheus endpoint at 1-second intervals. Structure:
+This file contains detailed time series metrics of the vLLM server during the benchmark run.
+A dedicated process collects these metrics from vLLM's Prometheus endpoint at 1-second intervals, and dumps them into this JSON file.
+
+Structure:
 
 ```json
 {
@@ -137,12 +140,14 @@ Time-series metrics collected from vLLM's Prometheus endpoint at 1-second interv
 
 **Timeline entries** contain full Prometheus metrics snapshots including:
 - `vllm:kv_cache_usage_perc`: KV cache utilization (0-1 range)
-- `vllm:num_requests_running`: Active requests
-- `vllm:num_requests_waiting`: Queued requests
+- `vllm:num_requests_running`: Number of requests running (generating tokens) in the GPU
+- `vllm:num_requests_waiting`: Number of requests waiting in the queue
 - Request latency histograms
 - Token count histograms
 
-**Note:** The number of timeline entries should roughly equal `duration` in seconds. Some multimodal workloads may have slightly lower collection rates (0.7-0.9 ratio) due to processing overhead.
+For a full list of vLLM Prometheus metrics, refer to the [vLLM documentation](https://docs.vllm.ai/en/latest/design/metrics/).
+
+**Note:** The number of timeline entries should roughly equal `duration` in seconds. Some multimodal workloads may have slightly lower collection rates (0.7-0.9 ratio) because the API server gets busy preprocessing multimodal data.
 
 ## Analyzing Results
 

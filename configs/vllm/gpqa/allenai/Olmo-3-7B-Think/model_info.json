@@ -1,0 +1,7 @@
+{
+  "nickname": "Olmo 3 7B Think",
+  "total_parameters_billion": 7,
+  "active_parameters_billion": 7,
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
+}

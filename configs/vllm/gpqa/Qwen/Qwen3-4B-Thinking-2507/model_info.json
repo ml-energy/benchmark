@@ -1,0 +1,7 @@
+{
+  "nickname": "Qwen 3 4B Thinking",
+  "total_parameters_billion": 4,
+  "active_parameters_billion": 4,
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
+}

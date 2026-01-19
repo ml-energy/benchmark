@@ -1,0 +1,7 @@
+{
+  "nickname": "Olmo 3.1 32B Think",
+  "total_parameters_billion": 32,
+  "active_parameters_billion": 32,
+  "weight_precision": "bfloat16",
+  "architecture": "Dense Transformer"
+}

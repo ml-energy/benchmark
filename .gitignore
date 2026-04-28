@@ -1,5 +1,6 @@
 # OS-related
 **/.DS_Store
+.vscode
 
 # Environment
 .envrc

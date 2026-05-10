@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from mlenergy.llm.workloads import (
+from mlenergy.benchmark.llm.workloads import (
     ImageChat,
     VideoChat,
     AudioChat,

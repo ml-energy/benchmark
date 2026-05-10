@@ -38,12 +38,12 @@ from zeus.show_env import show_env
 if TYPE_CHECKING:
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from mlenergy.llm.datasets import SampleRequest
-from mlenergy.llm.prometheus import (
+from mlenergy.benchmark.llm.datasets import SampleRequest
+from mlenergy.benchmark.llm.prometheus import (
     PrometheusCollector,
     calculate_steady_state_stats,
 )
-from mlenergy.llm.workloads import (
+from mlenergy.benchmark.llm.workloads import (
     AudioChat,
     GPQA,
     ImageChat,
@@ -54,13 +54,13 @@ from mlenergy.llm.workloads import (
     WorkloadConfig,
     LengthControl,
 )
-from mlenergy.llm.config import (
+from mlenergy.benchmark.llm.config import (
     get_vllm_config_path,
     load_env_vars,
     load_extra_body,
     load_system_prompt,
 )
-from mlenergy.utils.container_runtime import (
+from mlenergy.benchmark.utils.container_runtime import (
     CleanupHandle,
     ContainerRuntime,
     DockerRuntime,
@@ -70,7 +70,7 @@ from mlenergy.utils.container_runtime import (
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 PROMETHEUS_COLLECTOR_INTERVAL_S = 1.0
 
-logger = logging.getLogger("mlenergy.llm.benchmark")
+logger = logging.getLogger("mlenergy.benchmark.llm.benchmark")
 
 
 WorkloadT = TypeVar("WorkloadT", bound=WorkloadConfig)

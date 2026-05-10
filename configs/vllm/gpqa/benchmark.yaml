@@ -1,5 +1,5 @@
 command_template: |
-  python -m mlenergy.llm.benchmark \
+  python -m mlenergy.benchmark.llm.benchmark \
     --container-runtime {container_runtime} \
     --server-image {server_image} \
     --max-output-tokens {max_output_tokens} \

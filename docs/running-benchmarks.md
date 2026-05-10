@@ -143,7 +143,7 @@ singularity build vllm.sif docker://vllm/vllm-openai:v0.11.1
 Replace `--server-image` with path to `.sif` file and add `--container-runtime singularity`:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m mlenergy.llm.benchmark \
+CUDA_VISIBLE_DEVICES=0 python -m mlenergy.benchmark.llm.benchmark \
   --container-runtime singularity \
   --server-image /path/to/vllm.sif \
   workload:lm-arena-chat \

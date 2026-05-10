@@ -786,7 +786,7 @@ def render_fim_prompt(
         )
 
     if model.startswith("mistralai/codestral"):
-        # Special case for Codestral; it'll be mlenergy.llm.workloads.CodestralTokenizer.
+        # Special case for Codestral; it'll be mlenergy.benchmark.llm.workloads.CodestralTokenizer.
         tokenized = tokenizer(prefix=prefix, suffix=suffix)
         return (tokenized.text, tokenized.input_ids)
 

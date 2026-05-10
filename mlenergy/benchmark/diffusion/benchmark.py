@@ -74,14 +74,14 @@ from xfuser.model_executor.models.transformers.transformer_wan import (
 from diffusers import HunyuanVideoPipeline, HunyuanVideoTransformer3DModel
 from diffusers.utils import scale_lora_layers, unscale_lora_layers, USE_PEFT_BACKEND
 
-from mlenergy.diffusion.dataset import DiffusionRequest
-from mlenergy.diffusion.workloads import (
+from mlenergy.benchmark.diffusion.dataset import DiffusionRequest
+from mlenergy.benchmark.diffusion.workloads import (
     DiffusionWorkloadConfig,
     TextToImage,
     TextToVideo,
 )
 
-logger = logging.getLogger("mlenergy.diffusion.benchmark")
+logger = logging.getLogger("mlenergy.benchmark.diffusion.benchmark")
 
 WorkloadT = TypeVar("WorkloadT", bound=DiffusionWorkloadConfig)
 

@@ -1726,7 +1726,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mlenergy"
+name = "mlenergy-benchmark"
 version = "3.0.0"
 source = { editable = "." }
 dependencies = [

@@ -20,8 +20,8 @@ from transformers.tokenization_utils_base import BatchEncoding
 from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
 from mistral_common.protocol.fim.request import FIMRequest
 
-from mlenergy.constants import DEFAULT_SEED
-from mlenergy.llm.datasets import (
+from mlenergy.benchmark.constants import DEFAULT_SEED
+from mlenergy.benchmark.llm.datasets import (
     SampleRequest,
     DataRequest,
     Tokenization,

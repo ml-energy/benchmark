@@ -3,7 +3,7 @@ command_template: |
     --nproc_per_node {num_gpus} \
     --master_port $MASTER_PORT \
     --master_addr $MASTER_ADDR \
-    mlenergy/diffusion/benchmark.py \
+    mlenergy/benchmark/diffusion/benchmark.py \
     workload:text-to-image \
     --workload.model_id {model_id} \
     --workload.base_dir run/diffusion/text-to-image/{model_id} \

@@ -1,13 +1,9 @@
 [build-system]
-requires = ["uv_build"]
-build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-root = ""
-module-name = "mlenergy"
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "mlenergy"
+name = "mlenergy-benchmark"
 version = "3.0.0"
 description = "The ML.ENERGY Benchmark"
 readme = "README.md"
@@ -49,7 +45,7 @@ diffusion = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["mlenergy"]
+include = ["mlenergy*"]
 
 [dependency-groups]
 dev = [
@@ -62,7 +58,7 @@ dev = [
 ]
 
 [tool.pyright]
-exclude = ["mlenergy/diffusion"]
+exclude = ["mlenergy/benchmark/diffusion"]
 
 [tool.pytest.ini_options]
 addopts = "--numprocesses auto"

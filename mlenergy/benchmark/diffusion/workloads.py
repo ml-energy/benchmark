@@ -13,12 +13,12 @@ from typing import Any, Literal, Self, Optional
 
 from pydantic import BaseModel, model_validator
 
-from mlenergy.diffusion.dataset import (
+from mlenergy.benchmark.diffusion.dataset import (
     DiffusionRequest,
     OpenPreferenceDataset,
     EvalCrafterDataset,
 )
-from mlenergy.constants import DEFAULT_SEED
+from mlenergy.benchmark.constants import DEFAULT_SEED
 
 logger = logging.getLogger(__name__)
 

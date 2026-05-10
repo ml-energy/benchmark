@@ -7,7 +7,7 @@ import numpy as np
 from scipy import stats
 from transformers import AutoTokenizer
 
-from mlenergy.llm.datasets import ParetoExpDistributionDataset
+from mlenergy.benchmark.llm.datasets import ParetoExpDistributionDataset
 
 
 class TestParetoExpDistributionDataset:
